@@ -25,7 +25,7 @@ Plus the read tap is integer (`roundf`, single fetch) — no interpolation.
 |------|----------|-----|
 | Panel layout, controls, presets, mixers, transport semantics | **Keep** (behavioral parity) | it's a 288 — the interface is the instrument |
 | "Vintage" lo-fi character (bit-depth reduction, low base rates) | **Keep as an option/feature** | part of the sound; make it deliberate, not a side effect |
-| HAL/CubeMX peripheral init (RCC, SAI2, DMA2, FMC-SDRAM, ADC, I²C, TIM, GPIO) | **Regenerate** from recovered config | boilerplate; not worth hand-porting |
+| Peripheral init (RCC, SAI2, DMA2, FMC-SDRAM, ADC, SPI/I²C, TIM, GPIO) | Hand-write on **StdPeriph** (StdPeriphLib), matching the recovered config | **aligns with the MARF 248r house style** (github.com/auxren/marf uses StdPeriph, not CubeMX) — reuse its `Libraries/` + build/CI/docs scaffolding |
 | Delay time via PLL octave retune | **Rewrite** → fixed base rate + fractional read offset | enables smooth modulation; no clock glitches |
 | Control math in soft-float doubles | **Rewrite** → single-precision hardware float / fixed-point | large efficiency win, same audible result |
 | Integer tap read | **Rewrite** → interpolated fractional delay line | smooth sweeps, better audio quality |
@@ -113,23 +113,78 @@ try to preserve buffer contents across a width/bank-count change.
   read** (classic crossfaded pitch tap) so the wrap is hidden. Host-testable: assert no output
   discontinuity across the wrap. Needs the pitch-mode control context (bench) before wiring.
 
+### Delay-time changes: glide vs. crossfade (sequencing the TIME control)
+A sudden delay-time change does **not** alter the recorded/feedback audio, but it **teleports the
+read pointer** to a new point in the buffer → a waveform step = **click** (and with feedback it
+recirculates). Two clean treatments, chosen by intent, plus a control to pick:
+- **Glide (portamento):** one-pole slew the tap positions (we already do this in `taps.c`) →
+  clickless **pitch-glide** between values — the tape/BBD/chorus/flanger character.
+- **Crossfade (snap):** change delay instantly but **crossfade the read old→new over ~2–10 ms** via
+  the dual read head → clickless **and** glide-less — the right feel for stepped/sequenced delay
+  times. Reuses the same dual-head as the pitch-wrap fix.
+- **Control:** a single `glide` amount — **`glide = 0` → crossfade-snap**, `glide > 0` → portamento
+  at that rate. Auto default: small deltas use the slew; large/discrete jumps trigger the crossfade.
+  Host-testable: assert no discontinuity for a stepped time change at `glide = 0`.
+
 ## Efficiency improvements
 - Kill soft-float doubles → hardware single-precision FPU (the big win in the control path).
 - No PLL re-lock on delay changes (no clock-domain glitch, no re-lock latency).
 - Block-based processing over the SAI DMA half/full buffers; one-pole followers; SDRAM access
   patterned for the FMC (sequential write head; interpolation reads are local ±2 samples per tap).
 
+## Persistence & recall (mirror the MARF 248r — *if* the 288r has NVM)
+The sibling **MARF 248r** (github.com/auxren/marf) solves NVM cleanly on the same F4 family. **Whether
+the 288r actually has a 25512 SPI EEPROM is UNCONFIRMED** (BOM lists `25AA512` but ambiguously; MARF
+uses `CAT25512`, which makes it plausible but not proven — verify on the board and/or check whether
+the stock `.hex` ever drives an SPI EEPROM). A static scan of the stock `.hex` found **no SPI-EEPROM usage** (only SPI2, which serves the codec;
+no EEPROM driver; no 25xx opcodes), so the likely reality is **no external EEPROM**. Plan accordingly:
+- **Default assumption (no external EEPROM):** back persistence with **internal-flash EEPROM
+  emulation** (always available on the F429), or keep settings as **physical controls** (the 288's
+  native live-read model). Prefer a physical control where one exists.
+- **If a 25512 turns out to be populated** (verify on the board): use it via the MARF driver instead —
+  strictly better endurance.
+The record/layout/pinning design below is **backing-store-agnostic** — it applies to internal flash
+or an external EEPROM unchanged.
+- **Driver** (`eeprom_25512.{h,c}` ⇐ MARF `CAT25512.c`): `init / read_block / write_block / erase`
+  over SPI + a CS GPIO. Confirm the 288r's SPI peripheral + CS pin on the bench.
+- **Layout** (`eprom.{h,c}` ⇐ MARF `eprom.h`): an `EpromMemory` of `MemoryRange {start,size}`
+  partitions — e.g. settings block, calibration block, (optional) user presets.
+- **Versioned + checksummed records** (`storage.h` ⇐ MARF `storage.h`): every block is
+  `{ magic, version, crc16, payload }`; on load verify magic+version+CRC-16/CCITT and **refuse
+  invalid/older-format blocks** (fall back to defaults, never memcpy garbage). Bump a `*_VERSION` to
+  cleanly invalidate old formats. `static_assert` frozen field offsets.
+- **Control pinning on recall** (⇐ MARF "slider pinning"): the 288r reads trimmers/switches **live**,
+  so a recalled soft value disagrees with the physical control. On recall, **pin** each affected
+  parameter to the stored value and **ignore the physical control until it sweeps through** that
+  value, then hand back live control. This is the key to reconciling live-read hardware with saved
+  state — use it for anything persisted (e.g. the `glide` amount, calibration).
+- **What to persist first:** the **glide/crossfade** setting and **calibration** (TIME CV range,
+  taper, cycle-length sample counts). User presets are a later feature-phase item.
+- **UX to set it:** prefer a **physical control** (trimmer/DIP) where possible (self-persisting, no
+  writes); use the EEPROM for values with no dedicated control, set via a **save gesture** (MARF-style
+  button/switch combo) or a USB/SWD config tool. Write on explicit save, not per change (EEPROM ~100k
+  cycles; internal-flash emulation is a fallback if the chip turns out absent).
+
 ## Module plan (`firmware/src/`)
 ```
-delay_line.{h,c}   fixed-rate fractional delay line + interpolation      ← started
-taps.{h,c}         8-tap 288 model: phase-select, presets, per-tap time
-time_control.{h,c} ADC/CV → slewed single-precision delay_samples (no PLL)
-transport.{h,c}    write / recirc / loop state machine
-mixer.{h,c}        input & output mixers, phase select, auto control
-audio_io.{h,c}     SAI2/DMA2 block callbacks, format conversion
-panel.{h,c}        switches, DIP presets, I²C sliders, trimmers
-main.c             init + superloop
+delay_line.{h,c}   fixed-rate fractional delay line + interpolation      ← done, tested
+taps.{h,c}         8-tap 288 model: phase-select, presets, per-tap slewed time  ← done
+time_control.{h,c} ADC/CV → slewed single-precision delay_samples (no PLL)      ← done
+transport.{h,c}    write / recirc / loop state machine                          ← done
+mixer.{h,c}        input & output mixers, phase select, auto control            ← done
+envelope.{h,c}     one-pole AUTO CONTROL followers                              ← done
+engine.{h,c}       per-sample integration                                       ← done
+crossfade.{h,c}    dual read-head crossfade (pitch-wrap fix + glide=0 snap)     ← to build
+eeprom_25512.{h,c} SPI EEPROM driver (⇐ MARF CAT25512)                          ← to build
+storage.h          versioned+checksummed record formats (⇐ MARF)               ← to build
+eprom.{h,c}        EEPROM memory layout (⇐ MARF)                                ← to build
+settings.{h,c}     glide/crossfade + cal, load-at-boot, control-pinning         ← to build
+audio_io.{h,c}     SAI2/DMA2 (CS42888 TDM) block callbacks, format conversion   ← to build (bench)
+panel.{h,c}        595 scan: switches, DIP presets, 4051-muxed trimmers         ← to build (bench)
+main.c             StdPeriph init + superloop                                   ← skeleton
 ```
+Reuse the MARF's `Libraries/` (CMSIS + STM32F4xx StdPeriph), `Makefile`, `.github/workflows/build.yml`
+(host `make test` + arm build + tagged `.hex` release), and numbered `docs/` conventions.
 
 ## Open decisions & dependencies
 - **Scope/fidelity: DECIDED → strict behavioral clone first.** Match the 288r's panel mappings,

@@ -48,12 +48,22 @@ DSP engine.**
 phase-invert and mute are per-tap DIP bits; the 36 trimmers are the OUTPUT MIXER levels
 (4 preset banks × 9 = 8 taps + master), muxed to ADC. `firmware/src/panel.*` (to build) is this scan.
 
-## Storage anomaly — VERIFY on the board
-BOM lists MPN `579-25AA512-I/P` (Microchip **25AA512, 512 Kbit SPI EEPROM**) in a cell labeled
-"PLD 20 PIN (FEMALE)" for the PCB1↔PCB2 connector — almost certainly a paste error over the
-connector MPN. **But if a 25AA512 is actually populated (SOIC-8 marked `25512`/`25AA512`), it is
-NVM and contradicts the stateless-preset model** (could hold calibration/presets). **Physically
-check the mainboard.**
+## Nonvolatile storage — 512 Kbit SPI EEPROM (UNCONFIRMED — not yet checked on the board)
+BOM lists MPN `579-25AA512-I/P` (**25AA512, 512 Kbit SPI EEPROM**) but in a cell labeled "PLD 20 PIN
+(FEMALE)" — could be a paste error over the connector MPN. **Whether a 25512 is actually populated on
+the 288r mainboard is NOT yet verified — physically check the board** (look for a SOIC-8 marked
+`25512`/`25AA512`/`CAT25512`, and its SPI bus + CS pin).
+- Evidence it *might* exist: the same author's **MARF 248r** (github.com/auxren/marf) uses a
+  **CAT25512** (same 25512 family) for saved programs + calibration. Plausible the 288r shares it —
+  but that's a different board, not proof.
+- Evidence it might *not* (checked the stock `.hex`): the 288r's presets are **live-read from
+  trimmers/DIPs**, and a static scan of the firmware found **no SPI-EEPROM usage** — only **SPI2**
+  is referenced (and it serves the audio/codec path), **no** EEPROM driver is named, and **no** 25xx
+  opcodes (WREN/WRITE/READ) appear. So the stock firmware most likely does **not** use an SPI EEPROM,
+  consistent with a no-NVM design. (Not proof — the decompile is abridged — but it leans "no/unused".)
+- Either way: IF present it's the natural home for a persisted **glide/crossfade setting** + cal
+  (mirror the MARF storage pattern, DESIGN.md "Persistence"); IF absent, fall back to internal-flash
+  EEPROM emulation or keep such settings as physical controls.
 
 ## Programming / debug — SWD, open
 - Boxed **2×10 STLINK** IDC header + **2×3 DEBUG** header, right edge. Standard SWD.

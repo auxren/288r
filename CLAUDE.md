@@ -41,8 +41,21 @@ better engine; add new features/controls/modulation only *after* the clone is na
   (float32 won't fit 40 s). Audio **24-bit / 96 kHz** (vendor "196KHz" = typo). Stock image 27,912 B.
 - Panel = **74HC595/74HC4051 hardware scan** (DIP-binary tap times 10 ms steps, phase/mute DIPs, 36
   trimmers muxed to ADC) → presets live-read, **likely no NVM**. Full board brief: `re/notes/hardware.md`.
-- SWD open (RDP-0 expected); ST-Link/V2 ships with the kit. Possible 25AA512 EEPROM (BOM anomaly,
-  low priority). Board photo confirmed all of the above.
+- SWD open (RDP-0 expected); ST-Link/V2 ships with the kit. **External SPI EEPROM: probably NOT
+  present.** BOM lists a `25AA512` ambiguously, but a static scan of the stock `.hex` found no
+  SPI-EEPROM usage (only SPI2 = codec; no 25xx opcodes/driver) → leans no-NVM (matches the live-read
+  design). Still a board-check item (SOIC-8), not proven. Board photo confirmed F429/CS42888/SDRAM.
+
+## House style — mirror the MARF 248r (github.com/auxren/marf)
+Same author, same F4 family. **Align the 288r firmware to it:** **StdPeriph** (not CubeMX/HAL) —
+reuse its `Libraries/` (CMSIS + StdPeriph); a **Makefile** (`make`, `make test` host tests, size,
+hw-rev variants); **GitHub Actions** CI (host tests + arm build + tagged `.hex`/`.bin` release);
+numbered **docs/** + PDF manual. **Persistence pattern** (backing-store-agnostic —
+default to **F429 internal-flash emulation** since the stock shows no external EEPROM; use the
+external 25512 only if the board turns out to have one): `eprom` layout + **versioned/checksummed
+`storage.h` records** (`{magic,version,crc16,payload}`, refuse invalid) + **control-pinning on
+recall** (live trimmer ignored until it sweeps through the stored value). Full plan: DESIGN.md
+"Persistence & recall".
 - **Address mapping:** Binary Ninja `sub_X` (in `re/binja/`, loaded at base 0) == our flash address
   `0x08000000 + X`. Verified.
 - **Two root causes of no chorus/flanger** (both confirmed in code):
@@ -73,7 +86,7 @@ re/.venv/bin/python re/scripts/apply_patch1.py   # (re)generate + verify Patch 1
 
 ## What's next
 **Blocked until the bench/SWD session** (needs the board). Now-known from the board brief: MCU
-F429ZIT6, 24/96, 74HC595/4051 panel scan. Still needed: **pinout** → CubeMX HAL, **SDRAM density**
+F429Z, 24/96, 74HC595/4051 panel scan. Still needed: **pinout** → StdPeriph init, **SDRAM density**
 (caps max delay + picks int16 vs float32 buffer), **codec part**, **HSE freq**/clock tree, the
 **second MCU** role + its own dump, **25AA512 EEPROM** presence, the **mainboard (PCB3) BOM**, and
 calibration constants (TIME taper/CV range, tap-time 10 ms decode, slider gain law, AUTO CONTROL,
@@ -87,7 +100,7 @@ hardware — defer to bench), and more host tests. Further substantive progress 
 
 **When the bench session happens:** flash `re/patches/patched.hex`, breakpoint `0x08001aa6`, confirm
 the read pointer stair-steps on the stock fw and is continuous after the patch; then start
-`firmware/cube/` and calibrate constants against the real panel.
+the StdPeriph init layer (reusing MARF's `Libraries/`) and calibrate constants against the real panel.
 
 ## Conventions
 - Clone-first; don't invent precise constants — parameterize and mark `calibrate on hardware`.

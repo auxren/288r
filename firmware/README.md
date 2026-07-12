@@ -4,20 +4,20 @@ Goal: a **readable, editable, buildable** C firmware that replaces the shipped `
 (smooth modulation/chorus/flanger, pulse-output fixes, mode fixes) become ordinary source edits
 instead of binary patches.
 
-## Strategy — regenerate the boilerplate, reconstruct the DSP
+## Strategy — StdPeriph init + reconstructed DSP (MARF house style)
 
-The shipped firmware is standard STM32: **HAL/CubeMX-style peripheral init + a small hand-written
-DSP core.** We don't hand-decompile the boilerplate; we regenerate it from the config we recovered
-from the binary, and hand-write clean C for the bespoke ~2–3 KB that actually is the 288r.
+The shipped firmware is standard STM32: peripheral init + a small hand-written DSP core. We hand-write
+the init on the **Standard Peripheral Library**, matching the config recovered from the binary, and
+hand-write clean C for the bespoke ~2–3 KB that actually is the 288r. This deliberately mirrors the
+sibling **[MARF 248r](https://github.com/auxren/marf)** (same author, same STM32F4 family) — reuse its
+`Libraries/` (CMSIS + StdPeriph), `Makefile`, GitHub Actions CI, `docs/`, and its EEPROM/persistence
+pattern (see DESIGN.md "Persistence & recall").
 
 | Layer | How we produce it | Source of truth |
 |-------|-------------------|-----------------|
-| RCC/PLL, clocks | CubeMX project for STM32F429 matching recovered PLL/SAI clock setup | RM0090 + `re/notes/architecture.md` |
-| SAI2 + DMA2 (codec I/O) | CubeMX (full-duplex, ping-pong, 24-bit) | analyzer + `init_sai_stream` (sub_1180) |
-| FMC SDRAM (delay buffer) | CubeMX FMC/SDRAM (bank, timings) | SDCR @0xA0000140, buffer lengths |
-| ADC1/2/3, I²C, TIM, GPIO | CubeMX | function map |
-| **Delay engine** (write/read/tap/time/transport) | **hand-written C, `src/`** | our decompilation |
-| Panel/preset/mixer glue | hand-written C | `rename_288r.py` mapping |
+| RCC/PLL, SAI2+DMA2, FMC-SDRAM, ADC, SPI/I²C, TIM, GPIO | hand-written **StdPeriph** init matching recovered config | RM0090 + `re/notes/architecture.md`, analyzer, `init_sai_stream` (sub_1180) |
+| **Delay engine** (write/read/tap/time/transport) | **hand-written C, `src/`** (done, host-tested) | our decompilation |
+| Panel/preset/mixer glue, persistence | hand-written C (persistence ⇐ MARF) | `rename_288r.py` mapping, MARF |
 
 This targets **functional/audible equivalence**, not a byte-identical image (not worth the cost).
 
