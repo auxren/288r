@@ -9,8 +9,10 @@ The module shipped, its promised source was never released, and support was drop
 is a clean-room-adjacent effort to understand the shipped binary well enough to safely patch and
 extend it, and to serve as a learning resource for embedded audio / STM32 reverse engineering.
 
-> **Status:** delay engine fully mapped from the binary; exact patch anchors located. Awaiting an
-> SWD/JTAG session on real hardware to flash and validate the first interpolation patch.
+> **Status:** delay engine fully mapped from the binary; **Patch 1 (interpolated delay tap)
+> drafted, assembled, and statically verified** (`re/patches/`); readable-C reconstruction of the
+> delay core started (`firmware/`). Awaiting an SWD/JTAG session on real hardware to flash and
+> validate the first interpolation patch.
 
 ---
 
@@ -79,7 +81,11 @@ steps one whole sample at a time instead of gliding. Full analysis + the fix:
 ```
 Compiled FW/B288-REV1.0.hex     original shipped firmware (Intel HEX) — treat as read-only
 288-v1-alpha.png.webp           panel/board photo used for panel↔code mapping
+firmware/                       Phase 3: rebuildable, readable C reconstruction (started)
+  README.md                     regenerate-boilerplate + reconstruct-DSP strategy, binary↔source map
+  src/delay_engine.c            reconstructed write + interpolated read, compiles for Cortex-M4F
 re/
+  patches/                      binary code-cave patches (Patch 1 = interpolated tap) + splicer output
   B288-REV1.0.bin               raw image @0x08000000 (objcopy from the hex)
   notes/
     architecture.md             MCU, memory map, peripheral & function map
@@ -156,10 +162,11 @@ wrap arithmetic, bit-depth logic, and transport state machine untouched unless a
 ### Phase 0 — Reconnaissance ✅ (done)
 Identify MCU, map peripherals/memory, locate and fully trace the delay engine, find exact anchors.
 
-### Phase 1 — Smooth delay modulation (chorus/flanger) 🔜 (next; needs SWD session)
-- Detour A @ `0x08001aa6`: `floorf(dist)` + keep `frac`.
+### Phase 1 — Smooth delay modulation (chorus/flanger) 🚧 (patch drafted; needs SWD to validate)
+- Detour A @ `0x08001aa6`: `floor(dist)` + keep `frac`.  ✅ drafted (`re/patches/patch1_interp.s`)
 - Detour B @ `0x08001ae8`: 2-point **linear interpolation** `bank[i0]·(1−frac)+bank[i1]·frac`
-  (extend to all-pass/cubic later). Apply to both `sub_1968` and `sub_1c98`.
+  (extend to all-pass/cubic later).  ✅ drafted + statically verified for `sub_1968`.
+  ⬜ still to do: apply the same caves to `sub_1c98` (path B) and the `mode==6` bank_B fetch.
 - Add a one-pole slew on the effective read distance; optionally a "modulation mode" that holds
   the sample clock fixed and varies only the fractional offset (true BBD-style chorus/flanger).
 - **Validate on hardware:** breakpoint the read site, confirm the integer stair-step, then confirm
