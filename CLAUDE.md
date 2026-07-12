@@ -19,12 +19,15 @@ better engine; add new features/controls/modulation only *after* the clone is na
 ## Current status
 - **RE: done.** Target = **STM32F429** (Cortex-M4F). Delay engine fully traced. See
   `re/notes/architecture.md` and `re/notes/delay-engine.md`.
-- **Binary Patch 1: drafted + statically verified** (not yet flashed) — `re/patches/`. Adds a
-  fractional interpolated tap to the *stock* firmware via two flash code-cave detours.
+- **Binary Patch 1: complete + statically verified** (not yet flashed) — `re/patches/`. Adds a
+  fractional interpolated tap to the *stock* firmware via flash code-cave detours. Covers **both
+  audio paths** (`sub_1968` + `sub_1c98`) and both `mode==6` recirc fetches — 6 detours, 184-B cave.
 - **Community firmware engine: written + host-tested** — `firmware/src/` (delay_line, taps,
-  time_control, transport, mixer, engine) + `firmware/test/`. `make test` green; `make engine`
-  cross-compiles for the F429 (~1.8 KB).
+  time_control, transport, mixer, engine, envelope) + `firmware/test/` (5 suites). `make test` green;
+  `make engine` cross-compiles for the F429 (~1.9 KB). Interpolation fidelity measured
+  (`test_interp_quality.c`): Hermite ~2.4× better than linear at ½ Nyquist.
 - **BLOCKED on the bench/SWD session** for a flashable image and exact constants (see below).
+  The no-hardware DSP/patch work is essentially exhausted.
 
 ## Key technical facts
 - MCU STM32F429, flash @ `0x08000000`, 192 KB SRAM (SP `0x20030000`), external **SDRAM delay buffer
@@ -65,9 +68,10 @@ exact F429 variant + SDRAM size, codec part/format, clock tree/base rate, and ca
 `TODO(bench)`/`TODO(cube)` markers in `firmware/src/main.c` + `STM32F429.ld`; full list in
 `firmware/README.md` "Blocked on hardware".
 
-**Doable now without hardware:** apply the same interpolation caves to `sub_1c98` (path B) and the
-`mode==6` bank_B fetch in `re/patches/`; grow the host test suite; refine the engine (all-pass
-interpolation option, one-pole envelope followers) per `firmware/DESIGN.md`.
+**Doable now without hardware (mostly done):** ✅ Patch 1 both paths + mode6, ✅ one-pole envelope
+followers, ✅ interp-quality measurement. Remaining optional/speculative: an all-pass fractional
+interpolation option (good for flanger, but its modulation transients can't be A/B'd without audio
+hardware — defer to bench), and more host tests. Further substantive progress needs the board.
 
 **When the bench session happens:** flash `re/patches/patched.hex`, breakpoint `0x08001aa6`, confirm
 the read pointer stair-steps on the stock fw and is continuous after the patch; then start
