@@ -21,11 +21,28 @@ community/vendor reports. Items not yet visually/loupe-confirmed are flagged **V
 ## Audio architecture implication (CS42888 = 4-in / 8-out)
 The 8 DAC channels map to the **8 taps — each tap has its own physical output** (the 288's individual
 tap outs; summed outs are the analog op-amp section). The 4 ADCs are signal/CV inputs. The F429
-drives the CS42888 over **SAI2 in multichannel TDM** (this is why the firmware has two paths
-"A"/"B" — the 8 out + 4 in split across SAI sub-blocks / TDM slots), with codec register control over
-**I²C or SPI2** (`0x40003800`). → `firmware/src/audio_io` and the engine output stage should emit
-**8 independent tap channels via TDM**, not a single mixed output; per-tap level/phase/mute apply per
-channel. Confirm the exact TDM slot map + control bus from the codec-init code in the F429 image.
+drives the CS42888 over **SAI2 in multichannel TDM** (HAL-style SAI slot/frame config; this is why the
+firmware has two paths "A"/"B" — 8 out + 4 in split across SAI sub-blocks / TDM slots). →
+`firmware/src/audio_io` and the engine output stage should emit **8 independent tap channels via TDM**.
+
+### Peripheral roles (traced statically — corrects earlier rename labels)
+- **SAI2** (`0x40015800`): the CS42888 TDM audio (data path).
+- **SPI2 as SPI** (`0x40003800`, handle @`0x20001368`, chip-select on **GPIOB12**): reads the **analog
+  control surface** (sliders/pots), 3 bytes per transfer — i.e. an external SPI ADC. (The rename's
+  "read_panel_i2c_sliders / I²C sliders" is a mislabel — it's **SPI2**, not I²C.)
+- **I²C1** (`0x40005400`, handle @`0x200013c4`): a configured HAL I²C bus (analog/digital filters set)
+  talking to some device — but see below.
+
+### CS42888 control bus — UNRESOLVED (needs full disasm or a bench probe)
+No CS42888 control address (7-bit `0x48-0x4F` / 8-bit `0x90-0x9E`) and no codec register-write
+sequence appear anywhere in the image. So the codec is **not** obviously configured by firmware over
+I²C/SPI. Two live hypotheses:
+1. **CS42888 hardware/pin-strapped** (little/no firmware register control) — then the rewrite just
+   sets up SAI2 TDM to match; no codec driver needed. (Simplest if true.)
+2. Controlled over **I²C1** with an address I couldn't isolate in the *abridged* decompile.
+**To resolve:** analyze the full (non-abridged) disassembly around the I²C1/SPI2 init, or on the bench
+scope/logic-analyze the codec's control pins at power-up (and read its mode-select strapping). Also
+still open: the exact **TDM slot count + channel→tap order** (from the SAI init struct values).
 
 ## Config / UI front end — a hardware scan chain (no preset NVM expected)
 Presets are **read live from hardware**, not stored. The MCU clocks DIP banks in via **74HC595**
@@ -94,7 +111,8 @@ Two groups: GPIO-read mode switches (`read_mode_switches` sub_f64) and a packed
 *stored* min/max calibration prefer the **momentary SW14/SW16 power-up hold** (distinct entry, no
 conflict). The A/B/C toggle just picks which trimmer-derived phase row feeds the taps.
 
-**Continuous controls read via the 4051-mux → ADC (calibration targets, min/max):**
+**Continuous controls (ADC-read — sliders/pots via the SPI2 ADC per above, trimmers likely via the
+4051 mux; calibration targets, min/max):**
 - **9× 50 K linear ALPS 45 mm sliders** (POT8–POT16) = output-mixer levels.
 - **7× rotary pots** (POT1–POT7; POT1–5 log, POT6–7 lin) = input mixer / time / etc.
 - **36× 50 K single-turn trimmers** (TR1–TR36) = the four PRESET banks' tap positions (set to the
