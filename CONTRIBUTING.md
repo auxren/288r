@@ -12,6 +12,29 @@ Thanks for helping! This is a reverse-engineering + community-firmware project f
 - Discussion/design chat: use **Issues** (and Discussions if enabled). Hardware/bench findings are
   especially valuable — see the bench checklist in [`re/notes/hardware.md`](re/notes/hardware.md).
 
+## Collaborating with Claude Code (AI-assisted)
+
+This repo is set up for AI-assisted work. The root **[`CLAUDE.md`](CLAUDE.md)** is a living project
+handoff that **Claude Code loads automatically** — so cloning the repo and opening Claude in it starts
+any session with full context: current status, the engine architecture, the switch/RAM maps, what's
+done, and what's blocked on the bench.
+
+**Getting started:**
+1. Install **Claude Code** — <https://docs.claude.com/en/docs/claude-code> (or use the web app at
+   <https://claude.ai/code>).
+2. **Fork** this repo, clone your fork, `cd` into it, and run `claude`.
+3. It reads `CLAUDE.md`, `firmware/DESIGN.md`, and `re/notes/` on its own. Then hand it a task, e.g.:
+   - *"Add an all-pass interpolation option to `delay_line.c` with a host test."*
+   - *"Trace `sub_XXXX` in `re/binja/` and document it in `re/notes/`."*
+   - *"Build the `calib` module per DESIGN.md (SW14/16 power-up entry, min/max capture)."*
+   - *"Run `cd firmware && make test` and fix any failures on my branch."*
+4. Keep `make test` green, follow the ground rules below, and open a **PR from your fork**.
+
+**Please keep the context current:** when you make a substantive change, update
+`CLAUDE.md` / `firmware/DESIGN.md` / `re/notes/` so the next session — yours or a collaborator's —
+picks up cleanly. `CLAUDE.md` is written for Claude Code but also works as context for other coding
+agents.
+
 ## Build & test (no hardware needed)
 
 ```bash

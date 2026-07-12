@@ -202,6 +202,12 @@ Identify MCU, map peripherals/memory, locate and fully trace the delay engine, f
 
 ## 7. How to contribute / learn from this
 
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full guide (fork→PR workflow, build/test, and
+safety). PRs to `main` run CI (`make test` + `make engine`) and need those checks green.
+
+- **AI-assisted:** this repo is Claude-Code-ready — the root **[`CLAUDE.md`](CLAUDE.md)** auto-loads
+  as project context. Clone your fork, run `claude` in it, and ask it to pick up a task (see the
+  "Collaborating with Claude Code" section in CONTRIBUTING.md).
 - **Good first tasks:** verify a function label in `re/binja/rename_288r.py` against the
   disassembly; scope the pulse-output circuit; write the capstone splicer for code-cave patches;
   document a peripheral init routine.
