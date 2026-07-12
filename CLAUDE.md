@@ -30,9 +30,15 @@ better engine; add new features/controls/modulation only *after* the clone is na
   The no-hardware DSP/patch work is essentially exhausted.
 
 ## Key technical facts
-- MCU STM32F429, flash @ `0x08000000`, 192 KB SRAM (SP `0x20030000`), external **SDRAM delay buffer
-  @ `0xC0000000`** via FMC. Audio = **SAI2** full-duplex + **DMA2 Stream1/Stream4**. ADC1/2/3 =
-  CV/pots/trimmers. Stock image is 27,912 B.
+- MCU **STM32F429ZIT6** (2 MB flash @ `0x08000000`, 192 KB SRAM (SP `0x20030000`) + 64 KB CCM),
+  external **SDRAM delay buffer @ `0xC0000000`** via FMC (ISSI **16-bit**, 8 or 32 MB — VERIFY).
+  Audio = **SAI2** full-duplex + **DMA2 Stream1/Stream4**, **24-bit / 96 kHz** (vendor "196KHz" is a
+  typo). ADC1/2/3 = CV/pots/trimmers. Stock image 27,912 B. Panel = **74HC595/74HC4051 hardware
+  scan** (DIP-binary tap times in 10 ms steps, phase/mute DIPs, 36 trimmers muxed to ADC) →
+  presets are live-read hardware, **likely no NVM**. Full board brief: `re/notes/hardware.md`.
+- **Watch out:** a **second ST QFP** (LQFP48/64) may be a companion MCU with its own firmware+RDP
+  (our RE covers only the F429 image); and a possible **25AA512 SPI EEPROM** (BOM anomaly) — both to
+  check on the bench. SWD is open (RDP-0 expected); ST-Link/V2 ships with the kit.
 - **Address mapping:** Binary Ninja `sub_X` (in `re/binja/`, loaded at base 0) == our flash address
   `0x08000000 + X`. Verified.
 - **Two root causes of no chorus/flanger** (both confirmed in code):
@@ -45,7 +51,7 @@ better engine; add new features/controls/modulation only *after* the clone is na
 ## Repo map
 ```
 Compiled FW/B288-REV1.0.hex   stock firmware (read-only, golden restore image)
-re/notes/                     architecture.md, delay-engine.md (root causes + exact patch anchors)
+re/notes/                     architecture.md, delay-engine.md (root causes + anchors), hardware.md (board)
 re/binja/                     Binary Ninja disasm/decompile/rename map — by @Mixcatonic (ModWiggler)
 re/scripts/                   analyze.py (capstone map), apply_patch1.py (splice+verify Patch 1)
 re/patches/                   patch1_interp.s, patch1.ld, README (code-cave interpolation patch)
@@ -62,11 +68,13 @@ re/.venv/bin/python re/scripts/apply_patch1.py   # (re)generate + verify Patch 1
 ```
 
 ## What's next
-**Blocked until the bench/SWD session** (needs the board): CubeMX HAL from the confirmed pinout,
-exact F429 variant + SDRAM size, codec part/format, clock tree/base rate, and calibration constants
-(TIME taper, cycle-length sample counts, slider gain law, AUTO CONTROL, pulse thresholds). All are
-`TODO(bench)`/`TODO(cube)` markers in `firmware/src/main.c` + `STM32F429.ld`; full list in
-`firmware/README.md` "Blocked on hardware".
+**Blocked until the bench/SWD session** (needs the board). Now-known from the board brief: MCU
+F429ZIT6, 24/96, 74HC595/4051 panel scan. Still needed: **pinout** → CubeMX HAL, **SDRAM density**
+(caps max delay + picks int16 vs float32 buffer), **codec part**, **HSE freq**/clock tree, the
+**second MCU** role + its own dump, **25AA512 EEPROM** presence, the **mainboard (PCB3) BOM**, and
+calibration constants (TIME taper/CV range, tap-time 10 ms decode, slider gain law, AUTO CONTROL,
+pulse thresholds). Markers: `TODO(bench)`/`TODO(cube)` in `main.c`+`STM32F429.ld`; full checklist in
+`re/notes/hardware.md` and `firmware/README.md` "Blocked on hardware".
 
 **Doable now without hardware (mostly done):** ✅ Patch 1 both paths + mode6, ✅ one-pole envelope
 followers, ✅ interp-quality measurement. Remaining optional/speculative: an all-pass fractional

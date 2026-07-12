@@ -50,8 +50,13 @@ option are preserved as features, while time modulation becomes glitch-free and 
                           pulse taps ─▶ pulse outputs
 ```
 
-- **Buffer stores normalized `float32`** (same 4 bytes/sample as the stock int32 — no memory
-  penalty) → interpolation and mixing are branch-free hardware-float.
+- **Buffer sample format — reconcile with the 16-bit SDRAM (re/notes/hardware.md).** The host
+  reference `delay_line` stores `float32` for clarity/testing. But the board's SDRAM is **ISSI
+  16-bit, possibly only 8 MB**, and the spec wants ~40 s: 40 s mono @ 96 kHz ≈ 15 MB as float32
+  (won't fit 8 MB) vs ≈ 7.5 MB as **int16**. So the SDRAM-backed build should store **int16** (also
+  matches the bus width + the "vintage" character), converting int16↔float at the codec boundary;
+  interpolation/mixing stay hardware-float. Keep `delay_line` as the float reference and add a thin
+  int16-storage adapter for SDRAM. (CONFIRM SDRAM density — 32 MB would allow float32 if preferred.)
 - **Interpolation** selectable: linear (cheap) → 4-point cubic/Hermite (better HF) → optional
   first-order all-pass (flat magnitude, ideal for flanger). See `src/delay_line.c`.
 - **Delay-time control**: raw ADC/CV → single-precision → one-pole slew → fractional `delay_samples`.
@@ -61,6 +66,10 @@ option are preserved as features, while time modulation becomes glitch-free and 
 - Fractional/interpolated taps → glide instead of stepping; usable pitch/chorus/flanger.
 - Full-precision float internal path; "vintage" bit-depth becomes an explicit, dithered option.
 - More output headroom / consistent gain staging in the mixer (verify against panel on hardware).
+- **Pitch/Time buffer-wrap glitch (reported bug, re/notes/hardware.md):** in pitch mode a saw-LFO
+  sweeps delay time and clicks when it resets at the buffer wrap. Fix = a **dual-head crossfaded
+  read** (classic crossfaded pitch tap) so the wrap is hidden. Host-testable: assert no output
+  discontinuity across the wrap. Needs the pitch-mode control context (bench) before wiring.
 
 ## Efficiency improvements
 - Kill soft-float doubles → hardware single-precision FPU (the big win in the control path).

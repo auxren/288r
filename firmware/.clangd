@@ -1,3 +1,4 @@
 # Help editors resolve headers for src/ and test/ files (build uses -Isrc).
+# -xc forces C (clangd otherwise guesses headers as Objective-C++).
 CompileFlags:
-  Add: [-Isrc, -I../src, -std=c11, -ffreestanding, -Wall]
+  Add: [-xc, -Isrc, -I../src]
