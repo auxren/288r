@@ -48,19 +48,36 @@ DSP engine.**
 phase-invert and mute are per-tap DIP bits; the 36 trimmers are the OUTPUT MIXER levels
 (4 preset banks × 9 = 8 taps + master), muxed to ADC. `firmware/src/panel.*` (to build) is this scan.
 
-## Nonvolatile storage — 512 Kbit SPI EEPROM (UNCONFIRMED — not yet checked on the board)
-BOM lists MPN `579-25AA512-I/P` (**25AA512, 512 Kbit SPI EEPROM**) but in a cell labeled "PLD 20 PIN
-(FEMALE)" — could be a paste error over the connector MPN. **Whether a 25512 is actually populated on
-the 288r mainboard is NOT yet verified — physically check the board** (look for a SOIC-8 marked
-`25512`/`25AA512`/`CAT25512`, and its SPI bus + CS pin).
-- Evidence it *might* exist: the same author's **MARF 248r** (github.com/auxren/marf) uses a
-  **CAT25512** (same 25512 family) for saved programs + calibration. Plausible the 288r shares it —
-  but that's a different board, not proof.
-- Evidence it might *not* (checked the stock `.hex`): the 288r's presets are **live-read from
-  trimmers/DIPs**, and a static scan of the firmware found **no SPI-EEPROM usage** — only **SPI2**
-  is referenced (and it serves the audio/codec path), **no** EEPROM driver is named, and **no** 25xx
-  opcodes (WREN/WRITE/READ) appear. So the stock firmware most likely does **not** use an SPI EEPROM,
-  consistent with a no-NVM design. (Not proof — the decompile is abridged — but it leans "no/unused".)
+## Nonvolatile storage — NONE (the "25AA512" was a BOM paste error)
+**Resolved.** The full BOM (`B288-BOM-v1.0.xlsx`, PCB1+PCB2) row 38 reads
+`PLD1, PLD2 | 2 | PLD 20 PIN (FEMALE) | 579-25AA512-I/P`: the *part* is a **20-pin female connector**
+(it mates with `PBD1/PBD2` = "PLD 20 PIN (MALE)", Mouser 517-929836-01-10-RK, on PCB1) — the
+`25AA512` MPN is simply **wrong text pasted into the Mouser column**. So there is **no 25AA512 EEPROM**.
+Corroborated by the firmware: a static scan of the stock `.hex` found **no SPI-EEPROM usage** (only
+SPI2 = codec; no EEPROM driver; no 25xx opcodes). → **The module has no dedicated NVM chip.**
+Persistence for any new feature (settings/cal) must use **STM32F429 internal-flash EEPROM emulation**.
+(The mainboard PCB3 SMD BOM is still unseen, but both the connector-paste-error and the no-EEPROM
+firmware make an EEPROM very unlikely.)
+
+## Panel switch & control inventory (from the BOM)
+**Switches (PCB1 panel toggles) — momentary vs latching:**
+- **Latching:** `SPDT ON-ON` ×13 (SW2–SW18 subset), `SPDT ON-OFF-ON` ×2 (SW7, SW12, 3-position — a
+  center-off works as a 3-way A/B/C selector). These hold persistent state (the `cal./pre-set` and
+  `A/B/C` selectors live here).
+- **MOMENTARY (spring-return) — gesture candidates for mode entry:**
+  `SW14 = SPDT (ON)-OFF-(ON)` (momentary both ways) and `SW16 = SPDT ON-OFF-(ON)` (momentary one
+  side). Their stock runtime role is likely manual write/recirc/pulse triggers; a **power-up hold**
+  on one of these is the natural way to enter a calibration/setup mode (no runtime conflict).
+
+**DIP switches (PCB2):** SW1 = 774-2084 (4-pos, mode/config); SW27–SW32 = 774-2088 ×6 (8-pos tap-time,
+10 ms); SW19/20/23/24 = 206-125ST ×4 (5-pos, phase-invert); SW21/22/25/26 = 206-124 ×4 (4-pos, mute).
+
+**Continuous controls read via the 4051-mux → ADC (calibration targets, min/max):**
+- **9× 50 K linear ALPS 45 mm sliders** (POT8–POT16) = output-mixer levels.
+- **7× rotary pots** (POT1–POT7; POT1–5 log, POT6–7 lin) = input mixer / time / etc.
+- **36× 50 K single-turn trimmers** (TR1–TR36) = the four PRESET banks' tap positions (set to the
+  printed 0–160 scale; ADC range still worth normalizing).
+- Jacks: 18× Tini-Jax (J1–J18) + banana jacks; 5× 3 mm LEDs.
 - Either way: IF present it's the natural home for a persisted **glide/crossfade setting** + cal
   (mirror the MARF storage pattern, DESIGN.md "Persistence"); IF absent, fall back to internal-flash
   EEPROM emulation or keep such settings as physical controls.

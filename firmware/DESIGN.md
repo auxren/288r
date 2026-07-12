@@ -136,15 +136,18 @@ recirculates). Two clean treatments, chosen by intent, plus a control to pick:
 The sibling **MARF 248r** (github.com/auxren/marf) solves NVM cleanly on the same F4 family. **Whether
 the 288r actually has a 25512 SPI EEPROM is UNCONFIRMED** (BOM lists `25AA512` but ambiguously; MARF
 uses `CAT25512`, which makes it plausible but not proven — verify on the board and/or check whether
-the stock `.hex` ever drives an SPI EEPROM). A static scan of the stock `.hex` found **no SPI-EEPROM usage** (only SPI2, which serves the codec;
-no EEPROM driver; no 25xx opcodes), so the likely reality is **no external EEPROM**. Plan accordingly:
-- **Default assumption (no external EEPROM):** back persistence with **internal-flash EEPROM
-  emulation** (always available on the F429), or keep settings as **physical controls** (the 288's
-  native live-read model). Prefer a physical control where one exists.
-- **If a 25512 turns out to be populated** (verify on the board): use it via the MARF driver instead —
-  strictly better endurance.
-The record/layout/pinning design below is **backing-store-agnostic** — it applies to internal flash
-or an external EEPROM unchanged.
+the stock `.hex` ever drives an SPI EEPROM). **Resolved: there is no external EEPROM.** The BOM's `25AA512` was a paste error over a 20-pin
+connector MPN, and the stock `.hex` uses no SPI EEPROM (only SPI2 = codec). So back all persistence
+with **STM32F429 internal-flash EEPROM emulation** (reserve a sector, dual-sector wear-level, write on
+explicit save, CRC + default fallback). Prefer a **physical control** where one exists (self-persisting,
+no writes). The record/layout/pinning design below is backing-store-agnostic — here the store is
+internal flash.
+
+**Mode-entry gesture (from the BOM):** only two panel switches are momentary — **SW14
+`(ON)-OFF-(ON)`** and **SW16 `ON-OFF-(ON)`**. A **power-up hold** on one of these is the natural
+gesture to enter a calibration/save mode (their runtime role is likely manual write/recirc, so a
+boot-time hold doesn't conflict). The `cal./pre-set` and `A/B/C` toggles are latching (persistent
+state), not gesture switches.
 - **Driver** (`eeprom_25512.{h,c}` ⇐ MARF `CAT25512.c`): `init / read_block / write_block / erase`
   over SPI + a CS GPIO. Confirm the 288r's SPI peripheral + CS pin on the bench.
 - **Layout** (`eprom.{h,c}` ⇐ MARF `eprom.h`): an `EpromMemory` of `MemoryRange {start,size}`
@@ -165,6 +168,24 @@ or an external EEPROM unchanged.
   button/switch combo) or a USB/SWD config tool. Write on explicit save, not per change (EEPROM ~100k
   cycles; internal-flash emulation is a fallback if the chip turns out absent).
 
+## Calibration routine (features phase; the Time-CV fix justifies it early)
+The stock "cal." toggle is a **live setup mode** (short buffers + ×2 + taps track the raw control), not
+a stored min/max calibration — and there's no NVM. Worth **adding** a proper power-up calibration,
+because the panel has many ADC-read analog controls and a **real reported bug** (narrow usable Time CV
+range) that is a scaling/offset problem. Mirrors the MARF's `StoredCal` + two-point (min/max) cal.
+
+- **Enter:** hold a **momentary switch (SW14 or SW16) at power-up** → calibration mode (LED feedback).
+- **Capture:**
+  - **Controls min/max:** prompt "sweep every slider/pot to both extremes" → record ADC min/max per
+    channel (9 sliders + 7 pots; optionally the 36 trimmers). Fixes off-isn't-silent / can't-reach-full.
+  - **CV inputs:** apply known voltages (e.g. 0 V and +5 V, or +1 V/oct points) → record → compute
+    **gain + offset** per CV. This is the fix for the narrow **Time CV** range.
+- **Store:** versioned+checksummed `StoredCal` in **internal-flash** (see Persistence). CRC + default
+  fallback so an uncalibrated/older unit still runs sanely.
+- **Apply at runtime:** normalize every control read through its stored min/max/offset; use
+  **control-pinning** on any recalled value. Start with **sliders + Time CV**, expand later.
+- **Doc:** a numbered `docs/` calibration procedure, MARF-style.
+
 ## Module plan (`firmware/src/`)
 ```
 delay_line.{h,c}   fixed-rate fractional delay line + interpolation      ← done, tested
@@ -178,7 +199,8 @@ crossfade.{h,c}    dual read-head crossfade (pitch-wrap fix + glide=0 snap)     
 eeprom_25512.{h,c} SPI EEPROM driver (⇐ MARF CAT25512)                          ← to build
 storage.h          versioned+checksummed record formats (⇐ MARF)               ← to build
 eprom.{h,c}        EEPROM memory layout (⇐ MARF)                                ← to build
-settings.{h,c}     glide/crossfade + cal, load-at-boot, control-pinning         ← to build
+settings.{h,c}     glide/crossfade + load-at-boot, control-pinning              ← to build
+calib.{h,c}        power-up cal (SW14/16 hold): slider/pot min/max + CV gain/off ← to build (features)
 audio_io.{h,c}     SAI2/DMA2 (CS42888 TDM) block callbacks, format conversion   ← to build (bench)
 panel.{h,c}        595 scan: switches, DIP presets, 4051-muxed trimmers         ← to build (bench)
 main.c             StdPeriph init + superloop                                   ← skeleton

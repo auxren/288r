@@ -41,10 +41,13 @@ better engine; add new features/controls/modulation only *after* the clone is na
   (float32 won't fit 40 s). Audio **24-bit / 96 kHz** (vendor "196KHz" = typo). Stock image 27,912 B.
 - Panel = **74HC595/74HC4051 hardware scan** (DIP-binary tap times 10 ms steps, phase/mute DIPs, 36
   trimmers muxed to ADC) → presets live-read, **likely no NVM**. Full board brief: `re/notes/hardware.md`.
-- SWD open (RDP-0 expected); ST-Link/V2 ships with the kit. **External SPI EEPROM: probably NOT
-  present.** BOM lists a `25AA512` ambiguously, but a static scan of the stock `.hex` found no
-  SPI-EEPROM usage (only SPI2 = codec; no 25xx opcodes/driver) → leans no-NVM (matches the live-read
-  design). Still a board-check item (SOIC-8), not proven. Board photo confirmed F429/CS42888/SDRAM.
+- SWD open (RDP-0 expected); ST-Link/V2 ships with the kit. **NO external EEPROM** (RESOLVED): the
+  BOM's `25AA512` was a paste error over a 20-pin connector MPN (PLD1/2 female ↔ PBD1/2 male), and the
+  stock `.hex` uses no SPI EEPROM → **no NVM chip; persistence = F429 internal-flash emulation.**
+- **Panel switches (BOM):** only **SW14 `(ON)-OFF-(ON)`** and **SW16 `ON-OFF-(ON)`** are momentary →
+  the mode-entry **gesture** switches (power-up hold = cal/save). `cal./pre-set` + `A/B/C` are latching
+  selectors. Calibration targets: 9 sliders + 7 pots + 36 trimmers (ADC via 4051 mux) + CV inputs
+  (Time-CV range bug). Cal routine spec in DESIGN.md "Calibration routine".
 
 ## House style — mirror the MARF 248r (github.com/auxren/marf)
 Same author, same F4 family. **Align the 288r firmware to it:** **StdPeriph** (not CubeMX/HAL) —
