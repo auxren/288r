@@ -40,6 +40,19 @@ void dl_write(delay_line_t *d, float x);
  * 1.0 .. len-2). `interp` selects the interpolation kernel. */
 float dl_read(const delay_line_t *d, float delay, dl_interp_t interp);
 
+/* Read at an absolute fractional buffer index (wrapped mod len). */
+float dl_read_at(const delay_line_t *d, float index, dl_interp_t interp);
+
+/* Loop/recirc read: a tap `delay` behind the head, but confined to the loop
+ * window [loop_start, loop_end] (inclusive-ish, wraps within the window).
+ * Used in RECIRC/looper mode. */
+float dl_read_loop(const delay_line_t *d, float delay,
+                   uint32_t loop_start, uint32_t loop_end, dl_interp_t interp);
+
+/* Advance the head one sample within a loop window (RECIRC playback, no write):
+ * head++ ; if it passes loop_end it snaps back to loop_start. */
+void dl_advance_loop(delay_line_t *d, uint32_t loop_start, uint32_t loop_end);
+
 /* Optional "vintage" quantizer for the write path: reduce to `bits` (e.g. 12) with
  * triangular dither. Apply to the sample before dl_write() when in vintage mode.
  * `dither` is a value in [-1,1] (e.g. from a cheap PRNG); pass 0 for none. */

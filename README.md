@@ -9,10 +9,20 @@ The module shipped, its promised source was never released, and support was drop
 is a clean-room-adjacent effort to understand the shipped binary well enough to safely patch and
 extend it, and to serve as a learning resource for embedded audio / STM32 reverse engineering.
 
-> **Status:** delay engine fully mapped from the binary; **Patch 1 (interpolated delay tap)
-> drafted, assembled, and statically verified** (`re/patches/`); readable-C reconstruction of the
-> delay core started (`firmware/`). Awaiting an SWD/JTAG session on real hardware to flash and
-> validate the first interpolation patch.
+## Credits
+
+- **[@Mixcatonic](https://www.modwiggler.com/) (ModWiggler Forum)** — for digging into the shipped
+  `.hex`, disassembling/decompiling it, and mapping the front-panel controls to the firmware. That
+  work (preserved in `re/binja/`) confirmed the STM32F429 target and gave the function/panel map the
+  delay-engine analysis is built on. Thank you.
+- The STM32F429 delay-engine data-flow analysis, the interpolation patch, and the community-firmware
+  rewrite in this repo build directly on that foundation.
+
+> **Status:** delay engine fully mapped; **Patch 1 (interpolated delay tap) drafted + statically
+> verified** (`re/patches/`); **clone-first community firmware engine written and host-tested**
+> (`firmware/` — delay line, taps, TIME control, transport, mixer, integration; `make test` green,
+> `make engine` cross-compiles for the F429). Now **blocked on the bench/SWD session** for the
+> board-specific HAL/pinout/codec/SDRAM config and calibration constants (see `firmware/README.md`).
 
 ---
 
@@ -94,7 +104,7 @@ re/
   scripts/
     analyze.py                  capstone-based literal/function/peripheral tagger
   disasm/full.thumb.asm         full arm-none-eabi-objdump Thumb-2 listing
-  binja/                        Binary Ninja artifacts (community-contributed)
+  binja/                        Binary Ninja artifacts — by @Mixcatonic (ModWiggler), see Credits
     rename_288r.py              sub_XXXX → semantic names + panel mapping (offset base 0)
     288r_decompiled_abridged.txt
     288r_full_linear.txt
@@ -176,10 +186,11 @@ Identify MCU, map peripherals/memory, locate and fully trace the delay engine, f
 - Pulse outputs (width/level): inspect TIM setup `sub_3edc`; determine HW vs FW limit with a scope.
 - Looper + delay coexistence, and manual-mode cycle switch / fixed 3 s: transport state machine.
 
-### Phase 3 — Rebuildable source project
-- Recover a commented C reconstruction (CubeMX-equivalent HAL init + hand-written DSP) that
-  compiles to a functionally-equivalent image; migrate patches into real source; CI that builds
-  the `.hex` and diffs against the reconstruction.
+### Phase 3 — Rebuildable community firmware 🚧 (engine done + tested; HAL blocked on hardware)
+- ✅ Clone-first DSP engine written and host-tested in `firmware/src/` (delay line, taps, TIME
+  control, transport, mixer, integration); `make test` green, `make engine` cross-compiles for F429.
+- ⬜ CubeMX HAL/startup + linker bring-up (`firmware/cube/`), then calibrate constants and validate
+  on hardware. Blocked on the bench/SWD session (pinout, codec, SDRAM, clock, calibration).
 
 ### Phase 4 — New features
 - Additional interpolation modes, tap feedback/modulation options, alternate loop behaviors,

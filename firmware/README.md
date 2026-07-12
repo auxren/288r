@@ -26,20 +26,48 @@ This targets **functional/audible equivalence**, not a byte-identical image (not
 firmware/
   README.md            this file
   DESIGN.md            rewrite architecture (keep vs rewrite, new engine, quality/efficiency wins)
+  Makefile             `make test` (host) / `make engine` (cross-compile) / `make firmware` (blocked)
+  STM32F429.ld         linker script (memory map; sizes marked CONFIRM for the bench session)
   src/
-    delay_line.{h,c}   fixed-rate fractional delay line + interpolation (linear/Hermite)  [done, tested]
-    (taps, time_control, transport, mixer, audio_io, panel, main ...  to come — see DESIGN.md)
+    delay_line.{h,c}   fixed-rate fractional delay line + interpolation (linear/Hermite)  [tested]
+    taps.{h,c}         8-tap 288 model: phase-select, presets, per-tap slewed delay        [tested]
+    time_control.{h,c} TIME MULTIPLIER: single-precision, slewed, no PLL/hysteresis         [tested]
+    transport.{h,c}    WRITE / RECIRC (looper) state machine + loop-window capture          [tested]
+    mixer.{h,c}        per-tap slider gains, phase select, summed output                    [tested]
+    engine.{h,c}       integration: the per-sample signal flow tying it together           [tested]
+    main.c             top-level superloop + SAI/DMA block callback (HAL calls are TODO/cube)
   test/
-    test_delay_line.c  host unit test (proves continuous, non-stepped fractional reads)
-  cube/                CubeMX .ioc + generated HAL (to be added)
-  Makefile / CMake     arm-none-eabi build -> B288-community.hex   (to be added)
+    test_delay_line.c  proves continuous, non-stepped fractional reads
+    test_taps.c        phase/time scaling + smooth (non-stepped) modulation sweep
+    test_engine.c      end-to-end: stability under TIME sweep, delayed output, RECIRC looping
+  cube/                CubeMX .ioc + generated HAL  (BLOCKED — needs board pinout)
 ```
 
-Build+run the host tests:
+Build & test (no hardware needed):
 ```bash
-cc -std=c11 -Wall -Wextra -Ifirmware/src firmware/test/test_delay_line.c \
-   firmware/src/delay_line.c -o /tmp/tdl -lm && /tmp/tdl
+cd firmware
+make test      # build + run all host unit tests
+make engine    # cross-compile the whole engine for STM32F429 (proves it builds; ~1.8 KB)
 ```
+
+## Blocked on hardware (the bench / SWD session)
+
+The engine is done and tested; a **flashable image** needs board-specific facts we can only get
+from the unit. Everything below is a `TODO(bench)`/`TODO(cube)` in the source:
+
+- **Exact part & memories:** F429 flash variant (512K/1M/2M), external SDRAM chip + size and FMC
+  timings (sets max delay). `STM32F429.ld` sizes are marked CONFIRM.
+- **Pinout → CubeMX `cube/`:** which GPIO/ADC/I²C/SAI/TIM pins map to the codec and each control.
+  This produces `SystemClock_Config` + `MX_*_Init` (the `extern`s in `main.c`).
+- **Codec:** part number, control interface, word format & channel layout (the int24↔float
+  conversion and `audio_block()` layout in `main.c` assume left-justified 24-bit — verify).
+- **Clock tree / base rate:** crystal freq, PLL/PLLSAI config, chosen fixed sample rate.
+- **Calibration constants:** the TIME taper curve, SHORT/FULL cycle lengths in samples at the base
+  rate, output-mixer slider gain law, AUTO CONTROL behavior, and pulse-output thresholds/levels.
+  These are parameterized in the engine and marked "calibrate on hardware".
+
+Until then, the **binary patch** in `re/patches/` is the way to hear the interpolation fix on the
+stock firmware.
 
 ## Binary ↔ source map (keep this honest as we go)
 - `delay_write_sample()`     ⇦ `delay_tap_service_A/B`  (sub_1250 / sub_15dc)

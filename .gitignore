@@ -11,3 +11,6 @@ __pycache__/
 patched*.bin
 patched*.hex
 patch.bin
+
+# firmware build outputs
+firmware/build/
