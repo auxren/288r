@@ -1,5 +1,8 @@
 # Buchla 288r — Firmware Reverse-Engineering & Community Firmware
 
+[![CI](https://github.com/auxren/288r/actions/workflows/ci.yml/badge.svg)](https://github.com/auxren/288r/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Open reverse-engineering of the released `.hex` firmware for the **Buchla-format 288r
 "Time Domain Processor"** (Roman Filippov / Black Corporation), with the goal of producing
 **community firmware updates** that fix bugs and add features the original firmware never got —
