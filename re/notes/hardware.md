@@ -4,19 +4,29 @@ Complements the binary RE (`architecture.md`, `delay-engine.md`) with physical-b
 Sources: top-side board photo, manufacturer BOM `B288-BOM-v1_0.xlsx` (REV 1.0), and marked
 community/vendor reports. Items not yet visually/loupe-confirmed are flagged **VERIFY**.
 
-## Silicon
-- **MCU: STM32F429, LQFP144** — almost certainly **STM32F429ZIT6** (2 MB flash, 192 KB SRAM +
-  64 KB CCM). Cortex-M4F + DSP + FMC. **VERIFY exact suffix with a loupe.**
-  → confirms `firmware/STM32F429.ld` FLASH=2048K and _estack 0x20030000 (192 KB SRAM top).
-- **External SDRAM: ISSI, TSOP-54, 16-bit** (marking "…611", date 1815) on the FMC — the delay/loop
-  buffer. Density ≥64 Mbit; likely IS42S16xxx (**8 MB or 32 MB — VERIFY**). Maps at 0xC0000000.
-- **Second ST QFP (LQFP48/64) near the STLINK header — role UNCONFIRMED.** Possibly a companion
-  MCU (USB/UI) or codec controller. **May have its own firmware + RDP — must be dumped/checked
-  separately.** The RE so far covers only the F429 image (`B288-REV1.0.hex`).
-- **Audio codec:** part not identified from the photo. Firmware config says 24-bit; sample rate
-  **96 kHz** (vendor copy "196KHz" is a typo — reconcile against codec/SAI init). **VERIFY part** via
-  the I²C/SPI codec init in the F429 image.
-- **HSE crystal:** discrete HC-49 near the MCU. **VERIFY frequency** (needed for the clock tree).
+## Silicon (part numbers read off the clearer board photo)
+- **MCU: STM32F429Z (LQFP144)**, marked `ARM / ST 32F429Z?T6`. Cortex-M4F + DSP + FMC.
+  **Confirm flash suffix: `ZE`=512 KB vs `ZI`=2 MB** — matters for `firmware/STM32F429.ld` FLASH size.
+  (Image reads like `ZET6`; if 512 KB, change the linker from 2048K to 512K.) 192 KB SRAM + 64 KB CCM,
+  _estack 0x20030000.
+- **External SDRAM: ISSI `IS42S16400J-7TLI`** = 4M×16 = **64 Mbit / 8 MB, 16-bit, -7 (143 MHz),
+  industrial.** Maps at 0xC0000000 via FMC. → density RESOLVED (8 MB). At 16-bit samples that's
+  ~4M samples (~43 s mono @ 96 kHz), matching the "40 s" spec — **confirms the int16 SDRAM buffer**
+  (float32 would need 15 MB and not fit). 8 MB is also why long delays use reduced rates.
+- **Audio codec: Cirrus Logic `CS42888-DQZ` (48-TQFP)** — this IS the "second QFP" near the STLINK
+  header; the earlier brief misread the Cirrus logo as "ST". **4 ADC-in / 8 DAC-out, 24-bit, up to
+  192 kHz, TDM/I²S, I²C or SPI control.** No separate companion MCU / no second firmware / no extra
+  RDP — the design is single-MCU. **This reframes the audio path (see below).**
+- **HSE crystal:** discrete near the MCU. **VERIFY frequency** (needed for the clock tree).
+
+## Audio architecture implication (CS42888 = 4-in / 8-out)
+The 8 DAC channels map to the **8 taps — each tap has its own physical output** (the 288's individual
+tap outs; summed outs are the analog op-amp section). The 4 ADCs are signal/CV inputs. The F429
+drives the CS42888 over **SAI2 in multichannel TDM** (this is why the firmware has two paths
+"A"/"B" — the 8 out + 4 in split across SAI sub-blocks / TDM slots), with codec register control over
+**I²C or SPI2** (`0x40003800`). → `firmware/src/audio_io` and the engine output stage should emit
+**8 independent tap channels via TDM**, not a single mixed output; per-tap level/phase/mute apply per
+channel. Confirm the exact TDM slot map + control bus from the codec-init code in the F429 image.
 
 ## Config / UI front end — a hardware scan chain (no preset NVM expected)
 Presets are **read live from hardware**, not stored. The MCU clocks DIP banks in via **74HC595**
@@ -66,12 +76,13 @@ check the mainboard.**
    scaling/calibration (relates to `time_control` mapping — a calibration item here anyway).
 3. **Preset recall / general polish.**
 
-## Bench checklist (resolves the remaining unknowns)
-- [ ] F429 exact suffix (flash/RAM) — loupe.
-- [ ] SDRAM part# + density (ISSI marking) — sets max delay & informs buffer sample format.
-- [ ] Second ST QFP role; separate firmware + RDP?
-- [ ] Option bytes / RDP level before any erasing connect.
-- [ ] 25AA512 EEPROM present on mainboard? (preset-storage question)
-- [ ] HSE crystal frequency.
-- [ ] Locate mainboard (PCB3) BOM.
-- [ ] Confirm codec part + that SAI runs 24/96 (not 192).
+## Bench checklist (updated after the clearer photo)
+Resolved from the photo: ✅ codec = Cirrus CS42888 (4-in/8-out); ✅ SDRAM = IS42S16400 (8 MB, 16-bit);
+✅ no second MCU (the "second QFP" was the codec) → no extra firmware/RDP to chase.
+Still to confirm:
+- [ ] **F429 flash suffix — `ZE` (512 KB) vs `ZI` (2 MB)** — sets the linker FLASH length.
+- [ ] Codec **control bus: I²C or SPI2** + the **TDM slot→tap map** (read from F429 codec-init).
+- [ ] Codec sample-rate mode: confirm 24/96 (spec "196KHz" is a typo).
+- [ ] HSE crystal frequency (clock tree).
+- [ ] Option bytes / RDP level before any erasing connect (we already have the `.hex`).
+- [ ] 25AA512 EEPROM actually populated? (likely a BOM paste error; low priority now.)

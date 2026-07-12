@@ -30,15 +30,19 @@ better engine; add new features/controls/modulation only *after* the clone is na
   The no-hardware DSP/patch work is essentially exhausted.
 
 ## Key technical facts
-- MCU **STM32F429ZIT6** (2 MB flash @ `0x08000000`, 192 KB SRAM (SP `0x20030000`) + 64 KB CCM),
-  external **SDRAM delay buffer @ `0xC0000000`** via FMC (ISSI **16-bit**, 8 or 32 MB — VERIFY).
-  Audio = **SAI2** full-duplex + **DMA2 Stream1/Stream4**, **24-bit / 96 kHz** (vendor "196KHz" is a
-  typo). ADC1/2/3 = CV/pots/trimmers. Stock image 27,912 B. Panel = **74HC595/74HC4051 hardware
-  scan** (DIP-binary tap times in 10 ms steps, phase/mute DIPs, 36 trimmers muxed to ADC) →
-  presets are live-read hardware, **likely no NVM**. Full board brief: `re/notes/hardware.md`.
-- **Watch out:** a **second ST QFP** (LQFP48/64) may be a companion MCU with its own firmware+RDP
-  (our RE covers only the F429 image); and a possible **25AA512 SPI EEPROM** (BOM anomaly) — both to
-  check on the bench. SWD is open (RDP-0 expected); ST-Link/V2 ships with the kit.
+- MCU **STM32F429Z** (LQFP144), 192 KB SRAM (SP `0x20030000`) + 64 KB CCM. **Confirm flash suffix
+  `ZE`(512 KB) vs `ZI`(2 MB)** — image reads like `ZET6`; if 512 KB, set `STM32F429.ld` FLASH=512K.
+- **Codec = Cirrus Logic CS42888** (48-TQFP, the chip by the STLINK header — the earlier "second ST
+  QFP" was a misread Cirrus logo; there is NO second MCU). **4 ADC-in / 8 DAC-out, 24-bit, TDM/I²S**,
+  control over I²C or SPI2. → the **8 taps each get their own DAC output**; the F429 drives it via
+  **SAI2 multichannel TDM** (hence the firmware's A/B paths). audio_io/engine output should be
+  **8-channel TDM**, not one mixed output.
+- **SDRAM = ISSI IS42S16400 (8 MB, 4M×16, 16-bit)** @ `0xC0000000` via FMC → use an **int16** buffer
+  (float32 won't fit 40 s). Audio **24-bit / 96 kHz** (vendor "196KHz" = typo). Stock image 27,912 B.
+- Panel = **74HC595/74HC4051 hardware scan** (DIP-binary tap times 10 ms steps, phase/mute DIPs, 36
+  trimmers muxed to ADC) → presets live-read, **likely no NVM**. Full board brief: `re/notes/hardware.md`.
+- SWD open (RDP-0 expected); ST-Link/V2 ships with the kit. Possible 25AA512 EEPROM (BOM anomaly,
+  low priority). Board photo confirmed all of the above.
 - **Address mapping:** Binary Ninja `sub_X` (in `re/binja/`, loaded at base 0) == our flash address
   `0x08000000 + X`. Verified.
 - **Two root causes of no chorus/flanger** (both confirmed in code):
