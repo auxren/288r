@@ -2,9 +2,10 @@
  *
  * The hardware-independent engine (engine.c et al.) is complete and tested. This
  * file is the bring-up skeleton that wires it to the STM32F429 peripherals. The
- * HAL init and the exact peripheral/pin/clock config are produced by CubeMX from
- * the confirmed board pinout — those calls are declared `extern` here and marked
- * TODO(cube). See firmware/README.md "Blocked on hardware".
+ * The peripheral/pin/clock init is hand-written on the Standard Peripheral Library
+ * (reuse the MARF 248r's `Libraries/`) from the confirmed board pinout — those init
+ * calls are declared `extern` here and marked TODO(init). See firmware/README.md
+ * "Blocked on hardware".
  *
  * Data flow on hardware: SAI2 RX/TX run full-duplex over DMA2 in double-buffer
  * (ping-pong). The half/complete IRQs hand a block of samples to audio_block(),
@@ -36,15 +37,15 @@ static float delay_buf[DELAY_LEN] __attribute__((section(".sdram")));
 
 static engine_t g_engine;
 
-/* ---- TODO(cube): provided by CubeMX-generated HAL from the board pinout ---- */
-extern void SystemClock_Config(void);   /* HSE/PLL + PLLSAI for the codec clock  */
-extern void MX_GPIO_Init(void);
-extern void MX_FMC_SDRAM_Init(void);     /* external delay RAM                    */
-extern void MX_SAI2_Init(void);          /* 24-bit full-duplex codec I/O          */
-extern void MX_DMA_Init(void);           /* DMA2 streams for SAI2 RX/TX           */
-extern void MX_ADC_Init(void);           /* CV / pots / trimmers                  */
-extern void MX_I2C_Init(void);           /* output-mixer slider bank              */
-extern void MX_TIM_Init(void);           /* pulse-output timing                   */
+/* ---- TODO(init): hand-written StdPeriph init from the board pinout (⇐ MARF) ---- */
+extern void clock_init(void);   /* HSE/PLL + PLLSAI for the codec clock  */
+extern void gpio_init(void);
+extern void sdram_init(void);   /* FMC → external delay RAM              */
+extern void sai2_init(void);    /* 24-bit multichannel TDM (CS42888)     */
+extern void dma_init(void);     /* DMA2 streams for SAI2 RX/TX           */
+extern void adc_init(void);     /* CV / pots / trimmers (via 4051 mux)   */
+extern void i2c_init(void);     /* codec control + slider bank           */
+extern void tim_init(void);     /* pulse-output timing                   */
 
 /* ---- panel -> engine params (TODO: panel.c; needs pin/channel map) -------- */
 static float panel_time_raw01(void) { return 0.5f; }   /* TODO(bench): ADC map   */
@@ -71,14 +72,14 @@ void audio_block(const int32_t *in, int32_t *out, unsigned n)
 
 int main(void)
 {
-    SystemClock_Config();
-    MX_GPIO_Init();
-    MX_FMC_SDRAM_Init();
-    MX_DMA_Init();
-    MX_SAI2_Init();
-    MX_ADC_Init();
-    MX_I2C_Init();
-    MX_TIM_Init();
+    clock_init();
+    gpio_init();
+    sdram_init();
+    dma_init();
+    sai2_init();
+    adc_init();
+    i2c_init();
+    tim_init();
 
     engine_init(&g_engine, delay_buf, DELAY_LEN,
                 (float)BASE_DELAY_FULL, /*time_lo*/ 0.25f, /*time_hi*/ 20.0f, /*slew*/ 0.15f);

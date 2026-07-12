@@ -18,11 +18,13 @@ extend it, and to serve as a learning resource for embedded audio / STM32 revers
 - The STM32F429 delay-engine data-flow analysis, the interpolation patch, and the community-firmware
   rewrite in this repo build directly on that foundation.
 
-> **Status:** delay engine fully mapped; **Patch 1 (interpolated delay tap) drafted + statically
-> verified** (`re/patches/`); **clone-first community firmware engine written and host-tested**
-> (`firmware/` — delay line, taps, TIME control, transport, mixer, integration; `make test` green,
-> `make engine` cross-compiles for the F429). Now **blocked on the bench/SWD session** for the
-> board-specific HAL/pinout/codec/SDRAM config and calibration constants (see `firmware/README.md`).
+> **Status:** delay engine fully mapped; hardware identified (STM32F429 · Cirrus **CS42888** codec ·
+> ISSI **8 MB** SDRAM · no EEPROM) and the panel switch→GPIO map traced; **Patch 1 (interpolated delay
+> tap) complete + statically verified** for both audio paths (`re/patches/`); **clone-first community
+> firmware engine written and host-tested** (`firmware/` — delay line + interpolation, taps, TIME
+> control, transport, mixer, envelope, crossfade, integration; 6 test suites green, cross-compiles for
+> the F429). Now **blocked on the bench/SWD session** for the StdPeriph init from the pinout, the codec
+> control bus/TDM map, and calibration constants (see `firmware/README.md`).
 
 ---
 
@@ -189,8 +191,8 @@ Identify MCU, map peripherals/memory, locate and fully trace the delay engine, f
 ### Phase 3 — Rebuildable community firmware 🚧 (engine done + tested; HAL blocked on hardware)
 - ✅ Clone-first DSP engine written and host-tested in `firmware/src/` (delay line, taps, TIME
   control, transport, mixer, integration); `make test` green, `make engine` cross-compiles for F429.
-- ⬜ CubeMX HAL/startup + linker bring-up (`firmware/cube/`), then calibrate constants and validate
-  on hardware. Blocked on the bench/SWD session (pinout, codec, SDRAM, clock, calibration).
+- ⬜ StdPeriph init/startup layer (reuse the MARF `Libraries/`) + linker bring-up, then calibrate and
+  validate on hardware. Blocked on the bench/SWD session (pinout, codec control bus, clock, calibration).
 
 ### Phase 4 — New features
 - Additional interpolation modes, tap feedback/modulation options, alternate loop behaviors,

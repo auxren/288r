@@ -88,13 +88,14 @@ re/.venv/bin/python re/scripts/apply_patch1.py   # (re)generate + verify Patch 1
 ```
 
 ## What's next
-**Blocked until the bench/SWD session** (needs the board). Now-known from the board brief: MCU
-F429Z, 24/96, 74HC595/4051 panel scan. Still needed: **pinout** → StdPeriph init, **SDRAM density**
-(caps max delay + picks int16 vs float32 buffer), **codec part**, **HSE freq**/clock tree, the
-**second MCU** role + its own dump, **25AA512 EEPROM** presence, the **mainboard (PCB3) BOM**, and
-calibration constants (TIME taper/CV range, tap-time 10 ms decode, slider gain law, AUTO CONTROL,
-pulse thresholds). Markers: `TODO(bench)`/`TODO(cube)` in `main.c`+`STM32F429.ld`; full checklist in
-`re/notes/hardware.md` and `firmware/README.md` "Blocked on hardware".
+**Resolved** (no longer open): MCU F429Z + 24/96 + 74HC595/4051 scan; codec = **CS42888**
+(4-in/8-out TDM, no second MCU); SDRAM = **IS42S16400 8 MB/16-bit** → int16/int32 buffer; **no
+EEPROM** (BOM paste error); panel switch→GPIO map traced; momentary switches SW14/16 identified.
+**Blocked until the bench/SWD session** (still needs the board): **F429 flash suffix** (ZE 512 K vs
+ZI 2 M), the exact **pinout** → StdPeriph init, the **codec control bus** (I²C vs SPI2) + **TDM
+slot→tap map**, **HSE frequency**, and **calibration constants** (TIME CV range/taper, slider/pot
+gain law, AUTO CONTROL, pulse thresholds). Markers: `TODO(bench)`/`TODO(init)` in `main.c` +
+`STM32F429.ld`; full checklist in `re/notes/hardware.md` and `firmware/README.md` "Blocked on hardware".
 
 **Doable now without hardware (mostly done):** ✅ Patch 1 both paths + mode6, ✅ one-pole envelope
 followers, ✅ interp-quality measurement. Remaining optional/speculative: an all-pass fractional

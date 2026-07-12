@@ -35,12 +35,12 @@ firmware/
     transport.{h,c}    WRITE / RECIRC (looper) state machine + loop-window capture          [tested]
     mixer.{h,c}        per-tap slider gains, phase select, summed output                    [tested]
     engine.{h,c}       integration: the per-sample signal flow tying it together           [tested]
-    main.c             top-level superloop + SAI/DMA block callback (HAL calls are TODO/cube)
+    main.c             top-level superloop + SAI/DMA block callback (init calls TODO — StdPeriph)
   test/
     test_delay_line.c  proves continuous, non-stepped fractional reads
     test_taps.c        phase/time scaling + smooth (non-stepped) modulation sweep
     test_engine.c      end-to-end: stability under TIME sweep, delayed output, RECIRC looping
-  cube/                CubeMX .ioc + generated HAL  (BLOCKED — needs board pinout)
+  Libraries/           CMSIS + STM32F4xx StdPeriph  (to reuse from MARF; needs board pinout)
 ```
 
 Build & test (no hardware needed):
@@ -57,8 +57,8 @@ from the unit. Everything below is a `TODO(bench)`/`TODO(cube)` in the source:
 
 - **Exact part & memories:** F429 flash variant (512K/1M/2M), external SDRAM chip + size and FMC
   timings (sets max delay). `STM32F429.ld` sizes are marked CONFIRM.
-- **Pinout → CubeMX `cube/`:** which GPIO/ADC/I²C/SAI/TIM pins map to the codec and each control.
-  This produces `SystemClock_Config` + `MX_*_Init` (the `extern`s in `main.c`).
+- **Pinout → StdPeriph init:** which GPIO/ADC/I²C/SAI/TIM pins map to the codec and each control.
+  This fills the hand-written `clock_init` + `*_init` functions (the `extern`s in `main.c`).
 - **Codec:** part number, control interface, word format & channel layout (the int24↔float
   conversion and `audio_block()` layout in `main.c` assume left-justified 24-bit — verify).
 - **Clock tree / base rate:** crystal freq, PLL/PLLSAI config, chosen fixed sample rate.
@@ -70,15 +70,17 @@ Until then, the **binary patch** in `re/patches/` is the way to hear the interpo
 stock firmware.
 
 ## Binary ↔ source map (keep this honest as we go)
-- `delay_write_sample()`     ⇦ `delay_tap_service_A/B`  (sub_1250 / sub_15dc)
-- `delay_read_tap()`         ⇦ tap read+mixer            (sub_1968 / sub_1c98)
-- `time_multiplier_update()` ⇦ `time_multiplier_and_envfollow` (sub_2030)
-- `main()` / superloop       ⇦ `main_init_and_run_loop`  (sub_2508)
+- `delay_line` + `transport`  ⇦ `delay_tap_service_A/B` (sub_1250 / sub_15dc)  [write/record]
+- `delay_line` + `taps` + `crossfade` ⇦ tap read+mixer  (sub_1968 / sub_1c98)  [read/output]
+- `time_control`              ⇦ `time_multiplier_and_envfollow` (sub_2030)
+- `transport`                 ⇦ write/recirc/loop state machine (transport_mode @0x200000d0)
+- `main()` / superloop        ⇦ `main_init_and_run_loop`  (sub_2508)
 
-RAM variable addresses (e.g. `delay_write_ptr` @0x200000c4) are documented in
-`re/binja/rename_288r.py` and mirrored as named fields in `struct delay_state`.
+Stock RAM variables (e.g. `delay_write_ptr` @0x200000c4) are documented in
+`re/binja/rename_288r.py`; the switch→function map is in `re/notes/hardware.md`.
 
-## Build (once cube/ + Makefile land)
+## Build the full image (once the StdPeriph init lands)
+`make test` / `make engine` work today. The flashable image additionally needs the init layer:
 ```bash
 make            # -> firmware/build/B288-community.hex
 openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \

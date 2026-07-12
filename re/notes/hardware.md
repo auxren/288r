@@ -111,12 +111,14 @@ conflict). The A/B/C toggle just picks which trimmer-derived phase row feeds the
   SWD (OpenOCD / STM32CubeProgrammer). Community builders reflashed these "painlessly".
 - **RDP (read-protect) level is the gating unknown for dumping** — almost certainly **Level 0 (open)**
   given the shipped ST-Link. Check option bytes (`0x1FFFC000`) before any connect that could
-  mass-erase. (We already have the `.hex`, so this matters mainly for the second MCU / re-dumps.)
+  mass-erase. (We already have the `.hex`, and there's no second MCU, so RDP matters only for re-dumps.)
 
 ## BOM scope caveat
-`B288-BOM-v1_0.xlsx` covers only **PCB1 (front panel)** and **PCB2 (trimmer/config board)** — the
-**mainboard (PCB3) with the F429/SDRAM/codec/595/4051 is NOT in this file.** The mainboard BOM is the
-**highest-value missing artifact** (pins down F429 suffix, codec part, SDRAM density). Source it.
+`B288-BOM-v1.0.xlsx` covers only **PCB1 (front panel)** and **PCB2 (trimmer/config board)** — the
+**mainboard (PCB3) with the F429/SDRAM/codec/595/4051 is NOT in this file.** Its main silicon is
+already identified from the board photo (F429Z / CS42888 / IS42S16400), so the only thing the PCB3 BOM
+would still add is the **exact F429 flash suffix** and any parts not readable in the photo — nice to
+have, not blocking.
 
 ## Known behavioral bugs (community; firmware-side)
 1. **Pitch/Time mode buffer-wrap glitch** — in pitch mode a saw-LFO modulates delay time; at buffer

@@ -42,7 +42,7 @@ current fixed rate**, never by retuning the clock. Result: the long-delay capabi
 option are preserved as features, while time modulation becomes glitch-free and continuous.
 
 ```
- codec in ─▶ [input mixer] ─▶ write float32 → SDRAM circular buffer (delay_line)
+ codec in ─▶ [input mixer] ─▶ write → SDRAM circular buffer (int16 vintage / int32 hi-fi)
                                    │  (optional vintage quantize+dither on write)
  8 taps ─▶ for each tap:  delay_samples = base_time · phase[i] · time_mult(+CV, slewed)
                           out_i = interp(delay_line, delay_samples)   ← fractional, HW float
