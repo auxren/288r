@@ -72,6 +72,29 @@ firmware make an EEPROM very unlikely.)
 **DIP switches (PCB2):** SW1 = 774-2084 (4-pos, mode/config); SW27–SW32 = 774-2088 ×6 (8-pos tap-time,
 10 ms); SW19/20/23/24 = 206-125ST ×4 (5-pos, phase-invert); SW21/22/25/26 = 206-124 ×4 (4-pos, mute).
 
+## Switch → firmware function map (traced from the `.hex`)
+Two groups: GPIO-read mode switches (`read_mode_switches` sub_f64) and a packed
+`panel_switch_bits` word @`0x20000358` bit-tested by `sub_4310(N) = (bits >> N) & 1`.
+
+**GPIO mode switches** (base: 0x40020400=GPIOB, 0x40020c00=GPIOD):
+| Panel switch | GPIO pin | RAM | Effect (confirmed) |
+|---|---|---|---|
+| **cal. / pre-set** | GPIOB **10** | `0x20000362` | cal=1 → **live setup mode**: short buffers, ×2 time mult, taps track the **raw** control (vs the hysteresis-committed value in pre-set). |
+| **SHORT / FULL cycle** | GPIOB **11** | `0x20000361` | scales every tap position 4:1 — per-unit = **44** (FULL) vs **11** (SHORT) samples (the 44140/11035 divisor). |
+| resolution (2-bit) | GPIOD **11/12** | `0x20000360` | bit-depth: 0→20-bit, 1→16-bit, 2→**12-bit vintage**. |
+
+**`panel_switch_bits` (0x20000358)** — packed switch/DIP word:
+| Bit(s) | Effect |
+|---|---|
+| **0 / 1 / 2** | **preset bank select** in `lookup_preset_tap_position`: bit0 off → default even spacing (20,40,…,160); bit1 off → phase-table row +16; bit2 off → row 0; else row +8. This is the **A / B / C** selection (three stored rows + a default). |
+| 3 | tap-target mode (phase×mult vs raw). |
+| 6 | enables **bank_B** (second delay buffer / recirc path). |
+| 9 / 10 | octave/rate mode (×1/×2/×4) → `output_resolution_mode` → SAI PLL. |
+
+→ **Takeaway for our cal routine:** the `cal.` toggle (GPIOB10) is already a *live* mode, so for a
+*stored* min/max calibration prefer the **momentary SW14/SW16 power-up hold** (distinct entry, no
+conflict). The A/B/C toggle just picks which trimmer-derived phase row feeds the taps.
+
 **Continuous controls read via the 4051-mux → ADC (calibration targets, min/max):**
 - **9× 50 K linear ALPS 45 mm sliders** (POT8–POT16) = output-mixer levels.
 - **7× rotary pots** (POT1–POT7; POT1–5 log, POT6–7 lin) = input mixer / time / etc.
