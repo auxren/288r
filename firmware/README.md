@@ -55,8 +55,9 @@ make engine    # cross-compile the whole engine for STM32F429 (proves it builds;
 The engine is done and tested; a **flashable image** needs board-specific facts we can only get
 from the unit. Everything below is a `TODO(bench)`/`TODO(cube)` in the source:
 
-- **Exact part & memories:** F429 flash variant (512K/1M/2M), external SDRAM chip + size and FMC
-  timings (sets max delay). `STM32F429.ld` sizes are marked CONFIRM.
+- **Confirmed from chip markings:** MCU **STM32F429ZET6** (512K flash), codec **CS42888-DQZ**, SDRAM
+  **IS42S16400J-7TLI** (8 MB, -7). Remaining: FMC SDRAM **timing values** (from the IS42S16400
+  datasheet) and pin wiring.
 - **Pinout → StdPeriph init:** which GPIO/ADC/I²C/SAI/TIM pins map to the codec and each control.
   This fills the hand-written `clock_init` + `*_init` functions (the `extern`s in `main.c`).
 - **Codec:** part number, control interface, word format & channel layout (the int24↔float

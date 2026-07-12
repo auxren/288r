@@ -5,10 +5,9 @@ Sources: top-side board photo, manufacturer BOM `B288-BOM-v1_0.xlsx` (REV 1.0), 
 community/vendor reports. Items not yet visually/loupe-confirmed are flagged **VERIFY**.
 
 ## Silicon (part numbers read off the clearer board photo)
-- **MCU: STM32F429Z (LQFP144)**, marked `ARM / ST 32F429Z?T6`. Cortex-M4F + DSP + FMC.
-  **Confirm flash suffix: `ZE`=512 KB vs `ZI`=2 MB** — matters for `firmware/STM32F429.ld` FLASH size.
-  (Image reads like `ZET6`; if 512 KB, change the linker from 2048K to 512K.) 192 KB SRAM + 64 KB CCM,
-  _estack 0x20030000.
+- **MCU: STM32F429ZET6 (LQFP144)** — confirmed from the chip marking (`32F429ZET6`). `ZE` = **512 KB
+  flash**, 192 KB SRAM + 64 KB CCM, _estack 0x20030000. Cortex-M4F + DSP + FMC.
+  (`firmware/STM32F429.ld` FLASH = 512K.)
 - **External SDRAM: ISSI `IS42S16400J-7TLI`** = 4M×16 = **64 Mbit / 8 MB, 16-bit, -7 (143 MHz),
   industrial.** Maps at 0xC0000000 via FMC. → density RESOLVED (8 MB). At 16-bit samples that's
   ~4M samples (~43 s mono @ 96 kHz), matching the "40 s" spec — **confirms the int16 SDRAM buffer**
@@ -131,8 +130,9 @@ have, not blocking.
 ## Bench checklist (updated after the clearer photo)
 Resolved from the photo: ✅ codec = Cirrus CS42888 (4-in/8-out); ✅ SDRAM = IS42S16400 (8 MB, 16-bit);
 ✅ no second MCU (the "second QFP" was the codec) → no extra firmware/RDP to chase.
+Also resolved from chip close-ups: ✅ MCU = **STM32F429ZET6 (512 KB flash)**; ✅ codec = CS42888-DQZ;
+✅ SDRAM = IS42S16400J-7TLI (8 MB, -7).
 Still to confirm:
-- [ ] **F429 flash suffix — `ZE` (512 KB) vs `ZI` (2 MB)** — sets the linker FLASH length.
 - [ ] Codec **control bus: I²C or SPI2** + the **TDM slot→tap map** (read from F429 codec-init).
 - [ ] Codec sample-rate mode: confirm 24/96 (spec "196KHz" is a typo).
 - [ ] HSE crystal frequency (clock tree).

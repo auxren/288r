@@ -17,7 +17,7 @@
 
 /* ------------------------------------------------------------------ config */
 /* Hardware brief (board photo + BOM, see re/notes/hardware.md):
- *   MCU   = STM32F429Z (confirm ZE=512K vs ZI=2M flash).
+ *   MCU   = STM32F429ZET6 (confirmed: 512K flash, 192K SRAM + 64K CCM).
  *   Codec = Cirrus CS42888 (4 ADC-in / 8 DAC-out, 24-bit, TDM/I2S, I2C or SPI2
  *           control). The 8 taps map to the 8 DAC outputs -> the F429 drives it
  *           over SAI2 multichannel TDM; audio_io/output should be 8-channel, not

@@ -30,8 +30,8 @@ better engine; add new features/controls/modulation only *after* the clone is na
   The no-hardware DSP/patch work is essentially exhausted.
 
 ## Key technical facts
-- MCU **STM32F429Z** (LQFP144), 192 KB SRAM (SP `0x20030000`) + 64 KB CCM. **Confirm flash suffix
-  `ZE`(512 KB) vs `ZI`(2 MB)** — image reads like `ZET6`; if 512 KB, set `STM32F429.ld` FLASH=512K.
+- MCU **STM32F429ZET6** (LQFP144) — confirmed from chip marking: **512 KB flash**, 192 KB SRAM
+  (SP `0x20030000`) + 64 KB CCM. (`STM32F429.ld` FLASH = 512K.)
 - **Codec = Cirrus Logic CS42888** (48-TQFP, the chip by the STLINK header — the earlier "second ST
   QFP" was a misread Cirrus logo; there is NO second MCU). **4 ADC-in / 8 DAC-out, 24-bit, TDM/I²S**,
   control over I²C or SPI2. → the **8 taps each get their own DAC output**; the F429 drives it via
@@ -91,9 +91,9 @@ re/.venv/bin/python re/scripts/apply_patch1.py   # (re)generate + verify Patch 1
 **Resolved** (no longer open): MCU F429Z + 24/96 + 74HC595/4051 scan; codec = **CS42888**
 (4-in/8-out TDM, no second MCU); SDRAM = **IS42S16400 8 MB/16-bit** → int16/int32 buffer; **no
 EEPROM** (BOM paste error); panel switch→GPIO map traced; momentary switches SW14/16 identified.
-**Blocked until the bench/SWD session** (still needs the board): **F429 flash suffix** (ZE 512 K vs
-ZI 2 M), the exact **pinout** → StdPeriph init, the **codec control bus** (I²C vs SPI2) + **TDM
-slot→tap map**, **HSE frequency**, and **calibration constants** (TIME CV range/taper, slider/pot
+**Blocked until the bench/SWD session** (still needs the board): the exact **pinout** → StdPeriph
+init, the **codec control bus** (I²C vs SPI2) + **TDM slot→tap map** (readable from the `.hex`
+statically), **HSE frequency**, and **calibration constants** (TIME CV range/taper, slider/pot
 gain law, AUTO CONTROL, pulse thresholds). Markers: `TODO(bench)`/`TODO(init)` in `main.c` +
 `STM32F429.ld`; full checklist in `re/notes/hardware.md` and `firmware/README.md` "Blocked on hardware".
 
