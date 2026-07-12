@@ -25,12 +25,20 @@ This targets **functional/audible equivalence**, not a byte-identical image (not
 ```
 firmware/
   README.md            this file
+  DESIGN.md            rewrite architecture (keep vs rewrite, new engine, quality/efficiency wins)
   src/
-    delay_engine.c     reconstructed write + interpolated read + tap/transport  (started)
-    delay_engine.h
-    (time_multiplier.c, panel.c, audio_io.c, main.c ...  to come)
+    delay_line.{h,c}   fixed-rate fractional delay line + interpolation (linear/Hermite)  [done, tested]
+    (taps, time_control, transport, mixer, audio_io, panel, main ...  to come — see DESIGN.md)
+  test/
+    test_delay_line.c  host unit test (proves continuous, non-stepped fractional reads)
   cube/                CubeMX .ioc + generated HAL (to be added)
   Makefile / CMake     arm-none-eabi build -> B288-community.hex   (to be added)
+```
+
+Build+run the host tests:
+```bash
+cc -std=c11 -Wall -Wextra -Ifirmware/src firmware/test/test_delay_line.c \
+   firmware/src/delay_line.c -o /tmp/tdl -lm && /tmp/tdl
 ```
 
 ## Binary ↔ source map (keep this honest as we go)
