@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Python analysis env
+re/.venv/
+__pycache__/
+*.pyc
+
+# Build/patch scratch (keep the canonical re/B288-REV1.0.bin, ignore patched outputs)
+*.o
+patched*.bin
+patched*.hex
+patch.bin
