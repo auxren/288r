@@ -18,7 +18,18 @@ anchor instruction(s), re-emit `patched.hex`, and re-disassemble to verify.
   @ `0x20000000`), return `out = s0 + (s1-s0)*frac` to `0x08001aec`.
 
 Cortex-M4 has no `VRINT*`, so we use `VCVT.S32.F32` (round-toward-zero = floor for `dist ≥ 0`),
-matching the stock code. Cave is 92 bytes.
+matching the stock code.
+
+**Coverage:** both audio paths and both recirc fetches are patched — 6 detours, 184-byte cave:
+
+| Anchor | Path / case | Cave |
+|--------|-------------|------|
+| `0x08001aa6` | A (`sub_1968`) truncate dist | `caveA`  → ret `0x08001ab6` |
+| `0x08001ae8` | A main tap fetch            | `caveB`  → ret `0x08001aec` |
+| `0x08001b78` | A `mode==6` bank_B fetch     | `caveB`  → ret `0x08001aec` |
+| `0x08001dd2` | B (`sub_1c98`) truncate dist | `caveA_B`→ ret `0x08001de2` |
+| `0x08001e14` | B main tap fetch            | `caveB_B`→ ret `0x08001e18` |
+| `0x08001ea4` | B `mode==6` bank_B fetch     | `caveB_B`→ ret `0x08001e18` |
 
 **Build / apply / verify (static):**
 ```bash
@@ -38,10 +49,7 @@ ultimate fallback).
 **Validate:** breakpoint `0x08001aa6`, sweep the TIME pot, confirm `read_ptr` used to stair-step
 and is now continuous; A/B a slow LFO into TIME CV for glitch-free chorus.
 
-### Known limitations of Patch 1 v1 (follow-ups)
-- Patches **only `sub_1968`** (path A, main-delay fetch). The **twin `sub_1c98`** (path B) and the
-  **`mode==6` bank_B recirc fetch** (`0x08001b78`) still use nearest-neighbour — fine for the normal
-  delay/chorus/flanger case; add the same caves there next.
+### Known limitations of Patch 1 (follow-ups)
 - Neighbour wrap uses buffer length only, not the loop start/end pointers — off by ≤1 sample at the
   exact loop boundary in recirc mode (inaudible; refine if needed).
 - Linear interpolation is the v1 choice (cheap, ~0.5 dB HF droop near Nyquist). All-pass or Lagrange

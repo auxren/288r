@@ -17,8 +17,18 @@ from capstone import Cs, CS_ARCH_ARM, CS_MODE_THUMB, CS_MODE_MCLASS
 
 BASE      = 0x08000000
 CAVE_ADDR = 0x08007000
-ANCHOR_A  = 0x08001aa6   # vcvt.s32.f32 s15, s15   (truncate dist -> int)
-ANCHOR_B  = 0x08001ae8   # ldr.w r3, [r3, r2, lsl #2]  (single integer fetch)
+
+# (anchor addr, cave symbol, expected mnemonic, expected op substring)
+# Path A = sub_1968, Path B = sub_1c98; each: truncate (caveA*) + main fetch +
+# mode==6 bank_B fetch (both fetches -> caveB*).
+ANCHORS = [
+    (0x08001aa6, "caveA",   "vcvt.s32.f32", "s15,s15"),   # A: truncate dist
+    (0x08001ae8, "caveB",   "ldr.w",        "lsl#2"),      # A: main tap fetch
+    (0x08001b78, "caveB",   "ldr.w",        "lsl#2"),      # A: mode==6 bank_B fetch
+    (0x08001dd2, "caveA_B", "vcvt.s32.f32", "s15,s15"),   # B: truncate dist
+    (0x08001e14, "caveB_B", "ldr.w",        "lsl#2"),      # B: main tap fetch
+    (0x08001ea4, "caveB_B", "ldr.w",        "lsl#2"),      # B: mode==6 bank_B fetch
+]
 
 ROOT   = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN    = os.path.join(ROOT, "re", "B288-REV1.0.bin")
@@ -69,17 +79,16 @@ with tempfile.TemporaryDirectory() as td:
         p = line.split()
         if len(p) == 3: syms[p[2]] = int(p[0], 16)
 
-caveA, caveB = syms["caveA"], syms["caveB"]
-print(f"cave: {len(cave)} bytes @ {hex(CAVE_ADDR)}  caveA={hex(caveA)} caveB={hex(caveB)}")
+print(f"cave: {len(cave)} bytes @ {hex(CAVE_ADDR)}  " +
+      "  ".join(f"{s}={hex(syms[s])}" for s in ("caveA","caveB","caveA_B","caveB_B")))
 
 # --- 2. verify anchors -----------------------------------------------------
 data = bytearray(open(BIN, "rb").read())
-iA, iB = dis1(data, ANCHOR_A), dis1(data, ANCHOR_B)
-print(f"anchorA {hex(ANCHOR_A)}: {iA.mnemonic} {iA.op_str}")
-print(f"anchorB {hex(ANCHOR_B)}: {iB.mnemonic} {iB.op_str}")
-assert iA.mnemonic == "vcvt.s32.f32" and iA.op_str.replace(" ","") == "s15,s15", "anchorA mismatch!"
-assert iB.mnemonic == "ldr.w" and "lsl#2" in iB.op_str.replace(" ",""), "anchorB mismatch!"
-assert iA.size == 4 and iB.size == 4, "anchors must be 4-byte (room for b.w)"
+for addr, sym, mnem, opsub in ANCHORS:
+    ins = dis1(data, addr)
+    print(f"anchor {hex(addr)} -> {sym:8s}: {ins.mnemonic} {ins.op_str}")
+    assert ins.mnemonic == mnem and opsub in ins.op_str.replace(" ",""), f"anchor {hex(addr)} mismatch!"
+    assert ins.size == 4, f"anchor {hex(addr)} must be 4-byte (room for b.w)"
 
 # --- 3. splice -------------------------------------------------------------
 img = bytearray(data)
@@ -87,9 +96,9 @@ img = bytearray(data)
 if len(img) < (CAVE_ADDR - BASE):
     img += b"\xFF" * ((CAVE_ADDR - BASE) - len(img))
 img[CAVE_ADDR-BASE : CAVE_ADDR-BASE+len(cave)] = cave
-# write the two detours
-img[ANCHOR_A-BASE : ANCHOR_A-BASE+4] = encode_bw(ANCHOR_A, caveA)
-img[ANCHOR_B-BASE : ANCHOR_B-BASE+4] = encode_bw(ANCHOR_B, caveB)
+# write all detours
+for addr, sym, _, _ in ANCHORS:
+    img[addr-BASE : addr-BASE+4] = encode_bw(addr, syms[sym])
 
 open(OUTBIN, "wb").write(img)
 sh(["arm-none-eabi-objcopy", "-I", "binary", "-O", "ihex",
@@ -98,8 +107,8 @@ print(f"wrote {OUTBIN} ({len(img)} bytes) and {OUTHEX}")
 
 # --- 4. re-disassemble for review -----------------------------------------
 print("\n=== detours in place ===")
-for a in (ANCHOR_A, ANCHOR_B):
-    i = dis1(img, a); print(f"  {hex(a)}: {i.mnemonic} {i.op_str}")
+for a, sym, _, _ in ANCHORS:
+    i = dis1(img, a); print(f"  {hex(a)} -> {sym:8s}: {i.mnemonic} {i.op_str}")
 print("\n=== cave disassembly ===")
 for i in md.disasm(bytes(img[CAVE_ADDR-BASE:CAVE_ADDR-BASE+len(cave)]), CAVE_ADDR):
     print(f"  {hex(i.address)}: {i.mnemonic:14s} {i.op_str}")

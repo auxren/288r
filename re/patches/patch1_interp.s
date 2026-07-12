@@ -62,4 +62,39 @@ caveB:
         vmov         r3,  s12                @ result sample -> r3
         b.w          ret_after_B             @ -> 0x08001aec
 
+@ ---- Path B (sub_1c98): identical caves, path-B return addresses ------------
+        .global caveA_B
+        .thumb_func
+caveA_B:
+        vcvt.s32.f32 s13, s15
+        vcvt.f32.s32 s14, s13
+        vsub.f32     s14, s15, s14
+        vmov         r3,  s13
+        sub.w        r3,  r2, r3
+        str.w        r3,  [r9]
+        cmp          r0,  #2
+        b.w          ret_after_A_B           @ -> 0x08001de2
+
+        .global caveB_B
+        .thumb_func
+caveB_B:
+        ldr.w        r0,  [r3, r2, lsl #2]
+        subs         r1,  r2, #1
+        bpl          2f
+        movw         r12, #0x0000
+        movt         r12, #0x2000
+        ldr          r12, [r12]
+        add          r1,  r1, r12
+2:
+        ldr.w        r1,  [r3, r1, lsl #2]
+        vmov         s12, r0
+        vmov         s11, r1
+        vcvt.f32.s32 s12, s12
+        vcvt.f32.s32 s11, s11
+        vsub.f32     s11, s11, s12
+        vfma.f32     s12, s11, s14
+        vcvt.s32.f32 s12, s12
+        vmov         r3,  s12
+        b.w          ret_after_B_B           @ -> 0x08001e18
+
         .end
