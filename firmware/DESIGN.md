@@ -50,17 +50,59 @@ option are preserved as features, while time modulation becomes glitch-free and 
                           pulse taps ─▶ pulse outputs
 ```
 
-- **Buffer sample format — reconcile with the 16-bit SDRAM (re/notes/hardware.md).** The host
-  reference `delay_line` stores `float32` for clarity/testing. But the board's SDRAM is **ISSI
-  16-bit, possibly only 8 MB**, and the spec wants ~40 s: 40 s mono @ 96 kHz ≈ 15 MB as float32
-  (won't fit 8 MB) vs ≈ 7.5 MB as **int16**. So the SDRAM-backed build should store **int16** (also
-  matches the bus width + the "vintage" character), converting int16↔float at the codec boundary;
-  interpolation/mixing stay hardware-float. Keep `delay_line` as the float reference and add a thin
-  int16-storage adapter for SDRAM. (CONFIRM SDRAM density — 32 MB would allow float32 if preferred.)
+- **Buffer sample format:** the host reference `delay_line` stores `float32` for clarity/testing;
+  the SDRAM-backed build stores **int16 (vintage) / int32 (hi-fi)** with the layout tied to the
+  fidelity switch — full spec in **"Memory & fidelity — SDRAM buffer layout"** below.
 - **Interpolation** selectable: linear (cheap) → 4-point cubic/Hermite (better HF) → optional
   first-order all-pass (flat magnitude, ideal for flanger). See `src/delay_line.c`.
 - **Delay-time control**: raw ADC/CV → single-precision → one-pole slew → fractional `delay_samples`.
   A slow LFO or CV then sweeps the taps continuously (chorus/flanger) with no zipper.
+
+## Memory & fidelity — SDRAM buffer layout
+
+Hardware: SDRAM = ISSI IS42S16400, **8 MB, 16-bit** @ `0xC0000000`; codec 24-bit / 96 kHz
+(re/notes/hardware.md).
+
+### How the stock firmware does fidelity (from the RE)
+- **Bit-depth reduction**, 3 levels: on write, samples are arithmetic-right-shifted by **20 / 16 /
+  12 bits** (12 = "vintage"); restored by an equal left-shift on read (`sub_1250` / `sub_1968`).
+  Even "20-bit" is < 24, so there is always some reduction.
+- **Selected live** by a 2-bit value read from a front-panel switch via the 74HC595/GPIO scan
+  (`get_mode_2bit` ← RAM `0x20000360`). **No menu, no NVM** — it's a physical switch position,
+  re-read each cycle.
+- **The inefficiency:** the stock stores the reduced-depth sample in a **full int32 word**, in **two
+  full-length banks** (`bank_A` always; `bank_B` parallel-written at the same index in a switch mode
+  = the recirc/loop path). At max length that's ~7.2 MB of 8 MB — so it does **not** reclaim the
+  vintage savings; its 40 s comes from lowering the sample rate, not from packing.
+
+### Rewrite rule: fidelity selects storage width AND memory layout
+Store the *actual* width, so vintage buys memory instead of wasting it:
+
+| Fidelity mode | Sample store | 8 MB buys (96 kHz, mono) |
+|---|---|---|
+| **Vintage (≤16-bit)** | **int16 (2 B)** | **two full ~20 s banks**, or one ~40 s bank |
+| **Hi-fi (24-bit)**    | **int32 (4 B)** | one ~20 s bank, or two ~10 s banks |
+
+- Interpolation and mixing are **always hardware float**; convert int16/int32 ↔ float only at the
+  buffer boundary (cheap VCVT; SDRAM bandwidth is a non-issue at these rates).
+- **float32 storage is rejected**: no audible gain over int32 for a bounded audio delay line, and it
+  halves max delay for nothing. int32 = same 24-bit-clean quality at the same 4 bytes.
+
+### What the two banks are for
+Keep the stock's **record + recirc/loop** pair (`bank_A` = live/record, `bank_B` = loop/recirc). Two
+banks give seamless looping/overdub and a clean home for the **pitch-wrap crossfade fix** (dual read
+head). Optional alternative for bank 2: **stereo / A-B layering** — a product-shape choice; **DECIDE
+before wiring `audio_io`**.
+
+### Boot-time layout rule
+Fidelity is a live switch, but the SDRAM layout (bank count × width × length) can't change per sample.
+**Read the fidelity switch at boot and lay out SDRAM once.** Treat a mid-run fidelity change as a
+**buffer reinit** (brief clear) — same spirit as the stock re-reading cycle length on the fly. Do not
+try to preserve buffer contents across a width/bank-count change.
+
+### Open (needs the bench)
+- Which physical switch selects fidelity (CTS 208-4 "mode" DIP vs the A/B toggle) — from the pin map.
+- Confirm `bank_B`'s exact enable (switch bit tested by `sub_4310(6)`) and role, to clone it faithfully.
 
 ## Audio-quality improvements
 - Fractional/interpolated taps → glide instead of stepping; usable pitch/chorus/flanger.

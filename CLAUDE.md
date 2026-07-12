@@ -91,6 +91,10 @@ the read pointer stair-steps on the stock fw and is continuous after the patch; 
 
 ## Conventions
 - Clone-first; don't invent precise constants — parameterize and mark `calibrate on hardware`.
+- **Buffer/fidelity (decided):** SDRAM stores **int16 (vintage) / int32 (hi-fi)** — NOT float32;
+  fidelity is a live front-panel switch (3 levels 12/16/20-bit in stock) that also sets the SDRAM
+  layout (int16 → two ~20 s banks; int32 → one ~20 s bank), fixed at boot. Full spec: DESIGN.md
+  "Memory & fidelity — SDRAM buffer layout". Bank_B = recirc/loop path (stock).
 - Keep `Compiled FW/B288-REV1.0.hex` untouched (golden). BOOT0 ROM bootloader is the recovery path.
 - Attribution: `re/binja/` analysis is @Mixcatonic's (see README Credits) — preserve it.
 - Personal machine notes for the original author live outside the repo (`~/.claude/.../memory/`);
