@@ -33,16 +33,21 @@ firmware has two paths "A"/"B" — 8 out + 4 in split across SAI sub-blocks / TD
 - **I²C1** (`0x40005400`, handle @`0x200013c4`): a configured HAL I²C bus (analog/digital filters set)
   talking to some device — but see below.
 
-### CS42888 control bus — UNRESOLVED (needs full disasm or a bench probe)
-No CS42888 control address (7-bit `0x48-0x4F` / 8-bit `0x90-0x9E`) and no codec register-write
-sequence appear anywhere in the image. So the codec is **not** obviously configured by firmware over
-I²C/SPI. Two live hypotheses:
-1. **CS42888 hardware/pin-strapped** (little/no firmware register control) — then the rewrite just
-   sets up SAI2 TDM to match; no codec driver needed. (Simplest if true.)
-2. Controlled over **I²C1** with an address I couldn't isolate in the *abridged* decompile.
-**To resolve:** analyze the full (non-abridged) disassembly around the I²C1/SPI2 init, or on the bench
-scope/logic-analyze the codec's control pins at power-up (and read its mode-select strapping). Also
-still open: the exact **TDM slot count + channel→tap order** (from the SAI init struct values).
+### CS42888 control bus — UNRESOLVED; static signals conflict → resolve on the bench
+Checked the **full** disassembly (not just the abridged decompile): the I²C1 handle (`0x200013c4`) is
+initialized and appears in `main_init`'s literal pool, but **no CS42888 control address
+(7-bit `0x48-0x4F` / 8-bit `0x90-0x9E`) and no register-write sequence exist anywhere** in the image.
+The CS42888 is a **control-port codec** (normally register-configured), so *not* seeing any writes is
+surprising — and the board photo shows **no config-strap pins** tied to rails either. The two signals
+disagree, and static analysis can't settle it. **Definitive check is a quick bench probe:**
+- Logic-analyze / scope the codec **control pins at power-up** — SDA/SCL (I²C) or CS/SCLK (SPI). If
+  the MCU writes it, you capture the device address **and the exact register values** (more than we
+  can get statically). If idle, it runs on defaults/strapping.
+- Read the codec's **mode-select + address strap pins** (tied hi/lo) → I²C-vs-SPI and the address.
+
+Either way the rewrite's `audio_io` must set up **SAI2 TDM** regardless; the only open question is
+whether we also add a small I²C codec-init (≈a dozen register writes), which is trivial once the bench
+capture gives us the address + values. Also still open: exact **TDM slot count + channel→tap order**.
 
 ## Config / UI front end — a hardware scan chain (no preset NVM expected)
 Presets are **read live from hardware**, not stored. The MCU clocks DIP banks in via **74HC595**
