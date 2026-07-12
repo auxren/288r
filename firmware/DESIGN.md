@@ -81,9 +81,11 @@ main.c             init + superloop
 ```
 
 ## Open decisions & dependencies
-- **Scope/fidelity** (your call): strict behavioral clone with the engine improved only where it
-  was broken, vs. an enhanced instrument (new interpolation modes, extra modulation, remapped
-  controls). The engine work below is valid either way.
+- **Scope/fidelity: DECIDED → strict behavioral clone first.** Match the 288r's panel mappings,
+  presets, transport semantics, tap model and "vintage" character exactly; improve the engine only
+  where it was broken (interpolated fractional taps, fixed-rate time, hardware float). Features,
+  extra modulation, and remapped controls come *after* the clone is nailed. Constants recovered from
+  the binary are used directly; anything not fully pinned is marked "calibrate on hardware".
 - **Hardware confirmation (needs the SWD/bench session):** exact codec part + control wiring, SDRAM
   size (sets max delay at each base rate), pulse-output driver (bug #2 may be partly analog), and
   the real control→parameter scaling so we match the panel. Until then the engine is developed and
