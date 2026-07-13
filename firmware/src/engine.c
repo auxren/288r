@@ -17,7 +17,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
-float engine_process(engine_t *e, float input, float time_raw01)
+float engine_process_multi(engine_t *e, float input, float time_raw01, float chan[NUM_TAPS])
 {
     /* 1. delay-time control -> tap positions (continuous, slewed) */
     float mult = tc_update(&e->time, time_raw01);
@@ -45,8 +45,15 @@ float engine_process(engine_t *e, float input, float time_raw01)
                          : dl_read(&e->dl, delay, e->interp);
     }
 
-    /* 4. mix */
+    /* 4. mix: 8 per-tap DAC channels + the summed ("mixed") output */
+    mixer_channels(&e->mix, taps, chan);
     return mixer_sum(&e->mix, taps, e->auto_correction);
+}
+
+float engine_process(engine_t *e, float input, float time_raw01)
+{
+    float chan[NUM_TAPS];
+    return engine_process_multi(e, input, time_raw01, chan);
 }
 
 void engine_write(engine_t *e)  { transport_begin_write(&e->xport, e->dl.wpos); }

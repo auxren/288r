@@ -150,6 +150,15 @@ have, not blocking.
    scaling/calibration (relates to `time_control` mapping — a calibration item here anyway).
 3. **Preset recall / general polish.**
 
+**Corroboration (performer report, 2026-07):** a user who gigged with it described exactly the
+time-control problem as the deal-breaker for live use — *"the thing that made it not possible to use
+live was the time thing, it always did the same sound."* Matches our RE: the TIME parameter is
+hysteresis-quantized (`time_multiplier_committed`) and coarse delay re-tunes the PLL in octave steps,
+so the control isn't a smooth/continuous delay time — it locks to a few discrete values. **This is
+the priority fix** — the fixed-rate rewrite (continuous slewed fractional delay, no hysteresis/PLL
+stepping) targets it directly; the interpolation patch only smooths the *fine* read, not the upstream
+hysteresis.
+
 ## Bench checklist (updated after the clearer photo)
 Resolved from the photo: ✅ codec = Cirrus CS42888 (4-in/8-out); ✅ SDRAM = IS42S16400 (8 MB, 16-bit);
 ✅ no second MCU (the "second QFP" was the codec) → no extra firmware/RDP to chase.

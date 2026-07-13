@@ -36,8 +36,13 @@ typedef struct {
 void  engine_init(engine_t *e, float *buf, uint32_t len,
                   float base_delay, float time_lo, float time_hi, float slew);
 
-/* Process one input sample; time_raw01 is the TIME control in [0,1]. */
+/* Process one input sample; time_raw01 is the TIME control in [0,1]. Returns the
+ * summed ("mixed") output. */
 float engine_process(engine_t *e, float input, float time_raw01);
+
+/* Same, but also fill `chan[NUM_TAPS]` with the 8 per-tap channel outputs (→ the
+ * CS42888's 8 DAC channels). Returns the summed output (→ the "mixed" jacks). */
+float engine_process_multi(engine_t *e, float input, float time_raw01, float chan[NUM_TAPS]);
 
 /* Transport control (driven by panel/pulse layer). */
 void  engine_write(engine_t *e);    /* enter WRITE at current head          */

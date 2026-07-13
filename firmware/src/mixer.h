@@ -25,7 +25,12 @@ void  mixer_init(mixer_t *m);
 /* Set one tap's level (0..1) and polarity (+1/-1). */
 void  mixer_set_tap(mixer_t *m, int i, float gain, float phase);
 
-/* Sum the 8 taps with gains/phase, add auto-control correction, apply master. */
+/* Per-tap channel outputs (each tap * its gain * phase) -> the 8 DAC channels of the
+ * CS42888 (each 288 tap has its own physical output). out[] must hold NUM_TAPS. */
+void  mixer_channels(const mixer_t *m, const float taps[NUM_TAPS], float out[NUM_TAPS]);
+
+/* Sum the 8 taps with gains/phase, add auto-control correction, apply master.
+ * (The "mixed" output jacks; equals master*(sum of channels)+correction.) */
 float mixer_sum(const mixer_t *m, const float taps[NUM_TAPS], float auto_correction);
 
 /* Simple input mix: signal * gain (+ cv-scaled, placeholder for INPUT MIXER). */

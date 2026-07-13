@@ -17,6 +17,12 @@ void mixer_set_tap(mixer_t *m, int i, float gain, float phase)
     m->phase[i] = (phase < 0.0f) ? -1.0f : 1.0f;
 }
 
+void mixer_channels(const mixer_t *m, const float taps[NUM_TAPS], float out[NUM_TAPS])
+{
+    for (int i = 0; i < NUM_TAPS; i++)
+        out[i] = taps[i] * m->gain[i] * m->phase[i];
+}
+
 float mixer_sum(const mixer_t *m, const float taps[NUM_TAPS], float auto_correction)
 {
     float acc = 0.0f;

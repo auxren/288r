@@ -201,7 +201,8 @@ storage.h          versioned+checksummed record formats (⇐ MARF)              
 eprom.{h,c}        EEPROM memory layout (⇐ MARF)                                ← to build
 settings.{h,c}     glide/crossfade + load-at-boot, control-pinning              ← to build
 calib.{h,c}        power-up cal (SW14/16 hold): slider/pot min/max + CV gain/off ← to build (features)
-audio_io.{h,c}     SAI2/DMA2 (CS42888 TDM) block callbacks, format conversion   ← to build (bench)
+audio_io.{h,c}     CS42888 TDM block: int24<->float, 8 taps -> 8 DAC slots      ← done, tested
+                   (the SAI2/DMA2 init + IRQ wiring is the bench-gated part)
 panel.{h,c}        595 scan: switches, DIP presets, 4051-muxed trimmers         ← to build (bench)
 main.c             StdPeriph init + superloop                                   ← skeleton
 ```

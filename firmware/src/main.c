@@ -13,6 +13,7 @@
  * superloop and pushes parameters into the engine.
  */
 #include "engine.h"
+#include "audio_io.h"
 #include <stdint.h>
 
 /* ------------------------------------------------------------------ config */
@@ -51,23 +52,13 @@ extern void tim_init(void);     /* pulse-output timing                   */
 static float panel_time_raw01(void) { return 0.5f; }   /* TODO(bench): ADC map   */
 static void  panel_poll(engine_t *e) { (void)e;        /* TODO: sliders/switches */ }
 
-/* Called from the SAI DMA half/complete IRQ with one block of I/O.
- * NOTE(codec): the CS42888 is 4-in / 8-out over TDM, so `in`/`out` are actually
- * multichannel-interleaved (4 ADC slots in, 8 DAC slots out per frame) — the loop
- * below is a single-channel placeholder. TODO(bench): confirm the TDM slot map,
- * then emit each of the 8 taps to its own DAC slot and read the input/CV slots.
- * Word format assumed left-justified 24-bit in int32 — verify from codec-init. */
-void audio_block(const int32_t *in, int32_t *out, unsigned n)
+/* Called from the SAI DMA half/complete IRQ with one block of TDM frames.
+ * The CS42888 is 4-in / 8-out; audio_io_block() does the conversion + the 8-channel
+ * (per-tap) layout. TODO(bench): confirm the input audio slot and the TDM slot order. */
+#define AUDIO_IN_SLOT 0u
+void audio_block(const int32_t *in, int32_t *out, unsigned frames)
 {
-    const float to_f   = 1.0f / 8388608.0f;   /* 24-bit -> [-1,1)  (int24 in int32) */
-    const float from_f = 8388607.0f;
-    float t = panel_time_raw01();
-    for (unsigned i = 0; i < n; i++) {
-        float x = (float)(in[i] >> 8) * to_f;          /* assumes left-justified 24b */
-        float y = engine_process(&g_engine, x, t);
-        int32_t s = (int32_t)(y * from_f);
-        out[i] = s << 8;
-    }
+    audio_io_block(&g_engine, in, out, frames, AUDIO_IN_SLOT, panel_time_raw01());
 }
 
 int main(void)
