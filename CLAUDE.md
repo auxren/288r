@@ -23,9 +23,13 @@ better engine; add new features/controls/modulation only *after* the clone is na
   fractional interpolated tap to the *stock* firmware via flash code-cave detours. Covers **both
   audio paths** (`sub_1968` + `sub_1c98`) and both `mode==6` recirc fetches — 6 detours, 184-B cave.
 - **Community firmware engine: written + host-tested** — `firmware/src/` (delay_line, taps,
-  time_control, transport, mixer, engine, envelope) + `firmware/test/` (5 suites). `make test` green;
-  `make engine` cross-compiles for the F429 (~1.9 KB). Interpolation fidelity measured
-  (`test_interp_quality.c`): Hermite ~2.4× better than linear at ½ Nyquist.
+  time_control, transport, mixer, envelope, engine, crossfade, audio_io) + `firmware/test/`
+  (7 suites). `make test` green; `make engine` cross-compiles for the F429. engine exposes
+  `engine_process_multi()` (8 per-tap DAC channels + mixed out); audio_io does the CS42888 4-in/8-out
+  TDM block (int24↔float, clamped). Interp fidelity measured: Hermite ~2.4× better than linear @ ½ Nyq.
+  Still to build (pre-bench, host-testable): audio_buffer (int16/int32 SDRAM layer), panel (switch/595/
+  SPI-ADC decode), storage/settings/calib (MARF-style persistence + cal). Bench-gated: StdPeriph
+  init (SDRAM timings ready in docs/bench-runbook.md), SAI2/DMA wiring. See docs/bench-runbook.md.
 - **BLOCKED on the bench/SWD session** for a flashable image and exact constants (see below).
   The no-hardware DSP/patch work is essentially exhausted.
 
