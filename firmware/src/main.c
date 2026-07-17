@@ -17,7 +17,16 @@
 #include "bsp/board.h"
 #include "engine.h"
 #include "audio_io.h"
+#include "led.h"
 #include <stdint.h>
+
+/* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
+ * chain carries the DIP column-select and (likely) the 4051 mux-enable / codec
+ * reset (re/notes/panel-scan.md), so shifting an unlabelled word can drop audio.
+ * [BENCH] set PANEL_LED_WALK=1, flip PANEL_LED_ENABLE=1, and watch the panel to
+ * label the LED bits (and the must-not-touch bits); then drive led_word() for real. */
+#define PANEL_LED_ENABLE 0
+#define PANEL_LED_WALK   0   /* 1 = shift led_diag_walk() ~1 step/s to find LED bits */
 
 /* Delay memory in external SDRAM. float (~21.8 s @96 k, fills the 8 MB bank). The
  * int16/int32 SDRAM layer (2x capacity, vintage banks) is a staged rewrite module;
@@ -26,6 +35,11 @@
 static float delay_buf[DELAY_LEN] __attribute__((section(".sdram")));
 
 static engine_t g_engine;
+
+#if PANEL_LED_ENABLE
+static led_state_t g_leds;
+static unsigned    g_led_step;
+#endif
 
 extern volatile uint8_t g_spi_raw[2][3];   /* SPI2 control-ADC raw bytes (ch0,ch1) */
 
@@ -97,6 +111,11 @@ int main(void)
     bsp_audio_start();
     (void)bsp_codec_init();
 
+#if PANEL_LED_ENABLE
+    bsp_panel_init();          /* [BENCH] enable only after the 595 bits are labelled */
+    led_clear(&g_leds);
+#endif
+
     float mult_filt = 0.5f;
     for (;;) {
         /* FAST (every loop) — TIME MULTIPLIER = SPI2 ch0(CV)+ch1(knob), stock order.
@@ -109,6 +128,17 @@ int main(void)
         if (raw > 4095u) raw = 4095u;
         mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.03f;
         g_time_raw01 = mult_filt;
+
+#if PANEL_LED_ENABLE
+        /* LED refresh out of the audio ISR (bit-banged 595, ~few us). */
+#if PANEL_LED_WALK
+        if ((g_led_step % 6000u) == 0u)          /* ~1 step/s @ 6000 blocks/s */
+            bsp_panel_out(led_diag_walk(g_led_step / 6000u));
+        g_led_step++;
+#else
+        bsp_panel_out(led_word(&g_leds, 0));
+#endif
+#endif
         __asm volatile ("wfi");
     }
 }
