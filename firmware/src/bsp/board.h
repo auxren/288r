@@ -106,4 +106,13 @@
 #define DELAY_EXTEND_FACTOR  10.0f      /* sw1: x10 delay time + looper length     */
 #define BANDWIDTH_LIMIT_HZ   11025.0f   /* sw2: record-path bandwidth limit         */
 
+/* ---- global pitch voice (PITCH_SHIFT.md) — gated by PITCH_VOICE_ENABLE -------- */
+#define PITCH_WINDOW_SAMPLES (0.060f * (float)SAMPLE_RATE_HZ)  /* 60 ms crossfade   */
+#define PITCH_BASE_SAMPLES   256.0f     /* base delay offset (~2.7 ms @96k)         */
+#define PITCH_RATIO_SLEW     0.002f     /* one-pole ratio glide/sample (~5 ms)      */
+#define PITCH_VOICE_GAIN     0.7f       /* mix level of the pitch voice into ch0     */
+/* Time-CV (SPI2 ch0, 12-bit) -> volts for the pitch map. [BENCH] calibrate. */
+#define PITCH_CV_CENTER      2048.0f    /* [BENCH] ADC code at 0 V                   */
+#define PITCH_CV_VOLTS_PER_CODE (5.0f / 2048.0f)  /* [BENCH] volts per ADC code      */
+
 #endif /* BSP_BOARD_H */

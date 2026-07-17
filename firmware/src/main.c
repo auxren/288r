@@ -19,7 +19,14 @@
 #include "audio_io.h"
 #include "led.h"
 #include "panel_ctl.h"
+#include "pitch_voice.h"
 #include <stdint.h>
+
+/* Global pitch voice (crossfaded-tap shifter, PITCH_SHIFT.md) reading the engine
+ * buffer, mixed into ch0, Pitch-CV mapped at 1.2 V/oct. GATED OFF: it alters the
+ * audio path and the TIME/pitch mode switch + CV calibration are [BENCH]. Host-
+ * tested (test_pitch_voice). [BENCH] flip to 1, then map the mode switch + CV cal. */
+#define PITCH_VOICE_ENABLE 0
 
 /* Live panel scan (74HC165). Input-only, so acting on a mis-decoded bit can't drop
  * audio (worst case: a wrong delay time, recoverable). Default ON. [BENCH] confirm
@@ -47,6 +54,10 @@ static led_state_t g_leds;
 static unsigned    g_led_step;
 #endif
 
+#if PITCH_VOICE_ENABLE
+static pitch_voice_t g_pv;
+#endif
+
 extern volatile uint8_t g_spi_raw[2][3];   /* SPI2 control-ADC raw bytes (ch0,ch1) */
 
 /* TIME control in [0,1]; written in the superloop, read in the audio ISR. */
@@ -63,6 +74,11 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         float x = audio_in_to_f(in[f * TDM_SLOTS + AUDIO_IN_SLOT]);
         float chan[NUM_TAPS];
         (void)engine_process_multi(&g_engine, x, t, chan);
+#if PITCH_VOICE_ENABLE
+        /* Global pitch voice reads the same buffer the engine just wrote; summed
+         * into ch0 so it's audible on the mixed out. [BENCH] routing/mode. */
+        chan[0] += PITCH_VOICE_GAIN * pv_process(&g_pv, &g_engine.dl, DL_INTERP_HERMITE);
+#endif
         for (unsigned s = 0; s < TDM_SLOTS; ++s)
             out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
                                      ? audio_f_to_out(chan[s]) : 0;
@@ -110,6 +126,10 @@ int main(void)
     engine_set_bandwidth(&g_engine, (float)SAMPLE_RATE_HZ,
                          bsp_sw_bandwidth_limit() ? BANDWIDTH_LIMIT_HZ : 0.0f);
 
+#if PITCH_VOICE_ENABLE
+    pv_init(&g_pv, PITCH_WINDOW_SAMPLES, PITCH_BASE_SAMPLES, PITCH_RATIO_SLEW);
+#endif
+
     bsp_spi2_adc_init();      /* control-surface ADC (multiplier knob + CV) */
 
     /* Start SAI/MCLK BEFORE codec config: the CS42888 control port needs a valid
@@ -140,6 +160,12 @@ int main(void)
         if (raw > 4095u) raw = 4095u;
         mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.03f;
         g_time_raw01 = mult_filt;
+
+#if PITCH_VOICE_ENABLE
+        /* In pitch mode the Time-CV drives pitch (1.2 V/oct). [BENCH] the TIME/pitch
+         * mode switch should select this vs the multiplier path above. */
+        pv_set_cv(&g_pv, ((float)cv - PITCH_CV_CENTER) * PITCH_CV_VOLTS_PER_CODE);
+#endif
 
 #if PANEL_SCAN_ENABLE
         /* Panel scan (74HC165) — throttled (~every 64 passes, ~10 ms), input-only,
