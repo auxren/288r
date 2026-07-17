@@ -33,12 +33,15 @@ int bsp_sw_full_cycle(void) { return rd(SW_CYCLE_PORT,     SW_CYCLE_PIN)     == 
 
 unsigned bsp_resolution_bits(void)
 {
-    /* 2-bit selector -> 0:20-bit, 1:16-bit, 2:12-bit (RE). Map to bit depth. */
-    unsigned code = (unsigned)(rd(SW_RES0_PORT, SW_RES0_PIN)) |
-                    ((unsigned)(rd(SW_RES1_PORT, SW_RES1_PIN)) << 1);
-    switch (code) {
-        case 0:  return 20u;
-        case 1:  return 16u;
-        default: return 12u;
+    /* Config DIP SW1 sw3=PD11, sw4=PD12, ACTIVE-LOW (off = high via pull-up).
+     * Owner-confirmed table: both off = 24-bit, sw3 = 12, sw4 = 8, both on = 4-bit.
+     * [BENCH] confirm sw3/sw4 vs PD11/PD12 order (12 vs 8 could be swapped). */
+    unsigned sw3 = (rd(SW_RES0_PORT, SW_RES0_PIN) == 0);   /* PD11, active-low */
+    unsigned sw4 = (rd(SW_RES1_PORT, SW_RES1_PIN) == 0);   /* PD12, active-low */
+    switch (sw3 | (sw4 << 1)) {
+        case 0:  return 24u;   /* both off */
+        case 1:  return 12u;   /* sw3 on   */
+        case 2:  return 8u;    /* sw4 on   */
+        default: return 4u;    /* both on  */
     }
 }

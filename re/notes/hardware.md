@@ -103,7 +103,19 @@ Two groups: GPIO-read mode switches (`read_mode_switches` sub_f64) and a packed
 |---|---|---|---|
 | **cal. / pre-set** | GPIOB **10** | `0x20000362` | cal=1 → **live setup mode**: short buffers, ×2 time mult, taps track the **raw** control (vs the hysteresis-committed value in pre-set). |
 | **SHORT / FULL cycle** | GPIOB **11** | `0x20000361` | scales every tap position 4:1 — per-unit = **44** (FULL) vs **11** (SHORT) samples (the 44140/11035 divisor). |
-| resolution (2-bit) | GPIOD **11/12** | `0x20000360` | bit-depth: 0→20-bit, 1→16-bit, 2→**12-bit vintage**. |
+| resolution (2-bit) | GPIOD **11/12** | `0x20000360` | config-DIP sw3/sw4, ACTIVE-LOW. See DIP table below. |
+
+### Config DIP SW1 (4-pos, near MCU) — OWNER-CONFIRMED functions (2026-07-17)
+Active-low (switch off = GPIO high via pull-up). All-off = the clean default.
+- **sw1** — extend delay time to 5120 ms / looper buffer to 20480 ms (10× the base).
+- **sw2** — limit audio bandwidth to 11025 Hz (reduced-rate voice).
+- **sw3 + sw4** — resolution/bit-depth (sw3=PD11, sw4=PD12):
+  - off/off → **24-bit** (full precision, clean)   [PD11=1,PD12=1 — verified live]
+  - sw3 on  → **12-bit** · sw4 on → **8-bit** · both on → **4-bit** (vintage bit-crush)
+
+*(The prior firmware mapping treated all-off as 12-bit vintage — that bit-crush was the
+"rough/grainy delay" bug. Fixed in `gpio_panel.c`/`main.c`: all-off = 24-bit. sw1/sw2 pins
+still TBD — not on the read_mode_switches GPIO; likely the scanned DIP matrix.)*
 
 **`panel_switch_bits` (0x20000358)** — packed switch/DIP word:
 | Bit(s) | Effect |
