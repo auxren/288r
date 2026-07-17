@@ -22,6 +22,10 @@ static uint8_t spi_xfer(uint8_t tx)
     return *(volatile uint8_t *)&SPI2->DR;
 }
 
+static void cs_lo(void){ GPIOB->BSRR = (1u << (CS_PIN + 16)); for (volatile int d=0;d<40;d++){} }
+static void cs_hi(void){ while (SPI2->SR & SPI_SR_BSY) { } GPIOB->BSRR = (1u << CS_PIN); for (volatile int d=0;d<40;d++){} }
+static void spi_drain(void){ (void)SPI2->DR; (void)SPI2->SR; }   /* clear stale RX/OVR */
+
 void bsp_spi2_adc_init(void)
 {
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
@@ -50,11 +54,11 @@ void bsp_spi2_adc_init(void)
 uint16_t bsp_pot_read(unsigned ch)
 {
     uint8_t cmd = ch ? 0xE0u : 0xA0u;
-    GPIOB->BSRR = (1u << (CS_PIN + 16));      /* CS low  */
+    spi_drain(); cs_lo();
     (void)spi_xfer(0x01u);
     uint8_t b1 = spi_xfer(cmd);
     uint8_t b2 = spi_xfer(0x00u);
-    GPIOB->BSRR = (1u << CS_PIN);             /* CS high */
+    cs_hi();
     return (uint16_t)(((b1 & 0x0Fu) << 8) | b2);   /* [BENCH] exact bit layout */
 }
 
@@ -64,10 +68,10 @@ void bsp_spi2_probe(void)
 {
     for (int ch = 0; ch < 2; ++ch) {
         uint8_t cmd = ch ? 0xE0u : 0xA0u;
-        GPIOB->BSRR = (1u << (CS_PIN + 16));
+        spi_drain(); cs_lo();
         g_spi_raw[ch][0] = spi_xfer(0x01u);
         g_spi_raw[ch][1] = spi_xfer(cmd);
         g_spi_raw[ch][2] = spi_xfer(0x00u);
-        GPIOB->BSRR = (1u << CS_PIN);
+        cs_hi();
     }
 }

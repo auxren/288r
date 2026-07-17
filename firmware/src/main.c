@@ -27,6 +27,8 @@ static float delay_buf[DELAY_LEN] __attribute__((section(".sdram")));
 
 static engine_t g_engine;
 
+extern volatile uint8_t g_spi_raw[2][3];   /* SPI2 control-ADC raw bytes (ch0,ch1) */
+
 /* --- SDRAM self-test (results read over SWD; boot self-check) --- */
 volatile uint32_t g_mt_errors, g_mt_first_i, g_mt_first_exp, g_mt_first_got, g_mt_done;
 static void sdram_memtest(void)
@@ -55,6 +57,11 @@ volatile float    g_dbg_base;          /* base delay (cycle length)         */
 /* TIME control in [0,1]. Updated by the (not-yet-wired) panel/CV layer; fixed for
  * now. volatile: written in the superloop, read in the audio ISR. */
 static volatile float g_time_raw01 = 0.5f;
+
+/* panel diagnostics (SWD): switch bits in; 595 pattern out (write via SWD to probe). */
+volatile uint16_t g_switches;
+volatile uint32_t g_led_out;      /* 0 = don't drive the 595 (safe default) */
+volatile uint8_t  g_led_enable;   /* set via SWD to start driving g_led_out */
 
 /* Audio ISR bridge: TDM frame = TDM_SLOTS int32 (ADC slots 0..3 in, DAC slots 0..7
  * out). Pull the input from AUDIO_IN_SLOT, run the engine, scatter the 8 tap
@@ -114,12 +121,22 @@ int main(void)
     /* Codec: if it NAKs (wrong address/regs at the bench), keep running so the
      * clock/SDRAM/SAI can still be probed — audio just won't pass. */
     (void)bsp_codec_init();
+    bsp_panel_init();         /* 74HC165 switches + 74HC595 out (bit-banged) */
 
     for (;;) {
-        /* TIME MULTIPLIER = SPI2 control-ADC channel 0 (Time-CV; confirmed on
-         * hardware). One clean SPI transaction/loop. The engine slews it, so this
-         * per-loop rate gives smooth delay-time modulation (chorus/flanger). */
-        g_time_raw01 = (float)bsp_pot_read(0) * (1.0f / 4095.0f);
+        /* TIME MULTIPLIER = SPI2 control ADC, read ch0 then ch1 in one probe
+         * (stock sub_ecc order). ch0 = Time-CV, ch1 = KNOB. Knob sets it, CV adds. */
+        bsp_spi2_probe();   /* -> g_spi_raw[0]=ch0, [1]=ch1 */
+        uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
+        uint32_t knob = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
+        uint32_t raw  = knob + cv;
+        if (raw > 4095u) raw = 4095u;
+        g_time_raw01 = (float)raw * (1.0f / 4095.0f);
+        /* DIAGNOSTIC: read the switch chain (safe, input-only). */
+        g_switches = bsp_panel_switches_read();
+        /* Only drive the 595 outputs once armed over SWD (avoids disturbing an
+         * unknown output state — e.g. a 4051-enable or codec-reset bit). */
+        if (g_led_enable) bsp_panel_out(g_led_out);
         __asm volatile ("wfi");
     }
 }
