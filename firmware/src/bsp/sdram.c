@@ -27,8 +27,9 @@ static const struct pin fmc_pins[] = {
     {GPIOG,4},{GPIOG,5},
     /* byte-lane mask NBL0/NBL1 */
     {GPIOE,0},{GPIOE,1},
-    /* control: RAS PF11, CAS PG15, WE PC0, CLK PG8, CKE0 PC3, NE0 PC2 */
-    {GPIOF,11},{GPIOG,15},{GPIOC,0},{GPIOG,8},{GPIOC,3},{GPIOC,2},
+    /* control: RAS PF11, CAS PG15, WE PC0, CLK PG8, and BANK-2 CKE1/NE1 on PB5/PB6
+     * (confirmed from stock: the SDRAM chip-select is FMC bank 2 -> 0xD0000000). */
+    {GPIOF,11},{GPIOG,15},{GPIOC,0},{GPIOG,8},{GPIOB,5},{GPIOB,6},
 };
 
 static void fmc_gpio_init(void)
@@ -57,7 +58,7 @@ static void sdram_cmd(uint32_t mode, uint32_t autorefresh, uint32_t mrd)
 {
     while (FMC_Bank5_6->SDSR & FMC_SDSR_BUSY) { }
     FMC_Bank5_6->SDCMR = mode
-        | FMC_SDCMR_CTB1                       /* target bank 1 */
+        | FMC_SDCMR_CTB2                       /* target bank 2 (0xD0000000) */
         | ((autorefresh - 1u) << 5)            /* NRFS */
         | (mrd << 9);                          /* MRD  */
 }
@@ -68,33 +69,25 @@ void bsp_sdram_init(void)
     RCC->AHB3ENR |= RCC_AHB3ENR_FMCEN;
     (void)RCC->AHB3ENR;
 
-    /* SDCR1: NC=8col(00) NR=12row(01) MWID=16(01) NB=4(1) CAS RD_BURST SDCLK=HCLK/2(10).
-     * Programmed field-by-field to avoid encoding mistakes. */
-    {
-        uint32_t sdcr = 0;
-        sdcr |= (0u << 0);                       /* NC:  8 column bits  (00) */
-        sdcr |= (1u << 2);                       /* NR:  12 row bits    (01) */
-        sdcr |= (1u << 4);                       /* MWID:16-bit         (01) */
-        sdcr |= (1u << 6);                       /* NB:  4 banks        (1)  */
-        sdcr |= ((SDRAM_CAS_LATENCY & 3u) << 7); /* CAS latency */
-        sdcr |= (2u << 10);                      /* SDCLK = HCLK/2 (10) */
-        sdcr |= (1u << 12);                      /* RBURST: read burst enable */
-        sdcr |= ((SDRAM_RPIPE & 3u) << 13);      /* RPIPE read-pipe delay (HCLK) */
-        FMC_Bank5_6->SDCR[0] = sdcr;
-    }
+    /* Bank 2 config. The shared bits (SDCLK/RBURST/RPIPE) MUST live in SDCR1 even
+     * when using bank 2; the geometry (NC/NR/MWID/NB/CAS) goes in SDCR2. */
+    FMC_Bank5_6->SDCR[0] = (2u << 10)                     /* SDCLK = HCLK/2 (10)      */
+                         | (1u << 12)                     /* RBURST                   */
+                         | ((SDRAM_RPIPE & 3u) << 13);    /* RPIPE                    */
+    FMC_Bank5_6->SDCR[1] = (0u << 0)                       /* NC:  8 column bits (00)  */
+                         | (1u << 2)                       /* NR:  12 row bits   (01)  */
+                         | (1u << 4)                       /* MWID:16-bit        (01)  */
+                         | (1u << 6)                       /* NB:  4 banks       (1)   */
+                         | ((SDRAM_CAS_LATENCY & 3u) << 7);/* CAS latency              */
 
-    /* SDTR1 (cycles-1 at 84 MHz): TMRD2 TXSR7 TRAS4 TRC6 TWR2 TRP2 TRCD2 */
-    {
-        uint32_t sdtr = 0;
-        sdtr |= (1u << 0);   /* TMRD = 2 */
-        sdtr |= (6u << 4);   /* TXSR = 7 */
-        sdtr |= (3u << 8);   /* TRAS = 4 */
-        sdtr |= (5u << 12);  /* TRC  = 6 */
-        sdtr |= (1u << 16);  /* TWR  = 2 */
-        sdtr |= (1u << 20);  /* TRP  = 2 */
-        sdtr |= (1u << 24);  /* TRCD = 2 */
-        FMC_Bank5_6->SDTR[0] = sdtr;
-    }
+    /* Shared TRP/TRC in SDTR1; the bank-2 timings in SDTR2 (cycles-1 @84 MHz). */
+    FMC_Bank5_6->SDTR[0] = (1u << 20)   /* TRP  = 2 */
+                         | (6u << 12);  /* TRC  = 7 */
+    FMC_Bank5_6->SDTR[1] = (1u << 0)    /* TMRD = 2 */
+                         | (6u << 4)    /* TXSR = 7 */
+                         | (3u << 8)    /* TRAS = 4 */
+                         | (1u << 16)   /* TWR  = 2 */
+                         | (1u << 24);  /* TRCD = 2 */
 
     /* JEDEC power-up sequence */
     sdram_cmd(1u, 1u, 0u);          /* clock config enable */

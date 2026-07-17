@@ -75,7 +75,9 @@ firmware: $(FWDIR)/$(TARGET).hex $(FWDIR)/$(TARGET).bin
 
 $(FWDIR)/%.o: %.c
 	@mkdir -p $(FWDIR)
-	$(CROSS)gcc $(MCU) $(CFLAGS) $(FW_INC) $(FW_DEF) -c $< -o $@
+	$(CROSS)gcc $(MCU) $(CFLAGS) $(FW_INC) $(FW_DEF) -MMD -MP -c $< -o $@
+
+-include $(FW_OBJ:.o=.d)
 
 $(FWDIR)/%.o: %.s
 	@mkdir -p $(FWDIR)

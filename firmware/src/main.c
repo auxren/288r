@@ -27,6 +27,23 @@ static float delay_buf[DELAY_LEN] __attribute__((section(".sdram")));
 
 static engine_t g_engine;
 
+/* --- SDRAM self-test (results read over SWD) --- */
+volatile uint32_t g_mt_errors, g_mt_first_i, g_mt_first_exp, g_mt_first_got, g_mt_done;
+static void sdram_memtest(void)
+{
+    volatile uint32_t *p = (volatile uint32_t *)SDRAM_BASE;
+    const uint32_t n = SDRAM_BYTES / 4u;
+    for (uint32_t i = 0; i < n; ++i) p[i] = i * 2654435761u;   /* distinct per word */
+    for (uint32_t i = 0; i < n; ++i) {
+        uint32_t exp = i * 2654435761u, got = p[i];
+        if (got != exp) {
+            if (!g_mt_errors) { g_mt_first_i = i; g_mt_first_exp = exp; g_mt_first_got = got; }
+            g_mt_errors++;
+        }
+    }
+    g_mt_done = 0xD09E;
+}
+
 /* --- live engine telemetry (read over SWD) --- */
 volatile float    g_dbg_in;            /* last input sample                 */
 volatile float    g_dbg_chan[NUM_TAPS];/* last 8 per-tap outputs            */

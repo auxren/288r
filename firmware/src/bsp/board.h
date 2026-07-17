@@ -44,7 +44,7 @@
 #define SAI_MCKDIV        1u             /* [BENCH] SAI_CK/MCKDIV -> MCLK          */
 
 /* ---- SDRAM (IS42S16400, confirmed) -------------------------------------- */
-#define SDRAM_BASE        0xC0000000u    /* FMC SDRAM bank 1. [BENCH] confirm bank */
+#define SDRAM_BASE        0xD0000000u    /* FMC SDRAM bank 2 (confirmed from stock FMC pins) */
 #define SDRAM_BYTES       (8u*1024u*1024u)
 /* FMC SDCLK = HCLK/2 = 84 MHz -> 11.9 ns/clk.  Timings from the -7 datasheet
  * (docs/bench-runbook.md), rounded up in SDCLK cycles.  CAS latency 3 (test 2). */
