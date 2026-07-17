@@ -209,12 +209,30 @@ main.c             StdPeriph init + superloop                                   
 Reuse the MARF's `Libraries/` (CMSIS + STM32F4xx StdPeriph), `Makefile`, `.github/workflows/build.yml`
 (host `make test` + arm build + tagged `.hex` release), and numbered `docs/` conventions.
 
+## Direction (updated 2026-07-16, after hardware validation)
+The interpolation fix is **validated on hardware** for time-mode modulation (bench-session-2). Pitch
+static + residual ringing are rewrite-level. Decision: **full clean rewrite — free to replace any
+stock code; not bound to match the binary.** Constraints & goals:
+- **Keep the device's feature set** (8 taps, phase/preset A–D, short/full cycle, write/recirc/looper,
+  input+output mixers, auto control, pulse I/O, time + **pitch** modes, vintage option). Behavior can
+  be re-implemented better; the *capabilities* stay.
+- **Highest fidelity this hardware allows**, with a lean toward a **slightly more analog tone**:
+  full 24-bit path, high-quality interpolation, clean gain staging; plus optional analog-flavor DSP
+  (gentle HF roll-off / feedback-path filter / soft saturation).
+- **Pitch mode:** fix via the **dual-head crossfade** (`crossfade.{h,c}`) — validated as the needed
+  approach on the bench.
+- **Time control:** continuous, slewed, no PLL octave-stepping, no hysteresis (kills the ringing).
+
+## New features (this build)
+- **Boot chord → calibration/settings mode:** at power-up, if the **PULSE IN** and **ARM PULSE IN**
+  switches are both held **left**, enter a cal/settings mode (features TBD — control min/max cal,
+  fidelity, analog-tone/filter params, …). Read those switch positions once at boot (panel scan);
+  exact pins TBD on the bench.
+- **Modal "hold-a-chord + turn-a-knob" settings** (e.g., set a **tone/filter** cutoff): a held
+  switch combo re-purposes a knob to a setting. Powers the analog-tone filter and other params
+  without adding panel controls. Persist via internal-flash (see Persistence).
+
 ## Open decisions & dependencies
-- **Scope/fidelity: DECIDED → strict behavioral clone first.** Match the 288r's panel mappings,
-  presets, transport semantics, tap model and "vintage" character exactly; improve the engine only
-  where it was broken (interpolated fractional taps, fixed-rate time, hardware float). Features,
-  extra modulation, and remapped controls come *after* the clone is nailed. Constants recovered from
-  the binary are used directly; anything not fully pinned is marked "calibrate on hardware".
 - **Hardware confirmation (needs the SWD/bench session):** exact codec part + control wiring, SDRAM
   size (sets max delay at each base rate), pulse-output driver (bug #2 may be partly analog), and
   the real control→parameter scaling so we match the panel. Until then the engine is developed and
