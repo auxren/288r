@@ -37,9 +37,21 @@ better engine; add new features/controls/modulation only *after* the clone is na
   `-nostdlib`, no newlib). **All the hard `[BENCH]` constants are now resolved** (see
   `re/notes/bench-session-3.md`): I²C1=PB8/9, codec 0x49 + TDM regs, SAI1 SD_A=PD6/SD_B=PF6, 24-bit
   right-justified, **SDRAM = FMC bank 2 (0xD0000000)**, audio in = RX slot 0, TIME-CV = SPI2 ADC ch0.
-- **Still open:** the coarse multiplier KNOB (combined ADC3-4051-mux + SPI2 read — CV works, knob TBD),
-  the rest of the panel scan (sliders/trimmers/DIPs/switches), LED drive (SPI1 is NOT it), and settings/
-  cal. `firmware/src/bsp/` has `sdram_memtest`/`g_dbg_*`/`adc_mult` SWD scaffolding to strip pre-release.
+- **Panel/features built out (2026-07-17, host-tested, on `main`):** taper calibrated to the panel
+  legend (linear 0.4×–1.6×, noon=1.0); **config DIP sw1 (×10 extend, clamped) + sw2 (11025 Hz bandwidth
+  limit** = new `bwlimit.c` one-pole) wired as boot straps; **live 74HC165 scan** (`panel_ctl.c`) decodes
+  A/B/C preset + octave ×1/×2/×4 and applies them smoothly (octave rescales base via `taps_set_base_delay`
+  — fixed-rate, no glitch); **LED framework** (`led.c` + walking-1 discovery tool) over the 595, gated off.
+  `make test` = 10 suites on main. See commits since `4292b91`.
+- **Pitch shifter → playable voice (branch `pitch-shift-engine`):** `pitch_shift.c` (crossfaded-tap,
+  from `firmware/PITCH_SHIFT.md`) + `pitch_voice.c` (1.2 V/oct CV map, ratio slew) + `fast_math.c`
+  (no-libm single-precision sinf/cosf/exp2f, so the freestanding image links). Global voice wired into
+  main, **gated (`PITCH_VOICE_ENABLE=0`)**; enabled image verified to link. `make test` = 13 suites there.
+- **Still [BENCH]:** the coarse multiplier KNOB (SPI2 ch1 read — CV works, knob TBD); config-DIP sw1/sw2
+  GPIO pins (`SW_*_MAPPED=0` until traced); the 595 bit→LED/column/mux/codec-reset map (run the walk);
+  the tap-time DIP matrix + phase/mute + transport momentaries; TIME/pitch mode switch + Pitch-CV cal;
+  PA4/5/6-vs-codec-reset overlap check; settings/cal. `firmware/src/bsp/` still has `sdram_memtest`/
+  `g_dbg_*`/`adc_mult` SWD scaffolding to strip pre-release.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
