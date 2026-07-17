@@ -1,5 +1,7 @@
 # 288r community firmware — rewrite architecture
 
+
+> **Authoritative spec:** the reconciled, buildable implementation plan is in **[§ Definitive implementation spec](#definitive-implementation-spec-synthesized-2026-07-16)** at the bottom of this file (5-lens design synthesis, 2026-07-16). It supersedes the older *Module plan* section. This header material remains as design rationale.
 The reverse engineering (see `re/notes/`) showed the stock firmware works, but its **engine
 architecture** is what blocks smooth modulation and wastes cycles. A clean-room rewrite lets us
 fix the architecture, not just patch around it. This doc is the north star for that rewrite.
@@ -187,6 +189,8 @@ range) that is a scaling/offset problem. Mirrors the MARF's `StoredCal` + two-po
 - **Doc:** a numbered `docs/` calibration procedure, MARF-style.
 
 ## Module plan (`firmware/src/`)
+
+> **Superseded** by the *Definitive implementation spec* below (kept for history; the spec's §3 is the current module/file plan).
 ```
 delay_line.{h,c}   fixed-rate fractional delay line + interpolation      ← done, tested
 taps.{h,c}         8-tap 288 model: phase-select, presets, per-tap slewed time  ← done
@@ -237,3 +241,331 @@ stock code; not bound to match the binary.** Constraints & goals:
   size (sets max delay at each base rate), pulse-output driver (bug #2 may be partly analog), and
   the real control→parameter scaling so we match the panel. Until then the engine is developed and
   unit-tested host-side; hardware brings it up against the real board.
+
+---
+
+## Definitive implementation spec (synthesized 2026-07-16)
+
+*Reconciles five expert design lenses (fidelity/analog-tone, pitch-crossfade/anti-alias, settings/cal, engine-integration/real-time, feature-preservation) into one buildable plan. Sub-headings are demoted one level to nest under this section.*
+
+Status: supersedes the *Module plan* section above. Grounded against the live code (`firmware/src/`, 7 host suites all green) and bench sessions 1–2. **Note:** the BSP is bare-metal, not StdPeriph (MARF's StdPeriph is F40x-era, no F429 FMC/SAI); the first flashable bring-up image now builds (`make firmware`) — see the *Flashable image* section of `firmware/README.md` and `docs/bench-bringup.md`.
+
+Conventions: **[BENCH]** = exact constant/behavior gated on a hardware measurement; **[DELTA]** = deliberate, justified change from stock. Stock flash addr = `0x08000000 + sub_X`.
+
+---
+
+### 1. Executive summary (the architecture in 8 bullets)
+
+1. **Fixed 96 kHz, forever.** The codec clock is never retuned (kills the octave-step ringing at its source). All delay-time and pitch variation is a fractional read offset into the SDRAM buffer. PLLSAI is set once at boot.
+2. **float32 internal, int16/int32 at the SDRAM boundary only.** M4F single-precision hard-FPU throughout; zero soft-doubles (deletes the stock's biggest CPU tax). `1.0f = 24-bit codec full scale`. Storage width (int16 Q15 / int32 Q23) and bank split are latched at boot from the live resolution switch; intN↔float is a 1-cycle VCVT at the buffer edge.
+3. **Block processing with mandatory CCM prefetch.** `engine_process_block()` runs `BLK = 32` frames per SAI1 DMA half. Each tap's read span is burst-copied SDRAM→CCM float scratch once per block (turns 8 random FMC row-activations/sample into sequential bursts). This is the single most important RT decision: it drops pitch-mode worst case from ~91 % to ~49 % of budget.
+4. **Two read frontends, mode-selected per tap.** TIME mode = slewed single-head read with `crossfade.c` handling `glide=0` snaps (validated). PITCH mode = a **new continuous dual-head windowed reader** (`pitch_tap.c`, H910/rotating-head style) that geometrically excludes the write-head discontinuity — the fix for the bench-2 broadband static.
+5. **Continuous, slewed time control — no PLL, no hysteresis.** `time_control.c` one-pole slew on a single-precision exponential multiplier map. This is the chorus/flanger smoothness fix, validated in direction by bench-2.
+6. **"Slightly analog" is an opt-in, orthogonal voice.** Default ships **neutral/bit-honest** (parity first). Analog character = per-tap one-pole HF roll-off + in-loop feedback roll-off + soft saturation + wow/flutter, each individually toggleable, all persisted. Per-tap because the "mixed" jacks are an analog op-amp sum of the 8 DAC outs — there is no digital master bus to color.
+7. **MARF-style persistence + new modal UI.** Versioned/CRC16, dual-sector wear-leveled internal-flash store; control-pinning so stored values never fight live panel controls. New boot-chord (PULSE IN + ARM PULSE IN held LEFT at power-up) → settings/cal mode; new "hold-a-chord + turn-a-knob" relative param editor.
+8. **Three execution contexts, strictly layered.** SAI1 DMA ISR owns the entire audio path (never touches I²C/SPI/flash); SysTick 1 kHz owns panel scan + control smoothing + pulse timing; the superloop owns settings/flash/cal. Control crosses SysTick→ISR as one double-buffered `params_t` snapshot (word-sized publish index, lock-free).
+
+---
+
+### 2. Definitive per-sample / per-block signal flow
+
+Per SAI1 DMA half-block of `BLK = 32` frames. `∀s` = per sample, `∀t` = per tap (NUM_TAPS = 8).
+
+```
+                          CS42888  (control: I2C1)
+   ADC slots 0..3 ──SAI1_A Master-RX──▶ DMA2 circular RX[2][BLK*8]  (SRAM1 — DMA can't reach CCM)
+        │
+        ▼  AUDIO ISR (half / complete), all state in CCM
+ ┌──────────────────────────────────────────────────────────────────────────────────┐
+ │ 0. publish→snapshot params_t (gains, mult target, mode, tone/sat/wow, cal, banks)  │
+ │                                                                                    │
+ │ 1. ∀s  INPUT COND:  in  = int24→float(RX[s][IN_SLOT])         (audio_io)          │
+ │        x = input_mixer(in..., in_gain[])   → DC-block HPF ~5 Hz  → write_sat       │
+ │                                                                                    │
+ │ 2. ∀s  WRITE PATH (transport):                                                     │
+ │        WRITE   : w = x                                                             │
+ │        RECIRC  : w = x + fb_sat( fb_tone( fb_gain · loop_read ) )   ← in-loop      │
+ │                       fb_tone = one-pole LP (tape/BBD per-repeat darkening)        │
+ │                       fb_sat  = soft clip (feedback can never blow up)             │
+ │        vintage : w = dl_vintage_quantize(w, bits, dither?)  (+ optional ZOH crush) │
+ │        ab_put(bankA, wpos, w)  [int16: sat-rail + TPDF inside]  ; mirror bankB if  │
+ │        enabled. RECIRC advances loop window instead of head.                       │
+ │                                                                                    │
+ │ 3. ∀s  CONTROL:  mult = tc_update(raw01)   (slewed, NO PLL, NO hysteresis)         │
+ │        TIME : taps_update → cur[t] one-pole slew toward base·phase[t]/160·mult     │
+ │        PITCH: pitch_ratio = slewed ρ_panel;  ptap ratios set from pitch_law        │
+ │                                                                                    │
+ │ 4. ∀t  PREFETCH (once/block): compute read span for the tap's head(s);            │
+ │        ab_fetch(bank, start, n) burst SDRAM→CCM float window  (n≈40 TIME, ≤136 PITCH)│
+ │                                                                                    │
+ │ 5. ∀s ∀t  READ (from CCM window):                                                  │
+ │        TIME : tap = xfade_read(win, cur[t](+wow_offset), Hermite)  (snap via xfade)│
+ │        PITCH: tap = ptap_read(win, ρ_t, Hermite, aa_tier)   (dual-head, eq-power)  │
+ │        during a 10 ms mode switch: compute both, equal-power mode_mix ramp         │
+ │                                                                                    │
+ │ 6. ∀s ∀t  chan[t] = tap · gain[t] · phase_sel[t] · auto_gain   (mixer, per-tap)   │
+ │        chan[t] = tap_tone[t](chan[t])           ← per-tap analog HF roll-off       │
+ │        env followers(in, Σchan) → AUTO CONTROL auto_gain (slow)                    │
+ │                                                                                    │
+ │ 7. ∀s  TX[s][t] = float→int24 clamp   (fault-containment rail; never wraps)        │
+ │ 8.     pulse events (cycle/loop-point) → flags → SysTick/TIM pulse outs            │
+ └──────────────────────────────────────────────────────────────────────────────────┘
+   DAC slots 0..7 ◀── SAI1_B Slave-TX (sync A) ── DMA2 circular TX[2][BLK*8] (SRAM1)
+   8 taps → 8 DAC outs → 8 panel jacks + analog op-amp sum ("mixed" jacks)
+```
+
+Three quantization/level decision points (everything else is float): **(a)** SDRAM write (width + optional vintage crush + dither), **(b)** feedback write-back (the only place quantization *accumulates* — sat+dither here), **(c)** DAC clamp (`audio_f_to_out`, the fault rail — keep it).
+
+---
+
+### 3. Module / file plan for `firmware/src/`
+
+Directory reorg into `dsp/` (host-tested, hardware-free), `bsp/` (StdPeriph, bench-gated constants quarantined), `app/` (glue). All existing 7 suites must keep passing unmodified.
+
+#### 3.1 DSP core (`src/dsp/`)
+
+| Module | Purpose | Key interface | Host test | Status |
+|---|---|---|---|---|
+| `delay_line.{h,c}` | fractional delay + interp kernels + wrap/loop math | + `dl_read_windowed(win,base,frac,interp)`, + `dl_read_aa(win,delay,interp,aa_tier)`; existing `dl_read*`/`dl_vintage_quantize` kept | `test_delay_line`, `test_interp_quality` (+swept-read THD+N per kernel) | **extend** |
+| `taps.{h,c}` | 8-tap model, phase 0..160, per-tap slew | unchanged; PITCH maps `cur[t]` → ptap window center | `test_taps` | exists |
+| `time_control.{h,c}` | slewed exp multiplier (no PLL/hysteresis) | unchanged; + ρ-map for PITCH (`tc_update` slews ρ, not delay) | `test_taps`/new | extend |
+| `transport.{h,c}` | WRITE/RECIRC/loop + window capture | unchanged | (covered by engine) | exists |
+| `mixer.{h,c}` | per-tap gain·phase, 8 chan + analog-sum, master, auto | replace `master=1/8` placeholder w/ calibrated law; mute = explicit flag | new `test_mixer` | **extend** |
+| `envelope.{h,c}` | one-pole asymmetric follower (AUTO CONTROL) | unchanged primitive; real scaling **[BENCH]** | `test_envelope` | exists |
+| `crossfade.{h,c}` | dual-head **event** xfade — TIME `glide=0` snaps only | + equal-power fade curve (poly sin/cos); API unchanged | `test_crossfade` (+eq-power flatness) | **extend** |
+| `pitch_tap.{h,c}` | **continuous dual-head windowed pitch read** (H910); the pitch-static fix | `ptap_init/set_window/set_ratio/update_block/read/read_loop/current_delay` (§6) | `test_pitch_tap` (§6 criteria) | **new** |
+| `audio_buffer.{h,c}` | int16/int32 banked SDRAM layer; boot-time layout | `ab_init/ab_put/ab_get/ab_fetch(burst→CCM float)`; sat+TPDF inside int16 `ab_put` | `test_audio_buffer` (int16 round-trip ≤1 LSB w/ dither) | **new** |
+| `tone.{h,c}` | one-pole voice LP (fb_tone + tap_tone[8]) | `tone_init/set_fc/process` (inline ~4 cyc) | `test_tone` (per-pass decay vs analytic `a`) | **new** |
+| `sat.{h,c}` | soft saturator (rational tanh) | `sat_init(drive)→makeup`, `sat_process` (~22 cyc, 1 VDIV) | `test_sat` (unity small-signal, monotonic) | **new** |
+| `wow.{h,c}` | shared wow/flutter modulator (offset in samples) | `wow_init/set_depth/tick_block/offset` | `test_wow` (peak cents vs `2πfA/fs`) | **new** |
+| `dither.h` | xorshift PRNG + TPDF | `xs32`, `tpdf` (inline) | covered by buffer/vintage tests | **new** |
+| `engine.{h,c}` | compose everything; block loop | reshape to `engine_process_block()`; add mode/pitch/tone/sat/wow/xf/ptap/bank state (§5.1) | `test_engine` (+mode-switch continuity) | **rework** |
+| `audio_io.{h,c}` | CS42888 TDM int24↔float, 8 taps→8 slots | per-block call; unchanged codec math | `test_audio_io` | exists |
+
+*Dropped from earlier lenses:* `src2x.{h,c}` (half-band 2:1 for a 48 kHz vintage rate) — **not needed**: int16 single-bank @96 kHz already gives 43.7 s (§5), so we hit the 40 s spec without ever moving the clock. Vintage "low-rate grit" is reproduced by optional in-buffer ZOH decimation-emulation (character only, real clock fixed). Revisit only if bench A/B demands a true reduced-rate voice. Similarly `pitch_head.{h,c}` (event-scheduled wrap-guard) is **superseded** by `pitch_tap` (§6 rationale).
+
+#### 3.2 Settings / cal / persistence (`src/app/`, host-tested)
+
+| Module | Purpose | Key interface | Host test | Status |
+|---|---|---|---|---|
+| `panel_input.{h,c}` | named logical panel inputs over 595/GPIO/SPI2-ADC/4051; debounced `panel_snapshot_t` | `panel_scan_tick(out)` @1 kHz; `panel_sw()`; one `panel_map[]` table (2 rows `[BENCH]`) | via `ui_mode`/`calib` scripted snapshots | **new** |
+| `led.{h,c}` | 5-LED pattern engine (bargraph/blink/fill/busy) | `led_pattern_t`; pin table `[BENCH]` | `test_led` | **new** |
+| `store_hal.h` + `store_hal_f429.c` | flash backend iface; target StdPeriph FLASH_*, host RAM mock w/ fault injection | `erase_bank/program/map` | mock in `test_flash_store` | **new** |
+| `flash_store.{h,c}` | dual-sector (6+7), wear-leveled append-log, latest-`seq` wins, torn-write safe | `flash_store_init/load/save/needs_migration` | `test_flash_store` | **new** |
+| `storage.h` | frozen record fmts + `_Static_assert` + CRC16/CCITT | `store_hdr_t{magic,rec_id,version,len,seq,crc16,hdr_crc}` | `test_storage` | **new** |
+| `pinning.{h,c}` | per-param control pinning (stored until knob sweeps through) | `pin_engage/pin_apply` | `test_pinning` | **new** |
+| `calib.{h,c}` | cal capture + normalization (raw→[0,1]/volts) | `calib_knob01/calib_cv_volts`; P1/P2 flows | `test_calib` | **new** |
+| `settings.{h,c}` | runtime `dsp_params_t`/settings: defaults, load/apply/save, dirty | `settings_load/apply/save` | `test_settings` | **new** |
+| `ui_mode.{h,c}` | mode state machine: boot chord, NORMAL/SETTINGS, pages, chord+knob editor | `ui_init/ui_tick(snapshot,out)` (pure) | `test_ui_mode` | **new** |
+| `params.{h,c}` | double-buffered SysTick→ISR snapshot publish | `params_publish/params_snapshot` | `test_params` | **new** |
+| `panel.{h,c}` | decode `panel_switch_bits`/DIP/trimmer → engine params (bank/phase/mute/phase-inv/cycle) | `panel_decode()` | `test_panel` | **new** |
+| `main.c` | init order, boot-chord check, superloop | — | — | extend |
+
+#### 3.3 StdPeriph BSP (`src/bsp/`, MARF house style, reuse MARF `Libraries/`)
+
+`board_pins.h` (all bench-gated constants in ONE file) · `clock.c` · `gpio.c` · `sdram_fmc.c` · `sai_dma.c` · `codec_cs42888.{h,c}` · `i2c1.c` · `spi2_adc.c` · `panel_scan.c` (595/4051) · `pulse_tim.c` · `flash_store_f429` backend. Config table in §7.4; all `[BENCH]` pins isolated here.
+
+---
+
+### 4. Real-time budget verdict
+
+Budget = 168 MHz / 96 kHz = **1750 cycles/sample** (56,000/block). FMC SDCLK = HCLK/2 = 84 MHz, no cache → every direct SDRAM access stalls. Reconciled numbers (the three lenses' estimates converge once prefetch is applied):
+
+| | Direct per-sample SDRAM | **Block-prefetch into CCM** |
+|---|---:|---:|
+| TIME mode (single head, analog chain on) | ~955 (55 %) | **~585 (33 %)** |
+| PITCH worst case (all 8 taps dual-head, Tier-0) | ~1595 (91 %) | **~860 (49 %)** |
+| + Tier-1 AA on all taps | — | +~200 → ~60 % |
+| + HQ 6p5o interp (opt, both heads) | — | +~640 → **ship OFF** |
+
+**Verdict: it fits, with comfortable headroom — provided block-prefetch into CCM is treated as a requirement, not an optimization.** Direct per-sample reads are viable for TIME but marginal (91 %) in PITCH; prefetch removes the risk.
+
+Risks → mitigations (in order):
+1. **SDRAM random-access latency** → block prefetch: per tap/block copy `[floor(min)−1 .. ceil(max)+2]` as one sequential FMC burst into CCM float scratch (worst case 8 taps × 2 heads × 136 × 4 B ≈ 8.5 KB, fits 64 KB CCM). Bandwidth ≈ 7 MB/s of ~168 MB/s peak (refresh ~1 %) — non-issues.
+2. **Prefetch estimate unverified** → first bring-up task is a `make cycles` DWT_CYCCNT profile of `engine_process_block` and `ptap_read`×8 against this table (validate FMC burst behavior).
+3. **CCM/DMA constraint** → SAI RX/TX ping-pong buffers MUST live in SRAM1 (DMA can't reach CCM); only CPU-filled scratch + hot engine state + ISR stack go in CCM.
+4. **Mode-transition double cost** → bounded 10 ms, cannot coincide with itself; ignore.
+5. **Overrun fallback lever** → drop PITCH interp to linear during crossfades only (−0.5 dB HF, inaudible; saves ~200 cy), and skip dual-head for muted taps (mixer gain ≈ 0). Concurrency capped at 8 fades by construction.
+6. **FPU discipline** → single-precision only; VFMA in kernels; **no VRINT on this FPU** — `dl_read_at` must keep wrapping `r` into `[0,len)` before the int cast so VCVT truncate = floor (document the invariant in code).
+
+---
+
+### 5. Buffer/fidelity, interpolation, and the "slightly analog" chain
+
+#### 5.1 Buffer/fidelity decision
+
+**float32 processing; int16/int32 storage; fixed 96 kHz; layout latched at boot.** float32 storage stays rejected (same 4 B as int32, less headroom-per-bit for bounded audio). The live 2-bit resolution switch (GPIOD11/12, stock behavior) selects storage width/voice at boot:
+
+| Switch (stock) | Storage | Scaling | 1 bank / 2 banks | Character |
+|---|---|---|---|---|
+| "20-bit" → **HI-FI** | int32 | Q23 (`x·2²³`) | 21.8 s / 10.9 s ×2 | +48 dB buffer headroom (8 guard bits); floor below codec; no dither needed |
+| "16-bit" → **STANDARD** | int16 | Q15 (`x·2¹⁵`) | 43.7 s / 21.8 s ×2 | ≥ ~93 dB effective; workhorse; storage-boundary TPDF on |
+| "12-bit" → **VINTAGE** | int16 + 12-bit crush | Q15 | same as STANDARD | deliberate lo-fi; bit-crush dither **default OFF** (parity with stock crunch) |
+
+Reconciled decisions (resolving the two conflicting lenses):
+- **No engine-rate reduction / no `src2x`.** 40 s spec is met by int16 single-bank @96 kHz (43.7 s). Dropping the clock was the stock's *workaround*, not a feature to reproduce faithfully; its coloration is optional ZOH crush.
+- **bank_B in hi-fi [DELTA + decision]:** memory is split dynamically. `panel_switch_bits` bit6 enables bank_B → two banks (int32: 10.9 s each; int16: 21.8 s each). Disabled → one full bank (21.8 s / 43.7 s). This resolves "int32 can't hold two full banks." Document: hi-fi + bank_B = ~10.9 s/bank; use STANDARD for long loops.
+- **Mid-run resolution flip [DELTA]:** layout is boot-latched; a mid-run change triggers a graceful buffer reinit (mute-fade + fast clear). Documented UX change from stock's live re-read.
+- **Two dithers, different levels:** (1) int16 storage-boundary TPDF (about the Q15 LSB, inaudible, default ON in STANDARD/HI-fi-n/a) vs (2) vintage 12-bit-crush dither (audible texture, **default OFF** to match stock, opt-in fidelity win). Feature-parity wins the default.
+
+#### 5.2 Interpolation decision
+
+**4-pt Hermite (Catmull-Rom) is the default everywhere** (stateless → safe under modulation; measured ~2.4× lower RMS error than linear @ ½ Nyquist). Options: **Linear** (cheap/vintage voice, kept in enum), **6-pt 5th-order "optimal" (Niemitalo)** as a compile+settings HQ A/B toggle (+~40 cy/tap-head, ship OFF), **1st-order Thiran all-pass** as a flanger-focused toggle (flat magnitude, but stateful → smears fast modulation → default OFF). **No oversampled read, no global pre-read band-limit**: at 96 kHz (~2.4× oversampled vs 20 kHz audibility) with ρ ∈ [0.25, 4.0], Hermite + the tiered AA (§6.4) is transparent; the feedback LP is the backstop for recirculated image build-up.
+
+#### 5.3 The "slightly analog" chain (opt-in; default neutral)
+
+**Default ships bit-honest (parity first, flavor opt-in — punch-list #16).** Character = a curated, subtle defect set, each block toggleable, params persisted, editable via chord+knob. Placement (per §2): **fb_tone** in the recirc write-back (cumulative per-repeat darkening), **tap_tone[t]** per DAC channel (one-time output voice — the "output filter" the hold-chord knob sets, per-channel because the mix is analog), **sat** before each storage quantize (rail in int16), **wow** as one shared additive offset on every tap delay ("one transport").
+
+One-pole LP `y += a·(x−y)`, `a = 1 − exp(−2π·fc/fs)` @96 kHz:
+
+| fc | a | | fc | a |
+|---|---|---|---|---|
+| 4 k | 0.2304 | | **7 k (fb_tone dflt)** | **0.3675** |
+| 6 k | 0.3248 | | 10 k | 0.4803 |
+| | | | **12 k (tap_tone dflt)** | **0.5441** |
+
+fb_tone range 2–16 kHz (log knob); tap_tone 4 kHz–bypass. **Soft sat** (rational tanh, ~0.5 % accurate over ±3):
+`y = makeup · u(27+u²)/(27+9u²)`, `u = clamp(x·drive, ±3)`, `makeup = 1/tanh_approx(drive)` at set-time (unity small-signal). Defaults: drive 1.0 = bypass (hi-fi) / rail (int16); analog 1.25; vintage 1.5. **Wow/flutter** (one shared modulator, output = samples):
+
+| | Rate | Depth (analog dflt) | Delay depth A |
+|---|---|---|---|
+| Wow | 0.6 Hz | ±0.05 % (±0.87 ¢) | 12.7 smp |
+| Flutter | 8 Hz × 1 Hz-smoothed random AM | ±0.02 % (±0.35 ¢) | 0.38 smp |
+
+Depth knob 0–5× (0 = off = hi-fi default; analog 1.0×; vintage 1.5×). Below the ~2 ¢ JND → reads as "air," not detune. Tick per-block @2 kHz + linear ramp ≈ 2 cy amortized.
+
+**Convenience "voice" preset** (settings-mode selection, persisted) sets the tone/sat/wow bundle: **NEUTRAL (default)** all bypass · **ANALOG** fb 7 k / tap 12 k / drive 1.25 / wow 1.0× · **VINTAGE-TONE** fb 6 k / tap 8 k / drive 1.5 / wow 1.5×. Note: this tone-voice axis is **orthogonal** to the storage-fidelity axis (§5.1, resolution switch) — a deliberate un-conflation of the fidelity lens's single HI-FI/ANALOG/VINTAGE knob, so a user can run int32 storage with analog tone, or int16 storage neutral, etc.
+
+---
+
+### 6. Pitch-mode crossfade design (winning approach)
+
+**Winner: continuous dual-head *windowed* read (`pitch_tap.c`), not event-scheduled xfade retriggering.** Rationale: in pitch mode both heads drift continuously at `dD/dn = 1−ρ`; an event-triggered `xfade_t` freezes its outgoing head mid-fade (→ warble every wrap) and needs a fragile trigger state machine (fade-still-active-at-next-wrap, ρ sign flips, single-head gaps). The windowed reader is the limiting case that removes all of it.
+
+**Geometry.** Per tap, one sawtooth phase φ∈[0,1) drives two heads a half-cycle apart:
+```
+φ₁ = frac(φ + 0.5);  D_k = D_MIN + φ_k·S;  r_k = (wpos − D_k) mod L
+φ(n+1) = frac(φ(n) + (1−ρ)/S)        (read advances at ρ ✓)
+y = g(φ₀)·x(r₀) + g(φ₁)·x(r₁)
+```
+Each head's gain is **zero exactly at its saw-wrap** (the instant D_k teleports by S); heads are ½-cycle apart so when one is silent the other is at peak. `D_k` is confined to `[D_MIN, D_MIN+S]` with `S ≤ L−16`, so the **write-head boundary is never crossed** — the discontinuity is geometrically excluded, not masked.
+
+**Guard zone:** `D_MIN = 8`, `D_MAX = L−8`, usable `S_MAX = L−16` (covers Hermite's 4-tap reach + drift + AA pre-average's ≤5 fetches).
+
+**Window = equal-power `g(φ) = sin(πφ)`** (default). Heads read program S/2 apart ≈ uncorrelated for real audio → constant loudness (no periodic tremolo); its derivative kink sits at the zero-gain point (no splatter). +3 dB bump only on strongly periodic material at S/2 ≈ n·period — the least-objectionable failure, what every classic unit ships. **257-entry `sin(πφ)` LUT in flash + lerp** (1028 B, <−80 dB, ~8 cy). Hann `sin²` available as compile option; linear as A/B control. Also back-port equal-power to `crossfade.c` TIME snaps (heads there are decorrelated too).
+
+**Params.** `S` = window/grain size: clone default `min(cycle_len−16, S_MAX)` (full-cycle sweep = stock's long-loop pitch character, minus the click); settings-mode `pitch_span` 2048…cycle_len for H910 micro-pitch. Fade length = S/2 per handoff. **ρ range [0.25, 4.0]** (±2 oct, matches stock octave machinery — chosen over the fidelity lens's ±1 oct because PITCH is the pitch specialist's call; exact taper/center-detent **[BENCH]**). `ρ→1` degeneracy: when `|1−ρ|<1e−4`, relax φ→0.5 at k≈0.001/smp (~100 ms) → collapses to a single clean read at `D_MIN+S/2`. **Per-tap state** (stock control law spreads ρ by `phase[i]/160`): `PITCH_LAW_STOCK_SCALED` (`ρ_i = 1+(phase[i]/160)(ρ_panel−1)`, clone default) vs `PITCH_LAW_UNIFORM` (settings option, enables one shared-φ fast path). `ptap_t` ≈ 28 B ×8 = 224 B.
+
+**Tiered anti-aliasing** (per tap, selected per block from ρ, ~5 % hysteresis, switch only at block edges):
+```
+Tier 0  ρ∈[0.7,2.0]   Hermite only                                   (baseline)
+Tier 1  ρ∈(2.0,4.0]   +boxcar pre-average s'=½(sᵢ+sᵢ₊₁) then Hermite  (+1 fetch,+4 add/head; ×2 for ρ>3)
+Tier 2  ρ∈[0.25,0.7)  Hermite + tracking output one-pole fc=clamp(0.45·ρ·fs,4k,43k)
+```
+Pitch-UP folding is the only true alias source and is negligible ≤ +1 oct at 96 kHz; Tier 1 attenuates the 19–43 kHz band that folds at ρ→4. Escape hatch `PTAP_SINC8` (compile-time) if bench listening at ρ=4 offends.
+
+**Interface (`pitch_tap.h`):** `ptap_init(p,dmin,span,start_delay)` · `ptap_set_window` · `ptap_set_ratio` · `ptap_update_block` (AA tier + lp_g) · `ptap_read(p,dl_or_win,interp)` · `ptap_read_loop(...,loop_start,loop_end,...)` · `ptap_current_delay` (dominant head, for mode handoff). RECIRC works unchanged with `L_eff = loop span`; the loop splice seam is the loop's own character (stock behaves identically) — document, don't fix.
+
+**Mode switching (glitch-free):** no state morph. On a TIME↔PITCH edge, seed the incoming mode coherently (`PITCH: φ=0.5`, head0 at current slewed delay), then compute **both** reads and equal-power-mix over `MODE_XFADE_SAMPLES = 960` (10 ms), then drop the outgoing reads. Same ramp covers SHORT/FULL and `pitch_span` changes.
+
+**Host-test criterion (`test_pitch_tap.c`, the headline assert):** sine `w=0.05π` into an 8192-sample line, ρ=1.26, S=2048 (~25 wraps over 200 k samples): assert `max|y[n]−y[n−1]| < 3·ρ·w·A` across the **entire** run including wraps; the **control case** (naive single sweeping head) must *fail* by >10× (proves the test catches the bench-2 defect). Plus: write-head exclusion (instrumented), pitch accuracy (Goertzel ±1 % at ρ∈{0.5,0.84,1.19,2.0}), aliasing (<−35 dBc Tier-0; Tier-1 ≥6 dB better at ρ=3), equal-power loudness ripple <±1 dB, ρ→1 convergence to `dl_read(D_MIN+S/2)`, engine-level mode-flip continuity, RECIRC (bound holds except ±2 smp of loop splice).
+
+---
+
+### 7. Settings / cal mode
+
+#### 7.1 Boot chord
+Power-up gesture: **PULSE IN (SW14) held LEFT AND ARM PULSE IN (SW16) held LEFT** — both are spring-return momentaries (BOM), so this is unambiguous and impossible to latch accidentally. Read **before** the audio ISR starts, in parallel with SDRAM init (adds ~0 ms to normal boot). Timing (`ui_mode.h`, host-tested): `BOOT_SETTLE_MS 30` (discard) → `BOOT_DETECT_MS 100` (both-LEFT the entire window or → NORMAL) → `BOOT_CONFIRM_MS 600` (LEDs fill L→R; early release → NORMAL) → enter (5 LEDs flash 3×) → `MODE_SETTINGS`. Optional runtime re-entry (`UI_RUNTIME_REENTRY`, default ON): same chord held ≥1 s in NORMAL.
+
+#### 7.2 State machine (`ui_mode`, pure `ui_tick(snapshot,out)`)
+`ST_BOOT_CHECK → (no chord) ST_NORMAL ↔ (chord) ST_SETTINGS`. Pages selected by existing **latching** selectors (no new controls):
+
+| CAL/PRESET (B10) | A/B/C | Page |
+|---|---|---|
+| cal | A | **P1** control min/max cal |
+| cal | B | **P2** CV two-point cal |
+| pre-set | A | **P3** analog tone (audible while edited) |
+| pre-set | B | **P4** system: fidelity override, interp, glide, pitch_span, factory reset |
+| — | C | reserved |
+
+In-mode: SW14-left tap = confirm/action; SW16-left hold ≥1 s = exit (auto-save dirty settings; cal saved only if confirmed). Audio: P3/P4 run the live engine; P1/P2 freeze engine params at entry snapshot; `audio_mute` only during sector erase. `ui_out_t{leds, request_save_settings, request_save_cal, audio_mute, suppress_transport}` — superloop performs writes.
+
+#### 7.3 Chord + knob modal editor (relative-with-clamp)
+Hold a momentary LEFT; a mapped knob is *stolen* to edit a setting. `chord_map[]` (one table):
+
+| Held | Knob | Edits |
+|---|---|---|
+| PULSE IN-L (SW14) | TIME pot | `tone_cutoff_hz` (tap_tone/fb_tone fc) |
+| PULSE IN-L | POT6 (lin) | `sat_drive` |
+| PULSE IN-L | POT7 (lin) | `tone_damping` (fb roll-off) |
+| ARM PULSE-L (SW16) | TIME pot | `glide` |
+| both-L ≥1 s | — | enter SETTINGS |
+
+Semantics: latch knob raw on press; knob goes live only after moving >`EDIT_DEADBAND ≈2 %`; edit is **relative** (`param += Δknob·span`, clamped) → never jumps. On release the knob's **normal** parameter is **pinned** (§7.5) until the physical control sweeps back through its pre-chord value. Transport conflict rule: the momentary's normal action fires **on release if hold <300 ms and no mapped knob moved** (tap = original manual write/recirc/pulse); else chord/edit + `suppress_transport`. Flagged for bench feel-validation; fallback = chord entry boot-only. Save: chord-release starts a 500 ms coalescing timer → one `request_save_settings` append.
+
+#### 7.4 Cal flows
+- **P1 control min/max:** working `min=0xFFFF/max=0`; user sweeps each of 9 sliders + 7 pots to extremes (median-of-3 fold); LED bargraph = channels with span ≥ `CAL_MIN_SPAN ≈60 %`; SW14 commits (insufficient-span channels keep prior/default; committed get ±0.5 % inset guard so extremes reach 0.0/1.0). Applied as `norm = clamp((raw−min)/(max−min))` (+invert). Fixes nothing that regresses; uncalibrated → identity (unit behaves like today).
+- **P2 CV two-point** (fixes the Time-CV narrow-range bug): LED1 blink → apply 0 V, SW14 captures 256-avg; LED2 blink → apply +5 V, SW14 captures; compute gain/offset with monotonic sanity check (reject → keep prior). `volts = (raw−offset)·gain`.
+- **Fidelity apply-at-boot:** load settings → read resolution switch → resolve (`FOLLOW_SWITCH` | `FORCE_*`) → lay out SDRAM once. P4 change lights "reboot to apply" (LED1+2 alternate).
+
+#### 7.5 Persistence records (`storage.h`, MARF pattern, frozen w/ `_Static_assert`)
+Flash: sectors 0–5 = code (256 K; app ≪ that), **sector 6 = store bank A (128 K)**, **sector 7 = store bank B (128 K)**. Header (12 B, word-aligned): `{uint16 magic=0x5238 (written LAST=commit), uint8 rec_id, uint8 version, uint16 len, uint16 seq, uint16 crc16 (CCITT 0x1021/0xFFFF over payload), uint16 hdr_crc}`. Records **appended**; load takes highest-`seq` valid per `rec_id`; payload→header→magic order = torn-write safe (power loss always recoverable); bank-full → copy latest of each rec_id to other bank + erase. Payloads: `cal_payload_v1` (9+7 `{u16 min,max}` + 4 `{f32 gain,off}` CV + valid flags ≈104 B), `settings_payload_v1` (§ below, ≈24 B). Version bump = defaults, no migration shims in v1. Endurance ≈30 M saves — non-issue. **Control pinning** (`pin_t{target,last_live,active}`, release when live crosses target or within `PIN_EPS=0.01`) used at boot recall, chord-release handback, and cal-page exit.
+
+Settings payload: `tone_cutoff_hz` (1 k–20 k log, ≥20 k=bypass; dflt bypass), `tone_damping` (0–1, dflt 0), `sat_drive` (0–1, dflt 0), `glide` (≥0, **0 = crossfade-snap**, dflt small>0), `fidelity_mode` (FOLLOW_SWITCH|FORCE_INT16|FORCE_INT32, dflt FOLLOW), `interp` (linear|hermite, dflt hermite), `aa_on` (dflt on), `voice` (NEUTRAL|ANALOG|VINTAGE-TONE, dflt NEUTRAL), `pitch_span`, `pitch_law`, `wow_depth`.
+
+---
+
+### 8. Feature-preservation punch-list (MUST NOT REGRESS)
+
+1. **Tap→output-jack (TDM slot) order** — live-test before release (wrong order silently scrambles panel tap 1..8). [BENCH]
+2. **36-trimmer role** (tap positions vs levels vs both-per-bank) — resolve `hardware.md` self-contradiction on the bench *before* writing `panel.c`. [BENCH]
+3. **AUTO CONTROL musical behavior** — highest silent-regression risk; only a placeholder additive term exists. Characterize `0x20002088` live (feed signals, watch), then implement for real. [BENCH]
+4. **bank_B enable + role, incl. hi-fi int32** — resolved to dynamic memory split (§5.1); confirm stock enable condition live. [BENCH]
+5. **DIP 10 ms tap-times vs 0..160 phase mode** — pin `panel_switch_bits` bit3 selector; reconcile the two tap-time sources. [BENCH]
+6. **SHORT/FULL printed panel times** — calibrate cycle lengths in samples @96 kHz so the 4:1 ratio + absolute legend match.
+7. **cal./pre-set live setup mode** — preserve its stock audible effects (short buffer, ×2 mult, immediate/raw tap tracking); keep distinct from the NEW boot-chord stored-cal mode (do not conflate).
+8. **PITCH mode ships only when click-free AND static-free** — `pitch_tap` integrated into `engine.c` (today engine reads `taps.cur[]` directly; the patched stock build is *worse* than stock here).
+9. **Octave switch bits 9/10** still audibly select ×1/×2/×4 after PLL removal (remap to multiplier/base-length scaling). [DELTA]
+10. **Vintage 12-bit texture** — bit-crush dither default OFF to match stock crunch (opt-in fidelity win).
+11. **Mid-run resolution flip** — graceful mute-fade + fast buffer clear; document the boot-latched-layout change from stock's live re-read. [DELTA]
+12. **Output loudness / slider law** — replace `master=1/8` placeholder with measured gain staging. [BENCH]
+13. **Pulse output** — match stock 5 ms/5 V timing at minimum; the 14.5 V improvement is likely hardware-bound (don't promise); don't regress timing semantics. [BENCH]
+14. **Manual transport feel** — fix the "stuck ~3 s" bug, but measure stock auto-cycle timing first. [BENCH]
+15. **Mute DIPs preserve slider settings** — mute = explicit flag, not a gain overwrite.
+16. **Analog-tone defaults NEUTRAL** — parity first, flavor opt-in (default voice bypasses all character blocks).
+17. **Recovery path** — keep `Compiled FW/B288-REV1.0.hex` + `288r-unit-dump.bin` as golden restores; BOOT0 ROM DFU documented as unbrick. USB update path [DELTA — dropped unless owner requests re-impl; SWD + ROM DFU cover recovery].
+
+New-feature interaction guards: boot chord read once before runtime roles attach (trigger on *switch position*, not jack voltage); chord-held knob must not also drive its normal param; on release, pin until swept through.
+
+---
+
+### 9. Prioritized build order
+
+Everything through step ~7 is **host-testable now** (no hardware). Steps 8+ are **bench-gated**. Keep `make test` green at every commit; each new module lands with its suite.
+
+**Phase A — DSP foundation (host, no bench):**
+1. `audio_buffer.{h,c}` + `dither.h` + `test_audio_buffer` — int16/int32 Q15/Q23 layout, `ab_get/ab_put/ab_fetch`, boot layout, storage-boundary TPDF. *This unblocks everything (delay_line reads through it).* Change `delay_line_t.buf` → windowed reads sourced from `ab_fetch` scratch; keep the float-buffer path as the host-test backend so the 7 existing suites pass unmodified.
+2. `pitch_tap.{h,c}` + `test_pitch_tap` — the headline wrap-continuity assert + naive-head control case (proves the bench-2 fix). Equal-power sin LUT, tiered AA, ρ→1 relax.
+3. `engine` rework → `engine_process_block()` (BLK=32), integrate `xfade` (TIME snap) + `ptap` (PITCH) + `mode_mix` 10 ms ramp; `test_engine` mode-flip continuity. Equal-power upgrade to `crossfade.c`.
+4. `tone/sat/wow` + suites; wire per §2 (fb_tone in recirc, tap_tone per channel, write_sat, wow offset); default voice NEUTRAL.
+5. `storage.h`/`flash_store`/`store_hal`(mock)/`pinning`/`calib`/`settings` + suites — the whole persistence + cal-math stack against RAM mocks with fault injection.
+6. `panel_input`/`ui_mode`/`led`/`params`/`panel` + suites — boot chord, page routing, chord+knob relative editor, tap-vs-hold discrimination, all via scripted `panel_snapshot_t`.
+7. `mixer` extend (real gain law scaffolding, explicit mute flag, AUTO CONTROL structure) + `test_mixer`.
+
+**Phase B — bench-gated (needs the SWD/logic-analyzer session):**
+8. `bsp/` StdPeriph bring-up (reuse MARF `Libraries/`): `clock` (§7.4 PLL), `sdram_fmc` (timings ready), `sai_dma`, `i2c1`+`codec_cs42888` (I²C addr + regs [BENCH]), `spi2_adc`, `panel_scan` (595/4051), `pulse_tim`, `store_hal_f429`. `make cycles` DWT profile validates the §4 budget on real FMC first.
+9. Fill the ~2 `[BENCH]` rows in `panel_map[]`, `board_pins.h`, codec regs, TDM slot order; calibrate the punch-list constants (§8: tapers, cycle lengths, AUTO CONTROL, thresholds).
+10. Flash + listen: verify PITCH static gone, TIME ringing gone; A/B analog voice; feel-validate the transport tap/hold rule.
+
+**First 3–5 concrete steps for the implementer right now:**
+1. Create `src/dsp/`, `src/bsp/`, `src/app/`; move the 12 existing DSP files into `src/dsp/`; update the Makefile include paths; confirm `make test` still green (pure refactor, one commit).
+2. Write `dither.h` (xorshift + TPDF) and `audio_buffer.{h,c}` with a host malloc backend; add `test_audio_buffer` (int16 round-trip ≤1 LSB with dither, int32 exact, bank split math). Commit.
+3. Add `dl_read_windowed`/`dl_read_aa` to `delay_line.{h,c}` (tier-0 ≡ existing `dl_read`); extend `test_interp_quality` with a swept-read THD+N harness per kernel. Commit.
+4. Write `pitch_tap.{h,c}` + `test_pitch_tap` with the wrap-continuity headline assert **and** the failing naive-single-head control case. This is the proof-of-correctness for the module's whole reason to exist. Commit.
+5. Rework `engine` to `engine_process_block()` and wire `ptap`/`xfade`/`mode_mix`; extend `test_engine` with a mid-stream TIME↔PITCH flip continuity assert. Commit.
+
+Then proceed down Phase A (steps 4–7) while the bench session is scheduled; Phase B starts the moment hardware is on the bench, with `make cycles` as bring-up task #1.
+
+---
+
+Files to create/extend (absolute): new under `/Users/oren/Documents/GitHub/288r/firmware/src/dsp/` — `pitch_tap.{h,c}`, `audio_buffer.{h,c}`, `tone.{h,c}`, `sat.{h,c}`, `wow.{h,c}`, `dither.h`; extend `delay_line.{h,c}`, `crossfade.{h,c}`, `engine.{h,c}`, `mixer.{h,c}`. New under `/Users/oren/Documents/GitHub/288r/firmware/src/app/` — `panel_input`, `led`, `flash_store`, `store_hal`, `storage.h`, `pinning`, `calib`, `settings`, `ui_mode`, `params`, `panel`. New `/Users/oren/Documents/GitHub/288r/firmware/src/bsp/` StdPeriph layer. Matching suites under `/Users/oren/Documents/GitHub/288r/firmware/test/`.

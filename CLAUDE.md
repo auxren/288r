@@ -28,10 +28,17 @@ better engine; add new features/controls/modulation only *after* the clone is na
   `engine_process_multi()` (8 per-tap DAC channels + mixed out); audio_io does the CS42888 4-in/8-out
   TDM block (int24↔float, clamped). Interp fidelity measured: Hermite ~2.4× better than linear @ ½ Nyq.
   Still to build (pre-bench, host-testable): audio_buffer (int16/int32 SDRAM layer), panel (switch/595/
-  SPI-ADC decode), storage/settings/calib (MARF-style persistence + cal). Bench-gated: StdPeriph
-  init (SDRAM timings ready in docs/bench-runbook.md), SAI2/DMA wiring. See docs/bench-runbook.md.
-- **BLOCKED on the bench/SWD session** for a flashable image and exact constants (see below).
-  The no-hardware DSP/patch work is essentially exhausted.
+  SPI-ADC decode), storage/settings/calib (MARF-style persistence + cal), pitch_tap (dual-head), tone/
+  sat/wow (analog voice). Full plan in the design spec (see DESIGN.md + task output brbh5j78t).
+- **Flashable bring-up image now builds:** `make firmware` → `firmware/build/fw/b288-community.hex`
+  (clock→SDRAM→codec→SAI/DMA→engine, 8 taps→8 DAC). Bare-metal BSP in `firmware/src/bsp/` (MARF's
+  StdPeriph is F40x-era — no F429 FMC/SAI — so BSP is direct-register against a vendored F429 CMSIS
+  header in `firmware/Libraries/CMSIS/`; links `-nostdlib` since the toolchain has no newlib). It BUILDS
+  and LINKS clean but is a **bring-up**: every `[BENCH]` constant in `firmware/src/bsp/board.h` (SAI
+  clock chain, codec I²C addr+regs, exact pins, DMA streams, TDM slot order, switch polarity) must be
+  confirmed on the bench — **do not expect audio on first flash.** Procedure: `docs/bench-bringup.md`.
+- **Guaranteed-working hardware test today = the interpolation PATCH** (`re/patches/`, already A/B'd on
+  the unit). The full rewrite image is the next stage and needs bench iteration.
 
 ## Key technical facts
 - MCU **STM32F429ZET6** (LQFP144) — confirmed from chip marking: **512 KB flash**, 192 KB SRAM
@@ -87,7 +94,8 @@ Python tooling: `re/.venv` (capstone). Keystone won't load on arm64 → assemble
 ## How to build / test / verify
 ```bash
 cd firmware && make test     # host unit tests (all pass)
-cd firmware && make engine   # cross-compile engine for STM32F429
+cd firmware && make engine   # cross-compile engine for STM32F429 (compile-only proof)
+cd firmware && make firmware # link flashable image -> build/fw/b288-community.hex
 re/.venv/bin/python re/scripts/apply_patch1.py   # (re)generate + verify Patch 1 -> re/patches/patched.hex
 ```
 
