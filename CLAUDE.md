@@ -41,8 +41,14 @@ better engine; add new features/controls/modulation only *after* the clone is na
   legend (linear 0.4×–1.6×, noon=1.0); **config DIP sw1 (×10 extend, clamped) + sw2 (11025 Hz bandwidth
   limit** = new `bwlimit.c` one-pole) wired as boot straps; **live 74HC165 scan** (`panel_ctl.c`) decodes
   A/B/C preset + octave ×1/×2/×4 and applies them smoothly (octave rescales base via `taps_set_base_delay`
-  — fixed-rate, no glitch); **LED framework** (`led.c` + walking-1 discovery tool) over the 595, gated off.
-  `make test` = 10 suites on main. See commits since `4292b91`.
+  — fixed-rate, no glitch); **LED framework** (`led.c` + walking-1 discovery tool) over the 595, gated off;
+  plus a `g_dbg_panel` SWD snapshot for labelling [BENCH] bits and a bench-runbook checklist.
+- **More host-tested modules built out (2026-07-17, `main`, standalone — not yet wired):**
+  **`audio_buffer.c`** = the int16/int32 SDRAM fidelity layer (vintage 2× capacity; I32 Hermite matches
+  the float `delay_line` kernel to 3.7e-9 — DESIGN.md drop-in, wire = swap `delay_line_t` in `engine_t`);
+  **transport momentaries** (`transport_update_trig`, edge-driven WRITE/RECIRC, gated in main);
+  **`storage.c`** = MARF-style versioned/checksummed records (CRC-16/CCITT, refuse-invalid) + control-
+  pinning on recall. `make test` = **13 suites on main** (backend = F429 internal-flash emulation, [BENCH]).
 - **Pitch shifter → playable voice (branch `pitch-shift-engine`):** `pitch_shift.c` (crossfaded-tap,
   from `firmware/PITCH_SHIFT.md`) + `pitch_voice.c` (1.2 V/oct CV map, ratio slew) + `fast_math.c`
   (no-libm single-precision sinf/cosf/exp2f, so the freestanding image links). Global voice wired into
