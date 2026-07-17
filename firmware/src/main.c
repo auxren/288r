@@ -52,6 +52,23 @@ extern volatile uint8_t g_spi_raw[2][3];   /* SPI2 control-ADC raw bytes (ch0,ch
 /* TIME control in [0,1]; written in the superloop, read in the audio ISR. */
 static volatile float g_time_raw01 = 0.5f;
 
+/* SWD observability: live panel decode + raw control reads, for labelling the
+ * [BENCH] bits at the bench (gdb `p g_dbg_panel`, or `mdw &g_dbg_panel`). Populated
+ * in the superloop. Strip pre-release with the other g_dbg_* scaffolding. */
+struct dbg_panel {
+    uint16_t sw165;       /* raw 74HC165 switch word              */
+    uint16_t spi_cv;      /* raw Time-CV        (SPI2 ch0)         */
+    uint16_t spi_knob;    /* raw multiplier knob (SPI2 ch1)       */
+    uint8_t  preset;      /* decoded A/B/C (0/1/2)                */
+    uint8_t  octave;      /* decoded x1/x2/x4                      */
+    uint8_t  bank_b;
+    uint8_t  write_trig;
+    uint8_t  recirc_trig;
+    float    mult;        /* smoothed multiplier [0,1]            */
+    float    base;        /* current taps base_delay (samples)    */
+};
+volatile struct dbg_panel g_dbg_panel __attribute__((used));
+
 /* Audio ISR bridge: TDM frame = TDM_SLOTS int32 (ADC slots 0..3 in, DAC slots 0..7
  * out). Pull the input from AUDIO_IN_SLOT, run the engine, scatter the 8 tap
  * outputs into the 8 DAC slots. audio_in_to_f / audio_f_to_out are the codec word
@@ -140,6 +157,9 @@ int main(void)
         if (raw > 4095u) raw = 4095u;
         mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.03f;
         g_time_raw01 = mult_filt;
+        g_dbg_panel.spi_cv = (uint16_t)cv;
+        g_dbg_panel.spi_knob = (uint16_t)knob;
+        g_dbg_panel.mult = mult_filt;
 
 #if PANEL_SCAN_ENABLE
         /* Panel scan (74HC165) — throttled (~every 64 passes, ~10 ms), input-only,
@@ -148,7 +168,15 @@ int main(void)
          * phase row. Both glide smoothly, so this never zippers the audio. */
         if ((scan_div++ & 0x3Fu) == 0u) {
             panel_ctl_t pc;
-            panel_decode(bsp_panel_switches_read(), &pc);
+            uint16_t sw = bsp_panel_switches_read();
+            panel_decode(sw, &pc);
+            g_dbg_panel.sw165 = sw;
+            g_dbg_panel.preset = pc.preset;
+            g_dbg_panel.octave = pc.octave;
+            g_dbg_panel.bank_b = pc.bank_b;
+            g_dbg_panel.write_trig = pc.write_trig;
+            g_dbg_panel.recirc_trig = pc.recirc_trig;
+            g_dbg_panel.base = g_engine.taps.base_delay;
             if (pc.octave != prev_octave) {
                 float nb = engine_clamp_base(base_boot * panel_octave_factor(&pc),
                                              DELAY_LEN, time_hi);

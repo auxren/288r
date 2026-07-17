@@ -1,5 +1,10 @@
 # Bench-day runbook (first hardware/SWD session)
 
+> **For the 2026-07-17 session (panel + config-DIP + pitch bring-up on the *community*
+> firmware), jump to [§ Session: panel + config + pitch bring-up](#session-panel--config--pitch-bring-up)
+> at the bottom.** Sections 0–4 below are the original stock-patch session (mostly resolved by
+> bench sessions 1–3) — do §0 preflight first, then skip to the new section.
+
 Goal: with a 288r + ST-Link in front of you, resolve the remaining unknowns and validate the
 interpolation patch in one efficient pass. Work top to bottom. **Always keep the stock hex as restore.**
 
@@ -67,3 +72,57 @@ mdw <addr> <count>          # read words
 dump_image f.bin 0x08000000 0x80000
 program <file> verify reset exit
 ```
+
+---
+
+# Session: panel + config + pitch bring-up
+
+For the community firmware (`firmware/build/fw/b288-community.hex`) after the 2026-07-17 build-out
+(config DIP sw1/sw2, live 165 scan, LED framework, gated pitch voice). Do §0 preflight first.
+Everything here is labelling the `[BENCH]` markers those commits left. **Keep the stock hex as restore.**
+
+The firmware exposes a live decode over SWD — read it with gdb `p g_dbg_panel` (or
+`mdw &g_dbg_panel <n>`) while toggling controls. That struct is the labelling tool for steps 2–5.
+
+## A. Flash + regression-check (must pass before anything else)
+- [ ] `cd firmware && make firmware` → flash `build/fw/b288-community.hex`.
+- [ ] **Audio still works**: input passes, multitap delay echoes, multiplier knob is smooth.
+- [ ] **Knob at noon = 1.0×** (taper calibration) — read `g_dbg_panel.mult` ≈ 1.0 at 12 o'clock.
+- [ ] **Audio SURVIVES the live 165 scan.** If audio drops on this build (it scans PA4/5/6 now),
+      PA4/5/6 overlap the codec-reset-release block → set `PANEL_SCAN_ENABLE 0` in main.c, reflash,
+      and note it. (This is the one regression risk in the new build.)
+
+## B. Label the 13-bit 165 switch map (unblocks octave/preset/mode/transport)
+- [ ] Watch `g_dbg_panel.sw165` (raw) + `.preset/.octave/.bank_b/.write_trig/.recirc_trig` (decoded).
+- [ ] Toggle **A/B/C** → confirm which raw bits move and that `.preset` follows; fix `B_PRESET_*` +
+      polarity in `panel_ctl.c` if not. Verify presets audibly reposition the taps.
+- [ ] Toggle **octave ×1/×2** (and ×4 if present) → confirm `B_OCT0/1` + the encoding; verify the
+      echo spacing halves/doubles smoothly (no glitch — that's the fixed-rate win).
+- [ ] Toggle the **TIME/pitch mode** switch and the momentary **SW14/SW16** → find their bits in
+      `sw165` → they become the mode gate (step E) and WRITE/RECIRC transport (future).
+- [ ] Commit the corrected bit map + polarity to `panel_ctl.c` and `re/notes/panel-scan.md`.
+
+## C. Trace config DIP sw1 (×10 extend) + sw2 (bandwidth) pins
+- [ ] Flip **sw1** alone; find the GPIO that changes (scope, or `mdw` the GPIO IDRs while toggling).
+      Set `SW_EXTEND_PORT/PIN` + `SW_EXTEND_MAPPED 1` in `board.h`. Reflash → confirm delay time ×10.
+- [ ] Flip **sw2** alone; likewise set `SW_BANDWIDTH_*` + `_MAPPED 1`. Reflash → confirm audible
+      high-frequency rolloff (11025 Hz). Tune `BANDWIDTH_LIMIT_HZ` / filter order to taste vs stock.
+
+## D. Find the 595 LED bits (walking-1 sweep) — CAREFUL, output side
+- [ ] Set `PANEL_LED_WALK 1` + `PANEL_LED_ENABLE 1` in main.c, reflash.
+- [ ] One bit walks ~1/s. Note step→LED to fill `LED_BIT[]` in `led.c`.
+- [ ] **If audio drops at a particular step, that bit is codec-reset / mux-enable — NOT an LED.**
+      Record it as a must-hold bit (add to the `extra` mask passed to `led_word`), never toggle it.
+- [ ] Set `PANEL_LED_WALK 0`, map real LED meanings, reflash, confirm.
+
+## E. Hear the pitch voice
+- [ ] Calibrate Pitch-CV: read `g_dbg_panel.spi_cv` at 0 V and at a known voltage → set
+      `PITCH_CV_CENTER` + `PITCH_CV_VOLTS_PER_CODE` in `board.h`.
+- [ ] Set `PITCH_VOICE_ENABLE 1`, reflash. Feed Pitch-CV; listen on the mixed out (voice sums into
+      ch0). Confirm **1.2 V/oct**: +1.2 V should be one octave up (ratio 2), not +1.0 V.
+- [ ] Gate CV routing on the TIME/pitch mode bit found in step B (so the Time-CV drives pitch in
+      pitch mode, delay-time otherwise).
+
+## F. Report back
+Update `panel_ctl.c` (bit map/polarity), `board.h` (pins + cal), `led.c` (LED_BIT + must-hold),
+`re/notes/panel-scan.md`, and `CLAUDE.md`. Then strip the `g_dbg_*` scaffolding before any release.
