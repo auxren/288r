@@ -79,7 +79,7 @@ void bsp_sdram_init(void)
         sdcr |= ((SDRAM_CAS_LATENCY & 3u) << 7); /* CAS latency */
         sdcr |= (2u << 10);                      /* SDCLK = HCLK/2 (10) */
         sdcr |= (1u << 12);                      /* RBURST: read burst enable */
-        sdcr |= (0u << 13);                      /* RPIPE: 0 */
+        sdcr |= ((SDRAM_RPIPE & 3u) << 13);      /* RPIPE read-pipe delay (HCLK) */
         FMC_Bank5_6->SDCR[0] = sdcr;
     }
 

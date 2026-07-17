@@ -7,7 +7,11 @@
 
 float audio_in_to_f(int32_t codec_word)
 {
-    return (float)(codec_word >> 8) * (1.0f / FS24);   /* left-justified 24-bit -> [-1,1) */
+    /* SAI DR presents 24-bit data RIGHT-aligned in bits [23:0], zero-extended.
+     * Sign-extend from bit 23, then scale. (Confirmed on hardware from the CS42888
+     * ADC stream: e.g. 0x00C522F3 -> -0.46, not a tiny value.) */
+    int32_t s = (codec_word << 8) >> 8;                /* sign-extend 24-bit */
+    return (float)s * (1.0f / FS24);
 }
 
 int32_t audio_f_to_out(float x)
@@ -15,7 +19,7 @@ int32_t audio_f_to_out(float x)
     if (x >  1.0f) x =  1.0f;          /* clamp: never wrap to the opposite rail */
     if (x < -1.0f) x = -1.0f;
     int32_t s = (int32_t)(x * FS24_M1);
-    return s << 8;                     /* back to left-justified 24-bit in int32 */
+    return s & 0x00FFFFFF;             /* 24-bit data, right-aligned in the SAI slot */
 }
 
 void audio_io_block(engine_t *e, const int32_t *in, int32_t *out,

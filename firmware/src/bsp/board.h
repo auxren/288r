@@ -49,12 +49,12 @@
 /* FMC SDCLK = HCLK/2 = 84 MHz -> 11.9 ns/clk.  Timings from the -7 datasheet
  * (docs/bench-runbook.md), rounded up in SDCLK cycles.  CAS latency 3 (test 2). */
 #define SDRAM_CAS_LATENCY 3u             /* [BENCH] try 2 if 3 is unstable        */
+#define SDRAM_RPIPE       1u             /* read-pipe delay in HCLK; F429-DISCO uses 1 */
 #define SDRAM_REFRESH     636u           /* 7.8125us * 84MHz - 20 ~= 636          */
 
 /* ---- codec CS42888 over I2C1 (confirmed bus; regs [BENCH]) -------------- */
-/* 7-bit address set by the AD0/AD1 strap pins: 0x48..0x4B. [BENCH] read the
- * straps / sniff power-up I2C. Default guess 0x48. */
-#define CS42888_I2C_ADDR7 0x48u          /* [BENCH]                                */
+/* 7-bit address set by the AD0/AD1 strap pins. CONFIRMED 0x49 by live I2C scan. */
+#define CS42888_I2C_ADDR7 0x49u          /* confirmed on hardware */
 #define I2C1_SPEED_HZ     100000u
 
 /* Which ADC TDM slot carries the audio input signal (0..3). [BENCH] live test. */

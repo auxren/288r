@@ -27,6 +27,14 @@ static float delay_buf[DELAY_LEN] __attribute__((section(".sdram")));
 
 static engine_t g_engine;
 
+/* --- live engine telemetry (read over SWD) --- */
+volatile float    g_dbg_in;            /* last input sample                 */
+volatile float    g_dbg_chan[NUM_TAPS];/* last 8 per-tap outputs            */
+volatile float    g_dbg_tapdelay[NUM_TAPS]; /* taps.cur[] in samples        */
+volatile float    g_dbg_mult;          /* current time multiplier           */
+volatile uint32_t g_dbg_wpos;          /* delay write pointer               */
+volatile float    g_dbg_base;          /* base delay (cycle length)         */
+
 /* TIME control in [0,1]. Updated by the (not-yet-wired) panel/CV layer; fixed for
  * now. volatile: written in the superloop, read in the audio ISR. */
 static volatile float g_time_raw01 = 0.5f;
@@ -52,6 +60,13 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         for (unsigned s = 0; s < TDM_SLOTS; ++s)
             out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
                                      ? audio_f_to_out(chan[s]) : 0;
+        g_dbg_in = x;
+        for (int i = 0; i < NUM_TAPS; ++i) {
+            g_dbg_chan[i]     = chan[i];
+            g_dbg_tapdelay[i] = g_engine.taps.cur[i];
+        }
+        g_dbg_mult = g_engine.time.mult;
+        g_dbg_wpos = g_engine.dl.wpos;
     }
 }
 
@@ -59,6 +74,7 @@ int main(void)
 {
     bsp_clock_init();
     bsp_sdram_init();
+    sdram_memtest();
     bsp_panel_gpio_init();
 
     /* Cycle length (SHORT/FULL) sets the base delay window. FULL = 1 s @96 k. */
@@ -66,20 +82,23 @@ int main(void)
                                      : (float)SAMPLE_RATE_HZ / 4.0f;
     engine_init(&g_engine, delay_buf, DELAY_LEN, base,
                 /*time_lo*/ 0.25f, /*time_hi*/ 4.0f, /*slew*/ 0.15f);
+    g_dbg_base = base;
 
     unsigned bits = bsp_resolution_bits();
     g_engine.vintage_bits = (bits < 16u) ? (int)bits : 0;  /* 12-bit -> vintage */
-
-    /* Codec: if it NAKs (wrong address/regs at the bench), keep running so the
-     * clock/SDRAM/SAI can still be probed — audio just won't pass. */
-    (void)bsp_codec_init();
 
 #if USE_SPI_MULT
     bsp_spi2_adc_init();
 #endif
 
+    /* Start SAI/MCLK BEFORE codec config: the CS42888 control port needs a valid
+     * MCLK to respond on I2C. Engine already init'd, so the ISR is safe to run. */
     bsp_audio_init();
     bsp_audio_start();
+
+    /* Codec: if it NAKs (wrong address/regs at the bench), keep running so the
+     * clock/SDRAM/SAI can still be probed — audio just won't pass. */
+    (void)bsp_codec_init();
 
     for (;;) {
 #if USE_SPI_MULT

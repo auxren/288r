@@ -35,17 +35,20 @@ __attribute__((weak)) void bsp_audio_isr(const int32_t *in, int32_t *out, unsign
 
 static void sai_gpio_init(void)
 {
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOEEN;
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIODEN | RCC_AHB1ENR_GPIOEEN | RCC_AHB1ENR_GPIOFEN;
     (void)RCC->AHB1ENR;
-    /* PE2 MCLK_A, PE3 SD_B, PE4 FS_A, PE5 SCK_A, PE6 SD_A — all AF6. [BENCH] */
-    static const uint8_t pins[] = {2, 3, 4, 5, 6};
-    for (unsigned i = 0; i < sizeof(pins); ++i) {
-        uint32_t n = pins[i];
-        GPIOE->MODER   = (GPIOE->MODER   & ~(3u << (n*2))) | (2u << (n*2));
-        GPIOE->OTYPER &= ~(1u << n);
-        GPIOE->OSPEEDR |= (3u << (n*2));
-        GPIOE->PUPDR   = (GPIOE->PUPDR   & ~(3u << (n*2)));
-        GPIOE->AFR[0]  = (GPIOE->AFR[0]  & ~(0xFu << (n*4))) | (6u << (n*4)); /* AF6 */
+    /* CONFIRMED from stock GPIO dump: SAI1 MCLK_A=PE2, FS_A=PE4, SCK_A=PE5,
+     * SD_A (RX, codec ADC->us)=PD6, SD_B (TX, us->codec DAC)=PF6 — all AF6. */
+    static const struct { GPIO_TypeDef *p; uint8_t n; } pins[] = {
+        {GPIOE, 2}, {GPIOE, 4}, {GPIOE, 5}, {GPIOD, 6}, {GPIOF, 6}
+    };
+    for (unsigned i = 0; i < sizeof(pins)/sizeof(pins[0]); ++i) {
+        GPIO_TypeDef *p = pins[i].p; uint32_t n = pins[i].n;
+        p->MODER   = (p->MODER   & ~(3u << (n*2))) | (2u << (n*2));
+        p->OTYPER &= ~(1u << n);
+        p->OSPEEDR |= (3u << (n*2));
+        p->PUPDR   = (p->PUPDR   & ~(3u << (n*2)));
+        p->AFR[n >> 3] = (p->AFR[n >> 3] & ~(0xFu << ((n & 7u)*4))) | (6u << ((n & 7u)*4)); /* AF6 */
     }
 }
 
