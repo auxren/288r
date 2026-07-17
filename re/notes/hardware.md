@@ -33,21 +33,22 @@ firmware has two paths "A"/"B" — 8 out + 4 in split across SAI sub-blocks / TD
 - **I²C1** (`0x40005400`, handle @`0x200013c4`): a configured HAL I²C bus (analog/digital filters set)
   talking to some device — but see below.
 
-### CS42888 control bus — UNRESOLVED; static signals conflict → resolve on the bench
-Checked the **full** disassembly (not just the abridged decompile): the I²C1 handle (`0x200013c4`) is
-initialized and appears in `main_init`'s literal pool, but **no CS42888 control address
-(7-bit `0x48-0x4F` / 8-bit `0x90-0x9E`) and no register-write sequence exist anywhere** in the image.
-The CS42888 is a **control-port codec** (normally register-configured), so *not* seeing any writes is
-surprising — and the board photo shows **no config-strap pins** tied to rails either. The two signals
-disagree, and static analysis can't settle it. **Definitive check is a quick bench probe:**
-- Logic-analyze / scope the codec **control pins at power-up** — SDA/SCL (I²C) or CS/SCLK (SPI). If
-  the MCU writes it, you capture the device address **and the exact register values** (more than we
-  can get statically). If idle, it runs on defaults/strapping.
-- Read the codec's **mode-select + address strap pins** (tied hi/lo) → I²C-vs-SPI and the address.
+### CS42888 control bus — RESOLVED (bench, 2026-07-16): **I²C1**
+Live SWD read of the running unit (`re/notes/bench-session-1.md`): **I²C1 is enabled and configured**
+(`CR1=0x1` PE, `CR2 FREQ=42 MHz`) → it's the CS42888 control port. **SPI2 is in SPI mode**
+(`I2SCFGR I2SMOD=0`, master) → it's the **control-surface SPI ADC** (sliders/pots, CS on GPIOB12),
+not the codec. That settles the earlier ambiguity (static analysis couldn't isolate the I²C address —
+it's computed/runtime, not a catchable immediate). Still open: the exact codec **I²C address +
+register values** (needs an I²C sniff at power-up — SWD can't sniff the bus).
 
-Either way the rewrite's `audio_io` must set up **SAI2 TDM** regardless; the only open question is
-whether we also add a small I²C codec-init (≈a dozen register writes), which is trivial once the bench
-capture gives us the address + values. Also still open: exact **TDM slot count + channel→tap order**.
+### Audio: it's **SAI1** (not SAI2), TDM 8×32-bit / 24-bit — RESOLVED (bench)
+Correction: the SAI @ `0x40015800` is **SAI1** (F429 has only SAI1). Live regs: Block A = Master RX
+(inputs), Block B = Slave TX (the 8 DAC channels); **8 slots × 32-bit slot, 24-bit data, 256-bit
+frame, all 8 enabled**. Confirms `firmware/src/audio_io.c`. Slot→tap order still needs a live test.
+
+### Clock tree — RESOLVED (bench): **HSE = 8 MHz**, SYSCLK 168 MHz
+`RCC_PLLCFGR` M=8/N=336/P=2 from HSE → **168 MHz** SYSCLK, APB1 42 / APB2 84 MHz. StdPeriph init can
+be written for real now.
 
 ## Config / UI front end — a hardware scan chain (no preset NVM expected)
 Presets are **read live from hardware**, not stored. The MCU clocks DIP banks in via **74HC595**

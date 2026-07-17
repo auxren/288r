@@ -95,9 +95,12 @@ re/.venv/bin/python re/scripts/apply_patch1.py   # (re)generate + verify Patch 1
 **Resolved** (no longer open): MCU F429Z + 24/96 + 74HC595/4051 scan; codec = **CS42888**
 (4-in/8-out TDM, no second MCU); SDRAM = **IS42S16400 8 MB/16-bit** → int16/int32 buffer; **no
 EEPROM** (BOM paste error); panel switch→GPIO map traced; momentary switches SW14/16 identified.
-**Blocked until the bench/SWD session** (still needs the board): the exact **pinout** → StdPeriph
-init, the **codec control bus** (I²C vs SPI2) + **TDM slot→tap map** (readable from the `.hex`
-statically), **HSE frequency**, and **calibration constants** (TIME CV range/taper, slider/pot
+**Bench session 1 done (2026-07-16, SWD read-only — see `re/notes/bench-session-1.md`):** RDP open;
+unit fw == our ref (patch valid); **codec bus = I²C1** (SPI2 = control-surface ADC); audio is **SAI1**
+(not SAI2), TDM **8 slots × 32-bit / 24-bit**; **HSE = 8 MHz → SYSCLK 168 MHz, APB1 42 / APB2 84**.
+**Still needs the bench:** flash the patch + **listen** (validation), codec I²C address+regs (boot
+sniff / logic analyzer), slot→tap order (live test), the exact **pinout** → StdPeriph init, and
+**calibration constants** (TIME CV range/taper, slider/pot
 gain law, AUTO CONTROL, pulse thresholds). Markers: `TODO(bench)`/`TODO(init)` in `main.c` +
 `STM32F429.ld`; full checklist in `re/notes/hardware.md` and `firmware/README.md` "Blocked on hardware".
 
