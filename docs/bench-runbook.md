@@ -84,6 +84,13 @@ Everything here is labelling the `[BENCH]` markers those commits left. **Keep th
 The firmware exposes a live decode over SWD — read it with gdb `p g_dbg_panel` (or
 `mdw &g_dbg_panel <n>`) while toggling controls. That struct is the labelling tool for steps 2–5.
 
+**Even better for the shift-register chains — capture with the Saleae and self-label:** probe the
+165 (PA4/5/6) and SPI2 (PB12/13/14 + MOSI) buses, export a Logic 2 digital CSV, and run
+`python3 re/scripts/saleae_decode.py 165 cap.csv --latch 0 --clk 1 --data 2 --changes` (toggle one
+switch → it prints exactly which bit moved) / `... spi cap.csv --cs 0 --sck 1 --miso 2 --mosi 3`
+(prints the 12-bit ADC value + channel). This is hardware ground truth, not the firmware's guessed
+decode. (`--selftest` validates the decoders offline.)
+
 ## A. Flash + regression-check (must pass before anything else)
 - [ ] `cd firmware && make firmware` → flash `build/fw/b288-community.hex`.
 - [ ] **Audio still works**: input passes, multitap delay echoes, multiplier knob is smooth.
