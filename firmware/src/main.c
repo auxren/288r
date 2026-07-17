@@ -71,15 +71,23 @@ int main(void)
     /* Cycle length (SHORT/FULL) sets the base delay window. FULL = 1 s @96 k. */
     float base = bsp_sw_full_cycle() ? (float)SAMPLE_RATE_HZ
                                      : (float)SAMPLE_RATE_HZ / 4.0f;
-    /* TIME MULTIPLIER range from the panel legend: 0.4x .. 1.6x (1.0 at noon).
-     * The x1/x2 octave switch will scale this once wired. */
-    engine_init(&g_engine, delay_buf, DELAY_LEN, base,
-                /*time_lo*/ 0.4f, /*time_hi*/ 1.6f, /*slew*/ 0.15f);
+    /* config DIP sw1: x10 delay/looper extend. Scale the base window, then clamp so
+     * the deepest tap (base*time_hi) still fits the SDRAM buffer. */
+    const float time_lo = 0.4f, time_hi = 1.6f;   /* panel legend: 0.4x..1.6x, noon=1.0 */
+    if (bsp_sw_delay_extend()) base *= DELAY_EXTEND_FACTOR;
+    base = engine_clamp_base(base, DELAY_LEN, time_hi);
+    /* TIME MULTIPLIER range from the panel legend (1.0 at noon). The x1/x2 octave
+     * switch will scale this once wired. */
+    engine_init(&g_engine, delay_buf, DELAY_LEN, base, time_lo, time_hi, /*slew*/ 0.15f);
 
     /* Fidelity from config DIP SW1 sw3/sw4 (PD11/PD12): 24-bit = full precision
      * (clean), 12/8/4-bit = vintage bit-crush. Owner-confirmed; all-off = 24-bit. */
     unsigned depth = bsp_resolution_bits();
     g_engine.vintage_bits = (depth >= 24u) ? 0 : (int)depth;
+
+    /* config DIP sw2: 11025 Hz record-path bandwidth limit (off = full 24/96). */
+    engine_set_bandwidth(&g_engine, (float)SAMPLE_RATE_HZ,
+                         bsp_sw_bandwidth_limit() ? BANDWIDTH_LIMIT_HZ : 0.0f);
 
     bsp_spi2_adc_init();      /* control-surface ADC (multiplier knob + CV) */
 
