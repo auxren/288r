@@ -78,16 +78,20 @@ int main(void)
     (void)bsp_codec_init();
     bsp_panel_init();         /* 74HC165 switch reader (bit-banged) */
 
+    float mult_filt = 0.5f;
     for (;;) {
         /* TIME MULTIPLIER = SPI2 control ADC, ch0 then ch1 in stock (sub_ecc) order:
-         * ch0 = Time-CV, ch1 = knob. Knob sets it, CV adds; the engine slews it, so
-         * this gives smooth delay-time modulation (chorus/flanger). */
+         * ch0 = Time-CV, ch1 = knob. Knob sets it, CV adds. */
         bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0, [1]=ch1 */
         uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
         uint32_t knob = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
         uint32_t raw  = knob + cv;
         if (raw > 4095u) raw = 4095u;
-        g_time_raw01 = (float)raw * (1.0f / 4095.0f);
+        /* One-pole smoothing kills the ADC's ±1-LSB jitter, which the steep taper
+         * otherwise turns into audible delay-time wobble at long delays. Stock does
+         * a 128-avg + hysteresis for the same reason. */
+        mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.03f;
+        g_time_raw01 = mult_filt;
 
         g_switches = bsp_panel_switches_read();   /* validated; not yet acted on */
         __asm volatile ("wfi");
