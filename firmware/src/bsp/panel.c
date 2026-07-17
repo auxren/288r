@@ -45,6 +45,18 @@ void bsp_panel_init(void)
     c_set(P595_CLK, 0);   a_set(P595_LATCH, 0);
 }
 
+/* Init ONLY the 74HC165 switch-input pins (PA4 latch, PA5 clk, PA6 data-in),
+ * leaving the 74HC595 output pins untouched. Lets us scan the switches live
+ * without any output-side risk (the 595 chain may carry codec reset / mux enable). */
+void bsp_panel_switches_init(void)
+{
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    (void)RCC->AHB1ENR;
+    a_out(P165_LATCH); a_out(P165_CLK);
+    GPIOA->MODER &= ~(3u << (P165_DATA*2));            /* PA6 input */
+    a_set(P165_LATCH, 1); a_set(P165_CLK, 1);          /* idle high */
+}
+
 /* Read the 74HC165: pulse latch, then clock in 13 bits MSB-first. */
 uint16_t bsp_panel_switches_read(void)
 {

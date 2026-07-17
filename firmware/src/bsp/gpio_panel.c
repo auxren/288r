@@ -23,6 +23,12 @@ void bsp_panel_gpio_init(void)
     in_pullup(SW_CYCLE_PORT,     SW_CYCLE_PIN);
     in_pullup(SW_RES0_PORT,      SW_RES0_PIN);
     in_pullup(SW_RES1_PORT,      SW_RES1_PIN);
+#if SW_EXTEND_MAPPED
+    in_pullup(SW_EXTEND_PORT,    SW_EXTEND_PIN);
+#endif
+#if SW_BANDWIDTH_MAPPED
+    in_pullup(SW_BANDWIDTH_PORT, SW_BANDWIDTH_PIN);
+#endif
 }
 
 static int rd(GPIO_TypeDef *port, uint32_t n) { return (port->IDR >> n) & 1u; }
@@ -44,4 +50,25 @@ unsigned bsp_resolution_bits(void)
         case 2:  return 8u;    /* sw4 on   */
         default: return 4u;    /* both on  */
     }
+}
+
+/* Config DIP sw1 (x10 delay/looper extend) and sw2 (11025 Hz bandwidth limit).
+ * Pins are [BENCH]-pending: until SW_*_MAPPED is set in board.h these return 0
+ * (feature off) rather than sampling an unrelated pin. Active-low when mapped. */
+int bsp_sw_delay_extend(void)
+{
+#if SW_EXTEND_MAPPED
+    return rd(SW_EXTEND_PORT, SW_EXTEND_PIN) == 0;
+#else
+    return 0;
+#endif
+}
+
+int bsp_sw_bandwidth_limit(void)
+{
+#if SW_BANDWIDTH_MAPPED
+    return rd(SW_BANDWIDTH_PORT, SW_BANDWIDTH_PIN) == 0;
+#else
+    return 0;
+#endif
 }

@@ -87,4 +87,23 @@
 #define SW_RES1_PORT      GPIOD
 #define SW_RES1_PIN       12u
 
+/* ---- config DIP SW1 extra-feature straps (back-panel, near the MCU) ------ */
+/* Same 4-position DIP as the resolution bits above: sw3/sw4 = PD11/PD12 (traced),
+ * sw1 = x10 delay+looper extend, sw2 = 11025 Hz bandwidth limit. sw1/sw2 pins are
+ * NOT yet traced -> [BENCH]. Until confirmed, keep _MAPPED = 0 so the reads compile
+ * INERT (feature off) and we never sample an unrelated pin. At the bench: find the
+ * two pins, set the port/pin below, and flip _MAPPED to 1. Active-low like the rest.
+ * (The port/pin values here are unverified placeholders; they do nothing while
+ *  _MAPPED = 0.) */
+#define SW_EXTEND_MAPPED     0
+#define SW_EXTEND_PORT       GPIOD
+#define SW_EXTEND_PIN        13u        /* [BENCH] placeholder — trace on the unit */
+#define SW_BANDWIDTH_MAPPED  0
+#define SW_BANDWIDTH_PORT    GPIOD
+#define SW_BANDWIDTH_PIN     7u         /* [BENCH] placeholder — trace on the unit */
+
+/* Owner-confirmed feature behavior. */
+#define DELAY_EXTEND_FACTOR  10.0f      /* sw1: x10 delay time + looper length     */
+#define BANDWIDTH_LIMIT_HZ   11025.0f   /* sw2: record-path bandwidth limit         */
+
 #endif /* BSP_BOARD_H */

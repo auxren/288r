@@ -18,6 +18,7 @@
 #include "time_control.h"
 #include "transport.h"
 #include "mixer.h"
+#include "bwlimit.h"
 
 typedef struct {
     delay_line_t dl;
@@ -25,6 +26,7 @@ typedef struct {
     time_ctrl_t  time;
     transport_t  xport;
     mixer_t      mix;
+    bwlimit_t    bw;               /* config DIP sw2 bandwidth limit (bypass = off) */
     dl_interp_t  interp;
     float        in_gain;
     float        auto_correction;  /* AUTO CONTROL term (placeholder; calibrate) */
@@ -35,6 +37,13 @@ typedef struct {
  * time_lo/hi: TIME MULTIPLIER range. slew: one-pole coeff for taps + time. */
 void  engine_init(engine_t *e, float *buf, uint32_t len,
                   float base_delay, float time_lo, float time_hi, float slew);
+
+/* config DIP sw2: set the record-path bandwidth limit. cutoff_hz <= 0 => off. */
+void  engine_set_bandwidth(engine_t *e, float fs, float cutoff_hz);
+
+/* config DIP sw1 (x10 extend): largest base_delay whose deepest tap (base*time_hi)
+ * still fits `len` with interpolation margin. Clamp the extended base with this. */
+float engine_clamp_base(float base, uint32_t len, float time_hi);
 
 /* Process one input sample; time_raw01 is the TIME control in [0,1]. Returns the
  * summed ("mixed") output. */
