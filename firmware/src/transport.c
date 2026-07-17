@@ -27,3 +27,16 @@ int transport_should_write(const transport_t *x)
 {
     return x->mode == XP_WRITE;
 }
+
+void transport_trig_init(xport_trig_t *t) { t->prev_w = 0; t->prev_r = 0; }
+
+int transport_update_trig(transport_t *x, xport_trig_t *t,
+                          int write_lvl, int recirc_lvl, uint32_t head)
+{
+    int fired = 0;
+    if (write_lvl  && !t->prev_w) { transport_begin_write(x, head);  fired = 1; }
+    if (recirc_lvl && !t->prev_r) { transport_begin_recirc(x, head); fired = 1; }
+    t->prev_w = (uint8_t)(write_lvl  != 0);
+    t->prev_r = (uint8_t)(recirc_lvl != 0);
+    return fired;
+}

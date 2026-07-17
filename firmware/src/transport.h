@@ -37,4 +37,17 @@ void transport_begin_recirc(transport_t *x, uint32_t head);
 /* 1 if the engine should write input this sample (WRITE), 0 for RECIRC playback. */
 int  transport_should_write(const transport_t *x);
 
+/* ---- edge-driven triggering from the momentary WRITE/RECIRC switches -------
+ * The panel's SW14/SW16 momentaries (panel_ctl write_trig/recirc_trig) are LEVELS;
+ * this turns a rising edge into a transport transition (press = act once, holding
+ * does nothing). Call at the panel-scan rate with the current head. */
+typedef struct { uint8_t prev_w, prev_r; } xport_trig_t;
+
+void transport_trig_init(xport_trig_t *t);
+
+/* Rising edge on write_lvl -> begin_write; on recirc_lvl -> begin_recirc (captures
+ * the loop window). Returns 1 if a transition fired this call. */
+int  transport_update_trig(transport_t *x, xport_trig_t *t,
+                           int write_lvl, int recirc_lvl, uint32_t head);
+
 #endif /* TRANSPORT_H */

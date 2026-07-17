@@ -26,6 +26,12 @@
  * PA4/5/6 don't overlap the codec-reset-release GPIO block before trusting it. */
 #define PANEL_SCAN_ENABLE 1
 
+/* WRITE/RECIRC transport from the momentary switches (panel_ctl write/recirc_trig).
+ * Requires PANEL_SCAN_ENABLE. GATED OFF: a mis-read recirc trigger would put the
+ * engine in RECIRC = no input passthrough. [BENCH] confirm the SW14/SW16 bits +
+ * polarity (runbook step B), then enable. */
+#define PANEL_TRANSPORT_ENABLE 0
+
 /* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
  * chain carries the DIP column-select and (likely) the 4051 mux-enable / codec
  * reset (re/notes/panel-scan.md), so shifting an unlabelled word can drop audio.
@@ -45,6 +51,10 @@ static engine_t g_engine;
 #if PANEL_LED_ENABLE
 static led_state_t g_leds;
 static unsigned    g_led_step;
+#endif
+
+#if PANEL_SCAN_ENABLE && PANEL_TRANSPORT_ENABLE
+static xport_trig_t g_xtrig;
 #endif
 
 extern volatile uint8_t g_spi_raw[2][3];   /* SPI2 control-ADC raw bytes (ch0,ch1) */
@@ -143,6 +153,9 @@ int main(void)
 #if PANEL_SCAN_ENABLE
     bsp_panel_switches_init();          /* 165 input pins only (no 595 output) */
     unsigned scan_div = 0, prev_octave = 1, prev_preset = 0;
+#if PANEL_TRANSPORT_ENABLE
+    transport_trig_init(&g_xtrig);
+#endif
 #endif
 
     float mult_filt = 0.5f;
@@ -177,6 +190,11 @@ int main(void)
             g_dbg_panel.write_trig = pc.write_trig;
             g_dbg_panel.recirc_trig = pc.recirc_trig;
             g_dbg_panel.base = g_engine.taps.base_delay;
+#if PANEL_TRANSPORT_ENABLE
+            /* Momentary WRITE/RECIRC -> transport transitions (edge-triggered). */
+            transport_update_trig(&g_engine.xport, &g_xtrig,
+                                  pc.write_trig, pc.recirc_trig, g_engine.dl.wpos);
+#endif
             if (pc.octave != prev_octave) {
                 float nb = engine_clamp_base(base_boot * panel_octave_factor(&pc),
                                              DELAY_LEN, time_hi);
