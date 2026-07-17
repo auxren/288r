@@ -18,7 +18,13 @@
 #include "engine.h"
 #include "audio_io.h"
 #include "led.h"
+#include "panel_ctl.h"
 #include <stdint.h>
+
+/* Live panel scan (74HC165). Input-only, so acting on a mis-decoded bit can't drop
+ * audio (worst case: a wrong delay time, recoverable). Default ON. [BENCH] confirm
+ * PA4/5/6 don't overlap the codec-reset-release GPIO block before trusting it. */
+#define PANEL_SCAN_ENABLE 1
 
 /* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
  * chain carries the DIP column-select and (likely) the 4051 mux-enable / codec
@@ -90,6 +96,7 @@ int main(void)
     const float time_lo = 0.4f, time_hi = 1.6f;   /* panel legend: 0.4x..1.6x, noon=1.0 */
     if (bsp_sw_delay_extend()) base *= DELAY_EXTEND_FACTOR;
     base = engine_clamp_base(base, DELAY_LEN, time_hi);
+    const float base_boot = base;     /* pre-octave base; the scan rescales from here */
     /* TIME MULTIPLIER range from the panel legend (1.0 at noon). The x1/x2 octave
      * switch will scale this once wired. */
     engine_init(&g_engine, delay_buf, DELAY_LEN, base, time_lo, time_hi, /*slew*/ 0.15f);
@@ -116,6 +123,11 @@ int main(void)
     led_clear(&g_leds);
 #endif
 
+#if PANEL_SCAN_ENABLE
+    bsp_panel_switches_init();          /* 165 input pins only (no 595 output) */
+    unsigned scan_div = 0, prev_octave = 1, prev_preset = 0;
+#endif
+
     float mult_filt = 0.5f;
     for (;;) {
         /* FAST (every loop) — TIME MULTIPLIER = SPI2 ch0(CV)+ch1(knob), stock order.
@@ -128,6 +140,29 @@ int main(void)
         if (raw > 4095u) raw = 4095u;
         mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.03f;
         g_time_raw01 = mult_filt;
+
+#if PANEL_SCAN_ENABLE
+        /* Panel scan (74HC165) — throttled (~every 64 passes, ~10 ms), input-only,
+         * applied ON CHANGE. Octave rescales the base delay (fixed-rate: the taps
+         * slew to the new positions, no clock glitch); A/B/C selects the preset
+         * phase row. Both glide smoothly, so this never zippers the audio. */
+        if ((scan_div++ & 0x3Fu) == 0u) {
+            panel_ctl_t pc;
+            panel_decode(bsp_panel_switches_read(), &pc);
+            if (pc.octave != prev_octave) {
+                float nb = engine_clamp_base(base_boot * panel_octave_factor(&pc),
+                                             DELAY_LEN, time_hi);
+                taps_set_base_delay(&g_engine.taps, nb);
+                prev_octave = pc.octave;
+            }
+            if (pc.preset != prev_preset) {
+                float ph[NUM_TAPS];
+                (void)panel_preset_phase(pc.preset, ph);
+                taps_set_phase(&g_engine.taps, ph);
+                prev_preset = pc.preset;
+            }
+        }
+#endif
 
 #if PANEL_LED_ENABLE
         /* LED refresh out of the audio ISR (bit-banged 595, ~few us). */

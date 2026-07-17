@@ -44,7 +44,8 @@ uint16_t bsp_mult_read(void);        /* raw 12-bit */
 float    bsp_mult_read01(void);      /* 0..1 */
 
 /* Bit-banged panel I/O (74HC165 switches in, 74HC595 LEDs/columns out). */
-void     bsp_panel_init(void);
+void     bsp_panel_init(void);            /* both chains (165 in + 595 out)      */
+void     bsp_panel_switches_init(void);   /* 165 input pins ONLY (no 595 output) */
 uint16_t bsp_panel_switches_read(void);   /* 13-bit panel_switch_bits */
 void     bsp_panel_out(uint32_t bits24);  /* shift+latch 24 output bits */
 
