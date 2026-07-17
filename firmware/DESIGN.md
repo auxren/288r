@@ -89,6 +89,13 @@ Store the *actual* width, so vintage buys memory instead of wasting it:
   buffer boundary (cheap VCVT; SDRAM bandwidth is a non-issue at these rates).
 - **float32 storage is rejected**: no audible gain over int32 for a bounded audio delay line, and it
   halves max delay for nothing. int32 = same 24-bit-clean quality at the same 4 bytes.
+- **BUILT + host-tested: `src/audio_buffer.c`.** Implements exactly this — int16/int32 circular
+  storage under a float delay line, mirroring `delay_line`'s interface (init/clear/write/read/read_at/
+  read_loop/advance_loop) so it's a drop-in. Measured (`test/test_audio_buffer.c`): I16 gives 2× the
+  samples of I32 for the same bytes; I32's Hermite read matches the float `delay_line` kernel to 3.7e-9
+  (near-lossless), I16 sits at the 16-bit floor; vintage crush + clamp + wrap verified. **Not yet wired
+  into the engine** — a bench-gated swap of `delay_line_t` for `audio_buffer_t` in `engine_t`, with the
+  fidelity switch picking `AB_FMT_I16`/`I32` and `ab_set_vintage()` replacing the pre-write quantize.
 
 ### What the two banks are for
 Keep the stock's **record + recirc/loop** pair (`bank_A` = live/record, `bank_B` = loop/recirc). Two
