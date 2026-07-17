@@ -13,11 +13,22 @@ PA4 (0x10) = LATCH/LOAD    PA5 (0x20) = CLOCK    PA6 (0x40) = DATA-IN (input)
 Pulse PA4 to load the parallel inputs, then clock 13 bits MSB-first on PA5, sampling PA6 →
 `panel_switch_bits` (RAM 0x20000358). Implemented: `bsp_panel_switches_read()`.
 
-**Bit meaning** (partial, from `re/notes/hardware.md` + `lookup_preset_tap_position`): bits 0/1/2 =
-**A/B/C preset select**; bit 3 = tap-target mode; bit 6 = **bank_B** (recirc); bits 9/10 = octave/rate
-(×1/×2/×4). The full 13-bit map is **[BENCH]** — read `panel_switch_bits` while toggling each switch.
-(Note: SHORT/FULL cycle and cal/preset and resolution are *separate* direct-GPIO reads — PB11, PB10,
-PD11/12 — already in `gpio_panel.c`.)
+**Bit meaning** — traced from every `sub_4310(N)` = `(panel_switch_bits>>N)&1` test site:
+
+| Bit(s) | Function |
+|---|---|
+| 0/1/2 | **A/B/C preset select** (`lookup_preset_tap_position` row) |
+| 3 | tap-target mode (phase×mult vs raw read) |
+| 4 | transport/mode gate (guards `transport_mode` 0x200000d0) |
+| 6 | **bank_B** (second delay buffer / recirc) |
+| 7, 8 | **transport triggers** (write/recirc entry — the momentary SW14/SW16 candidates); the code they gate retunes the SAI **PLL** (`RCC 0x40023888/8c`) + advances loop pointers |
+| 9/10 | octave/rate ×1/×2/×4 (also → PLL retune) |
+| 11, 12 | transport / loop-window control (write ptr `0x200000c4`, loop `0x200013c0`) |
+
+Confirms the stock coarse-delay scheme = **PLL octave retune** in the transport path (bits 7/8/9/10/11)
+— exactly what the fixed-rate + fractional-read rewrite eliminates. Full per-bit polarity is **[BENCH]**
+(toggle each switch, read `panel_switch_bits`). SHORT/FULL cycle, cal/preset, resolution are *separate*
+direct-GPIO reads (PB11, PB10, PD11/12) already in `gpio_panel.c`.
 
 ## 2. LED / column output — 74HC595  (`sub_3408`, 24 bits/column)
 ```
