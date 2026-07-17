@@ -33,14 +33,14 @@ int main(void)
     check("slew first step is gradual", first_step, 50.0f, 1.0f);        /* 0.05*(1000-0) */
     check("slew converges to target",  taps_delay(&t, 7), 1000.0f, 1.0f);
 
-    /* ---- time_control: range mapping (cubic taper placeholder) ---- */
+    /* ---- time_control: range mapping (linear taper, matches panel legend) ---- */
     time_ctrl_t tc;
     tc_init(&tc, /*initial*/ 1.0f, /*slew*/ 1.0f, /*lo*/ 0.25f, /*hi*/ 20.0f);
     check("tc raw=0 -> lo", tc_update(&tc, 0.0f), 0.25f, 1e-3f);
     tc_init(&tc, 20.0f, 1.0f, 0.25f, 20.0f);
     check("tc raw=1 -> hi", tc_update(&tc, 1.0f), 20.0f, 1e-2f);
     tc_init(&tc, 1.0f, 1.0f, 0.25f, 20.0f);
-    check("tc raw=0.5 -> cubic", tc_update(&tc, 0.5f), 0.25f + 19.75f*0.125f, 1e-2f);
+    check("tc raw=0.5 -> linear midpoint", tc_update(&tc, 0.5f), 0.25f + 19.75f*0.5f, 1e-2f);
 
     /* ---- end-to-end CHORUS scenario: small LFO depth around a center delay ----
      * This is the real target use case. Assert the tap delay moves CONTINUOUSLY:

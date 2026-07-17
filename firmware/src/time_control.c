@@ -17,11 +17,11 @@ void tc_set_range(time_ctrl_t *tc, float lo, float hi)
     tc->hi = hi;
 }
 
-/* Placeholder taper: raw 0..1 -> lo..hi with a cubic (pot-like) weighting.
- * Endpoints exact; replace with the measured TIME control curve on hardware. */
+/* Linear taper: matches the 288r TIME MULTIPLIER panel legend (.4 .6 .8 1.0 1.2
+ * 1.4 1.6, evenly spaced -> linear; 1.0 at noon). Range set by lo/hi in tc_init. */
 static inline float map_taper(float raw, float lo, float hi)
 {
-    return lo + (hi - lo) * raw * raw * raw;
+    return lo + (hi - lo) * raw;
 }
 
 float tc_update(time_ctrl_t *tc, float raw01)

@@ -58,8 +58,10 @@ int main(void)
     /* Cycle length (SHORT/FULL) sets the base delay window. FULL = 1 s @96 k. */
     float base = bsp_sw_full_cycle() ? (float)SAMPLE_RATE_HZ
                                      : (float)SAMPLE_RATE_HZ / 4.0f;
+    /* TIME MULTIPLIER range from the panel legend: 0.4x .. 1.6x (1.0 at noon).
+     * The x1/x2 octave switch will scale this once wired. */
     engine_init(&g_engine, delay_buf, DELAY_LEN, base,
-                /*time_lo*/ 0.25f, /*time_hi*/ 4.0f, /*slew*/ 0.15f);
+                /*time_lo*/ 0.4f, /*time_hi*/ 1.6f, /*slew*/ 0.15f);
 
     /* Fidelity from config DIP SW1 sw3/sw4 (PD11/PD12): 24-bit = full precision
      * (clean), 12/8/4-bit = vintage bit-crush. Owner-confirmed; all-off = 24-bit. */
