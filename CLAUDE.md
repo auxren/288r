@@ -47,8 +47,14 @@ better engine; add new features/controls/modulation only *after* the clone is na
   **`audio_buffer.c`** = the int16/int32 SDRAM fidelity layer (vintage 2× capacity; I32 Hermite matches
   the float `delay_line` kernel to 3.7e-9 — DESIGN.md drop-in, wire = swap `delay_line_t` in `engine_t`);
   **transport momentaries** (`transport_update_trig`, edge-driven WRITE/RECIRC, gated in main);
-  **`storage.c`** = MARF-style versioned/checksummed records (CRC-16/CCITT, refuse-invalid) + control-
-  pinning on recall. `make test` = **13 suites on main** (backend = F429 internal-flash emulation, [BENCH]).
+  **`saturation.c`** = soft-clip analog voice (completes the vintage trio: bit-crush + `bwlimit` + sat);
+  **`storage.c`** = MARF-style versioned/CRC records + control-pinning; **`calibration.c`** = a concrete
+  cal record on it + the Time-CV range-stretch (narrow-range bug fix). `make test` = **15 suites on main**
+  (persistence flash backend = F429 internal-flash emulation, [BENCH]).
+- **Bench + release tooling (desk work, no hardware):** `re/scripts/saleae_decode.py` self-labels 165/SPI2
+  captures (hardware ground truth for the [BENCH] maps; `--selftest` passes); `.github/workflows/ci.yml`
+  now builds the flashable image + publishes tagged `.hex`/`.bin` releases; `docs/bench-runbook.md` has the
+  panel/config/pitch checklist + `g_dbg_panel` SWD snapshot + Saleae capture recipes.
 - **Pitch shifter → playable voice (branch `pitch-shift-engine`):** `pitch_shift.c` (crossfaded-tap,
   from `firmware/PITCH_SHIFT.md`) + `pitch_voice.c` (1.2 V/oct CV map, ratio slew) + `fast_math.c`
   (no-libm single-precision sinf/cosf/exp2f, so the freestanding image links). Global voice wired into
