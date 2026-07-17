@@ -29,6 +29,21 @@ static engine_t g_engine;
 
 extern volatile uint8_t g_spi_raw[2][3];   /* SPI2 control-ADC raw bytes (ch0,ch1) */
 
+/* --- 595-driven panel scan diagnostic: drive stock's per-address 595 pattern
+ * (addr*0x111111), then read ADC3/PF8 (analog) + PC1-6 (DIP rows) per address. --- */
+#include "stm32f429xx.h"
+volatile uint16_t g_analog[8];    /* ADC3/PF8 per mux address 0..7 */
+volatile uint8_t  g_diprows[8];   /* PC1-6 DIP rows per column 0..7 */
+static void panel_scan595(void)
+{
+    for (uint32_t addr = 0; addr < 8; ++addr) {
+        bsp_panel_out(addr * 0x111111u);           /* stock col pattern -> mux addr + col */
+        for (volatile int d = 0; d < 4000; ++d) { }/* settle */
+        g_analog[addr]  = bsp_mult_read();          /* ADC3 ch6 / PF8 */
+        g_diprows[addr] = (uint8_t)((GPIOC->IDR >> 1) & 0x3Fu);  /* PC1..PC6 */
+    }
+}
+
 /* TIME control in [0,1]; written in the superloop, read in the audio ISR. */
 static volatile float g_time_raw01 = 0.5f;
 
@@ -77,23 +92,22 @@ int main(void)
     bsp_audio_start();
     (void)bsp_codec_init();
     bsp_panel_init();         /* 74HC165 switch reader (bit-banged) */
+    bsp_mult_init();          /* ADC3 ch6 (PF8) — analog-mux input, for the scan */
 
     float mult_filt = 0.5f;
+    uint32_t tick = 0;
     for (;;) {
-        /* TIME MULTIPLIER = SPI2 control ADC, ch0 then ch1 in stock (sub_ecc) order:
-         * ch0 = Time-CV, ch1 = knob. Knob sets it, CV adds. */
+        /* FAST (every loop) — TIME MULTIPLIER = SPI2 ch0(CV)+ch1(knob), stock order.
+         * Must update quickly or the delay time steps -> zipper. One-pole smoothing
+         * kills the ADC ±1-LSB jitter (stock uses a 128-avg + hysteresis). */
         bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0, [1]=ch1 */
         uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
         uint32_t knob = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
         uint32_t raw  = knob + cv;
         if (raw > 4095u) raw = 4095u;
-        /* One-pole smoothing kills the ADC's ±1-LSB jitter, which the steep taper
-         * otherwise turns into audible delay-time wobble at long delays. Stock does
-         * a 128-avg + hysteresis for the same reason. */
         mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.03f;
         g_time_raw01 = mult_filt;
-
-        g_switches = bsp_panel_switches_read();   /* validated; not yet acted on */
+        (void)tick; (void)panel_scan595;   /* panel scan is out of the hot loop */
         __asm volatile ("wfi");
     }
 }
