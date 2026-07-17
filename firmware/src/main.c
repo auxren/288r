@@ -55,6 +55,19 @@ int main(void)
     bsp_sdram_init();
     bsp_panel_gpio_init();
 
+    /* --- Boot-config straps: read ONCE here, deliberately NOT polled ----------
+     * The back-panel config DIP (resolution, and later sw1 x10-extend / sw2
+     * bandwidth) and the SHORT/FULL cycle switch are latched at boot. This is a
+     * correctness rule, not a cycle optimization -- a direct GPIO read is ~free.
+     * These pick the SDRAM buffer LAYOUT/format and delay range, which cannot
+     * change per sample: a live flip would reinterpret already-written buffer
+     * samples and pop. Strap semantics = power-cycle to apply (matches stock). A
+     * mid-run fidelity change, if ever wanted, is a deliberate buffer reinit, not
+     * a passive read. See DESIGN.md "Boot-time layout rule". Do NOT move these into
+     * the superloop; wire sw1/sw2 alongside them here. (The front-panel *scanned*
+     * DIPs -- tap times, phase/mute -- are the opposite: live controls, scanned
+     * out of the audio hot loop.) */
+
     /* Cycle length (SHORT/FULL) sets the base delay window. FULL = 1 s @96 k. */
     float base = bsp_sw_full_cycle() ? (float)SAMPLE_RATE_HZ
                                      : (float)SAMPLE_RATE_HZ / 4.0f;
