@@ -37,19 +37,37 @@ void bsp_spi2_adc_init(void)
     GPIOB->MODER = (GPIOB->MODER & ~(3u << (CS_PIN*2))) | (1u << (CS_PIN*2)); /* output */
     GPIOB->BSRR  = (1u << CS_PIN);                                            /* CS high */
 
-    /* Master, mode 0, software NSS, 8-bit, MSB-first, /32 -> ~1.3 MHz @ APB1 42 MHz. */
-    SPI2->CR1 = SPI_CR1_MSTR | SPI_CR1_SSM | SPI_CR1_SSI | (4u << 3);
+    /* Master, mode 0, software NSS, 8-bit, MSB-first, /128 (~328 kHz) — matches
+     * stock SPI2 CR1=0x374. */
+    SPI2->CR1 = SPI_CR1_MSTR | SPI_CR1_SSM | SPI_CR1_SSI | (6u << 3);
     SPI2->CR2 = 0;
     SPI2->CR1 |= SPI_CR1_SPE;
 }
 
-/* MCP320x single-ended read of `ch` (0..7): raw 12-bit. [BENCH] confirm part/map. */
+/* Control-surface ADC read, matching stock read_panel_i2c_sliders (sub_ecc):
+ * CS(PB12) low -> send {0x01, cmd, 0x00} -> read 3 bytes -> 12-bit result.
+ * cmd 0xA0 = channel index 0, 0xE0 = channel index 1 (the multiplier pot + CV). */
 uint16_t bsp_pot_read(unsigned ch)
 {
-    GPIOB->BSRR = (1u << (CS_PIN + 16));                 /* CS low  */
-    (void)spi_xfer((uint8_t)(0x06u | ((ch >> 2) & 1u))); /* start + single + D2 */
-    uint8_t hi = spi_xfer((uint8_t)((ch & 3u) << 6));    /* D1 D0 ... -> top 4 bits */
-    uint8_t lo = spi_xfer(0x00u);
-    GPIOB->BSRR = (1u << CS_PIN);                        /* CS high */
-    return (uint16_t)(((hi & 0x0Fu) << 8) | lo);
+    uint8_t cmd = ch ? 0xE0u : 0xA0u;
+    GPIOB->BSRR = (1u << (CS_PIN + 16));      /* CS low  */
+    (void)spi_xfer(0x01u);
+    uint8_t b1 = spi_xfer(cmd);
+    uint8_t b2 = spi_xfer(0x00u);
+    GPIOB->BSRR = (1u << CS_PIN);             /* CS high */
+    return (uint16_t)(((b1 & 0x0Fu) << 8) | b2);   /* [BENCH] exact bit layout */
+}
+
+/* Diagnostic: capture the raw 3 response bytes for both channels (read over SWD). */
+volatile uint8_t g_spi_raw[2][3];
+void bsp_spi2_probe(void)
+{
+    for (int ch = 0; ch < 2; ++ch) {
+        uint8_t cmd = ch ? 0xE0u : 0xA0u;
+        GPIOB->BSRR = (1u << (CS_PIN + 16));
+        g_spi_raw[ch][0] = spi_xfer(0x01u);
+        g_spi_raw[ch][1] = spi_xfer(cmd);
+        g_spi_raw[ch][2] = spi_xfer(0x00u);
+        GPIOB->BSRR = (1u << CS_PIN);
+    }
 }

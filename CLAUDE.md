@@ -30,15 +30,17 @@ better engine; add new features/controls/modulation only *after* the clone is na
   Still to build (pre-bench, host-testable): audio_buffer (int16/int32 SDRAM layer), panel (switch/595/
   SPI-ADC decode), storage/settings/calib (MARF-style persistence + cal), pitch_tap (dual-head), tone/
   sat/wow (analog voice). Full plan in the design spec (see DESIGN.md + task output brbh5j78t).
-- **Flashable bring-up image now builds:** `make firmware` → `firmware/build/fw/b288-community.hex`
-  (clock→SDRAM→codec→SAI/DMA→engine, 8 taps→8 DAC). Bare-metal BSP in `firmware/src/bsp/` (MARF's
-  StdPeriph is F40x-era — no F429 FMC/SAI — so BSP is direct-register against a vendored F429 CMSIS
-  header in `firmware/Libraries/CMSIS/`; links `-nostdlib` since the toolchain has no newlib). It BUILDS
-  and LINKS clean but is a **bring-up**: every `[BENCH]` constant in `firmware/src/bsp/board.h` (SAI
-  clock chain, codec I²C addr+regs, exact pins, DMA streams, TDM slot order, switch polarity) must be
-  confirmed on the bench — **do not expect audio on first flash.** Procedure: `docs/bench-bringup.md`.
-- **Guaranteed-working hardware test today = the interpolation PATCH** (`re/patches/`, already A/B'd on
-  the unit). The full rewrite image is the next stage and needs bench iteration.
+- **Community firmware WORKS ON HARDWARE (bench session 3, 2026-07-16):** `make firmware` →
+  `firmware/build/fw/b288-community.hex` runs a **working multitap delay + smooth delay-time modulation
+  via the Time-CV** — the headline chorus/flanger fix, confirmed on the unit. Bare-metal BSP in
+  `firmware/src/bsp/` (direct-register against vendored F429 CMSIS in `firmware/Libraries/CMSIS/`;
+  `-nostdlib`, no newlib). **All the hard `[BENCH]` constants are now resolved** (see
+  `re/notes/bench-session-3.md`): I²C1=PB8/9, codec 0x49 + TDM regs, SAI1 SD_A=PD6/SD_B=PF6, 24-bit
+  right-justified, **SDRAM = FMC bank 2 (0xD0000000)**, audio in = RX slot 0, TIME-CV = SPI2 ADC ch0.
+- **Still open:** the coarse multiplier KNOB (combined ADC3-4051-mux + SPI2 read — CV works, knob TBD),
+  the rest of the panel scan (sliders/trimmers/DIPs/switches), LED drive (SPI1 is NOT it), and settings/
+  cal. `firmware/src/bsp/` has `sdram_memtest`/`g_dbg_*`/`adc_mult` SWD scaffolding to strip pre-release.
+- The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
 - MCU **STM32F429ZET6** (LQFP144) — confirmed from chip marking: **512 KB flash**, 192 KB SRAM

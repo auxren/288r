@@ -5,11 +5,11 @@
  * SDRAM -> codec -> SAI/DMA and runs the smooth fractional-delay engine, 8 taps
  * out the 8 DAC channels. TIME-mode fractional delay is the headline fix.
  *
- * NOT yet wired (next bench layer, see docs/bench-bringup.md): the SPI2 control-
- * surface ADC (sliders/pots/Time-CV), the 74HC595/4051 DIP+trimmer scan, the
- * momentary-switch transport gestures, and settings/calibration persistence. Until
- * those land, the delay time sits at a fixed default and the module is a fixed
- * multi-tap delay — enough to validate the audio path end to end.
+ * TIME MULTIPLIER is live: read from the SPI2 control ADC (channel 0 = Time-CV,
+ * confirmed on hardware) -> smooth delay-time modulation (chorus/flanger). Still
+ * being resolved (bench session 3): the coarse multiplier KNOB is a combined
+ * ADC3(4051-mux) + SPI2 read; the 74HC595/4051 DIP+trimmer scan; momentary-switch
+ * transport; LEDs; settings/calibration. See re/notes/bench-session-3.md.
  *
  * Recovery is always SWD: reflash Compiled FW/B288-REV1.0.hex.
  */
@@ -27,7 +27,7 @@ static float delay_buf[DELAY_LEN] __attribute__((section(".sdram")));
 
 static engine_t g_engine;
 
-/* --- SDRAM self-test (results read over SWD) --- */
+/* --- SDRAM self-test (results read over SWD; boot self-check) --- */
 volatile uint32_t g_mt_errors, g_mt_first_i, g_mt_first_exp, g_mt_first_got, g_mt_done;
 static void sdram_memtest(void)
 {
@@ -104,9 +104,7 @@ int main(void)
     unsigned bits = bsp_resolution_bits();
     g_engine.vintage_bits = (bits < 16u) ? (int)bits : 0;  /* 12-bit -> vintage */
 
-#if USE_SPI_MULT
-    bsp_spi2_adc_init();
-#endif
+    bsp_spi2_adc_init();      /* control-surface ADC (multiplier is here) */
 
     /* Start SAI/MCLK BEFORE codec config: the CS42888 control port needs a valid
      * MCLK to respond on I2C. Engine already init'd, so the ISR is safe to run. */
@@ -118,15 +116,10 @@ int main(void)
     (void)bsp_codec_init();
 
     for (;;) {
-#if USE_SPI_MULT
-        /* Multiplier POT from the SPI2 control-surface ADC (knob path). The engine
-         * slews it, so a per-loop update rate is plenty. [BENCH] channel + taper. */
-        uint16_t raw = bsp_pot_read(MULT_POT_CH);
-        g_time_raw01 = (float)raw / POT_MULT_FULLSCALE;
-#endif
-        /* TODO(bench): scan DIP/trimmer panel; handle momentary-switch transport.
-         * With both multiplier sources off (default), the delay runs at a fixed
-         * time so the audio path can be validated first. */
+        /* TIME MULTIPLIER = SPI2 control-ADC channel 0 (Time-CV; confirmed on
+         * hardware). One clean SPI transaction/loop. The engine slews it, so this
+         * per-loop rate gives smooth delay-time modulation (chorus/flanger). */
+        g_time_raw01 = (float)bsp_pot_read(0) * (1.0f / 4095.0f);
         __asm volatile ("wfi");
     }
 }

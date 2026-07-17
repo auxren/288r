@@ -34,6 +34,12 @@ unsigned bsp_resolution_bits(void); /* 12/16/20 from the 2-bit selector */
 /* Control-surface ADC over SPI2 (sliders/pots). */
 void     bsp_spi2_adc_init(void);
 uint16_t bsp_pot_read(unsigned ch);  /* raw 12-bit, MCP320x-style [BENCH map] */
+void     bsp_spi2_probe(void);       /* diagnostic: raw bytes -> g_spi_raw[2][3] */
+
+/* TIME MULTIPLIER via internal ADC3 ch6 (PF8). */
+void     bsp_mult_init(void);
+uint16_t bsp_mult_read(void);        /* raw 12-bit */
+float    bsp_mult_read01(void);      /* 0..1 */
 
 /* Called from the SAI DMA ISR with one block of interleaved TDM frames:
  *   in  : frames * TDM_SLOTS int32 (24-bit left-justified), ADC slots 0..3 valid
