@@ -56,6 +56,13 @@ void     bsp_panel_switches_init(void);   /* 165 input pins ONLY (no 595 output)
 uint16_t bsp_panel_switches_read(void);   /* 13-bit panel_switch_bits */
 void     bsp_panel_out(uint32_t bits24);  /* shift+latch 24 output bits */
 
+/* Stock-faithful panel bring-up (decompile-derived, sub_2508/sub_3488):
+ * mux address lines to the stock boot state, PC1..PC6 matrix rows as inputs,
+ * and the continuous 8-column 595 address sweep the stock runs every loop. */
+void     bsp_panel_mux_boot_state(void);  /* PA1/7/8 high, PA0/11 low, PB0/1 low */
+void     bsp_panel_matrix_init(void);     /* chains + PC1..PC6 row inputs        */
+void     bsp_panel_matrix_scan(uint16_t w[3]); /* one full sweep -> 3 DIP words  */
+
 /* Called from the SAI DMA ISR with one block of interleaved TDM frames:
  *   in  : frames * TDM_SLOTS int32 (24-bit left-justified), ADC slots 0..3 valid
  *   out : frames * TDM_SLOTS int32, fill DAC slots 0..7 with the 8 tap outputs

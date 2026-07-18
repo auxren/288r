@@ -81,3 +81,56 @@ void bsp_panel_out(uint32_t bits24)
     }
     a_set(P595_LATCH, 1); dly(); a_set(P595_LATCH, 0);   /* latch to outputs */
 }
+
+/* ---- stock-faithful boot GPIO state + DIP/preset matrix scan ---------------
+ * From the stock init (sub_2508 + sub_fe0/sub_102c pin table): the 4051 mux
+ * address lines are PA0/PA1/PA7/PA8/PA11 and boot at 0,1,x,1,1,0 — i.e. PA1,
+ * PA7, PA8 HIGH, PA0, PA11 LOW. PB0/PB1 and PC10/PC12 are driven low. The old
+ * codec bring-up parked ALL of these high (a state the stock never uses). */
+void bsp_panel_mux_boot_state(void)
+{
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN;
+    (void)RCC->AHB1ENR;
+    static const uint8_t pa_lo[] = {0, 11};
+    static const uint8_t pa_hi[] = {1, 7, 8};
+    for (unsigned i = 0; i < sizeof pa_lo; ++i) { a_out(pa_lo[i]); a_set(pa_lo[i], 0); }
+    for (unsigned i = 0; i < sizeof pa_hi; ++i) { a_out(pa_hi[i]); a_set(pa_hi[i], 1); }
+    /* PB0/PB1 low (stock clears them at init, never sets them) */
+    GPIOB->MODER = (GPIOB->MODER & ~(3u << 0) & ~(3u << 2)) | (1u << 0) | (1u << 2);
+    GPIOB->BSRR  = (1u << 16) | (1u << 17);
+}
+
+/* PC1..PC6 = the 6 matrix row inputs (pull-up, active-low), read per column. */
+void bsp_panel_matrix_init(void)
+{
+    bsp_panel_init();                       /* 165 in + 595 out chains */
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
+    (void)RCC->AHB1ENR;
+    for (unsigned n = 1; n <= 6; ++n) {
+        GPIOC->MODER &= ~(3u << (n*2));                                  /* input   */
+        GPIOC->PUPDR  = (GPIOC->PUPDR & ~(3u << (n*2))) | (1u << (n*2)); /* pull-up */
+    }
+}
+
+/* One full 8-column sweep, exactly like the stock (sub_3488 outer loop):
+ * per column shift col*0x111111 (six 3-bit address nibbles), latch, then read
+ * rows PC1..PC6 ACTIVE-LOW into three 16-bit words with the stock's layout:
+ *   w[0] (stock 0x200020c4): PC5 -> bit col, PC6 -> bit col+8
+ *   w[1] (stock 0x200020c6): PC3 -> bit col, PC4 -> bit col+8
+ *   w[2] (stock 0x200020c8): PC1 -> bit col, PC2 -> bit col+8   */
+void bsp_panel_matrix_scan(uint16_t w[3])
+{
+    uint16_t acc[3] = {0, 0, 0};
+    for (uint32_t col = 0; col < 8u; ++col) {
+        bsp_panel_out(col * 0x111111u);
+        dly(); dly();
+        uint32_t idr = GPIOC->IDR;
+        if (!(idr & (1u << 5))) acc[0] |= (uint16_t)(1u << col);
+        if (!(idr & (1u << 6))) acc[0] |= (uint16_t)(1u << (col + 8));
+        if (!(idr & (1u << 3))) acc[1] |= (uint16_t)(1u << col);
+        if (!(idr & (1u << 4))) acc[1] |= (uint16_t)(1u << (col + 8));
+        if (!(idr & (1u << 1))) acc[2] |= (uint16_t)(1u << col);
+        if (!(idr & (1u << 2))) acc[2] |= (uint16_t)(1u << (col + 8));
+    }
+    w[0] = acc[0]; w[1] = acc[1]; w[2] = acc[2];
+}

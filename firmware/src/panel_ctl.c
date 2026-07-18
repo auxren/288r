@@ -6,39 +6,41 @@
  * exact bits sub_4310(N) tests, and the decode below replicates the firmware's own
  * logic, so it needs no bench guessing (only the physical switch->bit polarity is a
  * hardware fact, and it's identical since we drive the same 165 on PA4/5/6). */
+/* Bit map CONFIRMED LIVE on the unit (2026-07-17 mapping session, g_dbg_panel
+ * capture while the owner flipped each control):
+ *   bits 0/1/2 : A/B/C preset selector (active-low priority — tracked the knob)
+ *   bit 3      : ×1/×2 switch — measured ×1 = 1, ×2 = 0 (was wrongly bits 9/10)
+ *   bit 4      : TIME/pitch mode switch
+ *   bit 8      : momentary (active-LOW, idle=1) — transport/save trigger
+ *   bits 9/10  : NOT the octave switch (old sub_1110 guess) — unassigned, logged
+ *   bits 6/7/11/12 : unmapped (bank_b guess on 6 retained, unused)              */
 #define B_PRESET_A  0
 #define B_PRESET_B  1
 #define B_PRESET_C  2
-#define B_TAPRAW    3
+#define B_X2        3
+#define B_TIMEPITCH 4
 #define B_BANKB     6
-#define B_WRITE     7
-#define B_RECIRC    8
-#define B_OCT0      9
-#define B_OCT1      10
+#define B_TRIG      8
 
 static inline unsigned bit(uint16_t b, unsigned n) { return (b >> n) & 1u; }
 
 void panel_decode(uint16_t bits, panel_ctl_t *out)
 {
-    /* Preset A/B/C/D — the stock tap-position lookup tests bits 0/1/2 ACTIVE-LOW in
-     * priority order (sub_4310(0)>then(1)>then(2), decompile):
-     *   bit0=0 -> A (linear ramp 20..160); bit1=0 -> B; bit2=0 -> C; none low -> D. */
+    /* Preset A/B/C/D — active-low priority (stock sub_4310(0..2)); confirmed live. */
     if      (!bit(bits, B_PRESET_A)) out->preset = 0;
     else if (!bit(bits, B_PRESET_B)) out->preset = 1;
     else if (!bit(bits, B_PRESET_C)) out->preset = 2;
     else                             out->preset = 3;
 
-    /* Octave/rate ×1/×2/×4 — exact logic from get_mode_from_switches (sub_1110):
-     *   if (!bit10) return 0(×1); if (!bit9) return 2(×4); return 1(×2).
-     * bit10 is the master (bit9 only matters when bit10 is set). */
-    if      (!bit(bits, B_OCT1))     out->octave = 1;   /* bit10=0        -> ×1 */
-    else if (!bit(bits, B_OCT0))     out->octave = 4;   /* bit10=1,bit9=0 -> ×4 */
-    else                             out->octave = 2;   /* bit10=1,bit9=1 -> ×2 */
+    /* ×1/×2 — single switch on bit 3, measured polarity: 1 = ×1, 0 = ×2. */
+    out->octave = bit(bits, B_X2) ? 1u : 2u;
 
+    out->time_pitch   = (uint8_t)bit(bits, B_TIMEPITCH);
     out->bank_b       = (uint8_t)bit(bits, B_BANKB);
-    out->write_trig   = (uint8_t)bit(bits, B_WRITE);
-    out->recirc_trig  = (uint8_t)bit(bits, B_RECIRC);
-    out->tap_raw_mode = (uint8_t)bit(bits, B_TAPRAW);
+    /* Momentary trigger: RAW level here; main applies idle-capture polarity. */
+    out->write_trig   = (uint8_t)bit(bits, B_TRIG);
+    out->recirc_trig  = (uint8_t)bit(bits, B_TRIG);
+    out->tap_raw_mode = 0;
 }
 
 float panel_octave_factor(const panel_ctl_t *p)

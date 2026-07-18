@@ -28,18 +28,23 @@
  * PA4/5/6 don't overlap the codec-reset-release GPIO block before trusting it. */
 #define PANEL_SCAN_ENABLE 1
 
-/* WRITE/RECIRC transport from the momentary switches (panel_ctl write/recirc_trig).
- * Requires PANEL_SCAN_ENABLE. GATED OFF: a mis-read recirc trigger would put the
- * engine in RECIRC = no input passthrough. [BENCH] confirm the SW14/SW16 bits +
- * polarity (runbook step B), then enable. */
-#define PANEL_TRANSPORT_ENABLE 0
+/* Stock-faithful 595 address sweep + DIP-matrix row read (decompile: sub_3488).
+ * The stock runs this every loop; the LEDs/analog tree hang off the scanned mux
+ * chain, so NOT running it leaves the panel dark. Columns are the stock's exact
+ * words (0x000000..0x777777). */
+#define PANEL_MATRIX_ENABLE 1
 
-/* Savable presets (Option A: capture-live). A/B/C/D recall a tap pattern from flash;
- * holding both momentaries ~2 s snapshots the current pattern into the selected slot.
- * Requires PANEL_SCAN_ENABLE. GATED OFF until the F429 internal-flash backend replaces
- * the RAM placeholder (flash_preset.c) and the SW14/SW16 bits are confirmed [BENCH].
- * With it OFF, A/B/C/D use the code-exact panel_preset_phase (A-ramp) as before. */
-#define PRESET_ENABLE 0
+/* WRITE/RECIRC transport from the momentary switches (panel_ctl write/recirc_trig).
+ * Momentary POLARITY is auto-calibrated: at boot nobody presses anything, so the
+ * first scan's level IS the idle level; pressed = level != idle. No boot misfires
+ * either way. */
+#define PANEL_TRANSPORT_ENABLE 1
+
+/* Savable presets (Option A: capture-live). A/B/C/D recall a tap pattern from the
+ * preset store; holding both momentaries ~2 s snapshots the current pattern into
+ * the selected slot. Backend is flash_preset.c — currently the RAM placeholder, so
+ * saves last until power-off ([BENCH]: swap in internal-flash for reboot-proof). */
+#define PRESET_ENABLE 1
 #define PRESET_SAVE_HOLD_TICKS 200u   /* ~2 s at the ~10 ms scan cadence */
 
 /* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
@@ -83,11 +88,13 @@ struct dbg_panel {
     uint16_t sw165;       /* raw 74HC165 switch word              */
     uint16_t spi_cv;      /* raw Time-CV        (SPI2 ch0)         */
     uint16_t spi_knob;    /* raw multiplier knob (SPI2 ch1)       */
+    uint16_t dip[3];      /* DIP/preset matrix words (stock c4/c6/c8 layout) */
     uint8_t  preset;      /* decoded A/B/C (0/1/2)                */
     uint8_t  octave;      /* decoded x1/x2/x4                      */
     uint8_t  bank_b;
-    uint8_t  write_trig;
-    uint8_t  recirc_trig;
+    uint8_t  write_trig;  /* polarity-corrected (pressed=1)       */
+    uint8_t  recirc_trig; /* polarity-corrected (pressed=1)       */
+    uint8_t  saved_blink; /* increments on each preset save        */
     float    mult;        /* smoothed multiplier [0,1]            */
     float    base;        /* current taps base_delay (samples)    */
 };
@@ -167,6 +174,8 @@ int main(void)
 #if PANEL_SCAN_ENABLE
     bsp_panel_switches_init();          /* 165 input pins only (no 595 output) */
     unsigned scan_div = 0, prev_octave = 1, prev_preset = 0;
+    int scan_first = 1;                 /* first pass captures momentary idle levels */
+    unsigned idle_w = 0;                /* auto-polarity: pressed = level != idle    */
 #if PANEL_TRANSPORT_ENABLE
     transport_trig_init(&g_xtrig);
 #endif
@@ -174,6 +183,13 @@ int main(void)
     chord_init(&g_save_chord);
     prev_preset = 0xFFu;    /* force a load of the selected slot on the first scan */
 #endif
+#endif
+#if PANEL_MATRIX_ENABLE
+    /* Stock-faithful panel bring-up: mux address lines to the stock boot state
+     * (PA1/7/8 high, PA0/11 low — the old codec dance parked them ALL high), row
+     * inputs ready, and the 595 sweep runs from here on. */
+    bsp_panel_mux_boot_state();
+    bsp_panel_matrix_init();
 #endif
 
     float mult_filt = 0.5f;
@@ -201,17 +217,34 @@ int main(void)
             panel_ctl_t pc;
             uint16_t sw = bsp_panel_switches_read();
             panel_decode(sw, &pc);
+#if PANEL_MATRIX_ENABLE
+            /* Full 8-column 595 address sweep + DIP row read (stock: every loop). */
+            uint16_t dip[3];
+            bsp_panel_matrix_scan(dip);
+            g_dbg_panel.dip[0] = dip[0];
+            g_dbg_panel.dip[1] = dip[1];
+            g_dbg_panel.dip[2] = dip[2];
+#endif
+            /* Momentary polarity: boot level = idle (nobody pressing at boot).
+             * Confirmed on the unit: the momentary is bit 8, idle HIGH. */
+            if (scan_first) { idle_w = pc.write_trig; scan_first = 0; }
+            unsigned trig_act = (pc.write_trig != idle_w);
+            unsigned wr_act = trig_act, rc_act = trig_act;   /* single trigger */
             g_dbg_panel.sw165 = sw;
             g_dbg_panel.preset = pc.preset;
             g_dbg_panel.octave = pc.octave;
-            g_dbg_panel.bank_b = pc.bank_b;
-            g_dbg_panel.write_trig = pc.write_trig;
-            g_dbg_panel.recirc_trig = pc.recirc_trig;
+            g_dbg_panel.bank_b = pc.time_pitch;   /* dbg slot reused: TIME/pitch */
+            g_dbg_panel.write_trig = (uint8_t)trig_act;
+            g_dbg_panel.recirc_trig = (uint8_t)!transport_should_write(&g_engine.xport);
             g_dbg_panel.base = g_engine.taps.base_delay;
 #if PANEL_TRANSPORT_ENABLE
-            /* Momentary WRITE/RECIRC -> transport transitions (edge-triggered). */
-            transport_update_trig(&g_engine.xport, &g_xtrig,
-                                  pc.write_trig, pc.recirc_trig, g_engine.dl.wpos);
+            /* One confirmed momentary -> TAP toggles WRITE <-> RECIRC (loop capture
+             * on entry to RECIRC), HOLD ~2 s -> preset save (below). */
+            if (trig_act && !g_xtrig.prev_w) {
+                if (transport_should_write(&g_engine.xport)) engine_recirc(&g_engine);
+                else                                          engine_write(&g_engine);
+            }
+            g_xtrig.prev_w = (uint8_t)trig_act;
 #endif
             if (pc.octave != prev_octave) {
                 float nb = engine_clamp_base(base_boot * panel_octave_factor(&pc),
@@ -238,7 +271,7 @@ int main(void)
             /* Save chord: hold BOTH momentaries ~2 s -> snapshot the current tap
              * pattern + mult into the selected slot. Distinct from the momentary
              * WRITE/RECIRC taps, so it won't fire by accident. */
-            if (chord_update(&g_save_chord, pc.write_trig && pc.recirc_trig,
+            if (chord_update(&g_save_chord, wr_act && rc_act,
                              PRESET_SAVE_HOLD_TICKS)) {
                 preset_scene_t sc;
                 for (int i = 0; i < NUM_TAPS; i++) sc.phase[i] = g_engine.taps.phase[i];
@@ -249,6 +282,7 @@ int main(void)
                 uint8_t blob[PRESET_SLOT_BYTES];
                 unsigned n = (unsigned)preset_pack(&sc, blob);
                 (void)bsp_preset_flash_write(pc.preset, blob, n);
+                g_dbg_panel.saved_blink++;      /* SWD-visible save confirmation */
             }
 #endif
         }

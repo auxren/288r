@@ -10,9 +10,27 @@
 
 #define Q32_ONE 4294967296.0f            /* 2^32 */
 
+/* float -> Q32.32 using ONLY 32-bit FPU converts (two VCVTs). A direct
+ * (int64_t)(x * 2^32) emits __aeabi_f2lz/f2ulz, which libgcc implements by
+ * promoting to SOFT-DOUBLE — hundreds of cycles, and this runs per tap per
+ * sample (it starved the CPU on hardware: audio ISR ate 100%, main never ran).
+ * Split conversion: integer part + fraction scaled to Q1.31, both single VCVT.
+ * Same 24-bit float precision as the direct cast. */
 static inline int64_t q32_from_float(float x)
 {
-    return (int64_t)(x * Q32_ONE);       /* exact scale, then truncate */
+    int32_t hi = (int32_t)x;                          /* trunc toward zero  */
+    float   fr = x - (float)hi;                       /* (-1,1)             */
+    int32_t lo = (int32_t)(fr * 2147483648.0f);       /* Q1.31, fits int32  */
+    return ((int64_t)hi << 32) + ((int64_t)lo << 1);  /* Q32.32             */
+}
+
+/* Q32.32 -> float SAMPLES without __aeabi_l2f (soft int64->float): high/low
+ * words via two 32-bit VCVTs. Exact to float's 24-bit mantissa, branch-free
+ * (negative q: arithmetic-shift high + unsigned low still sum correctly). */
+static inline float q32_to_float(int64_t q)
+{
+    return (float)(int32_t)(q >> 32)
+         + (float)(uint32_t)(uint64_t)q * (1.0f / Q32_ONE);
 }
 
 void taps_init(taps_t *t, float base_delay, float slew)
@@ -50,7 +68,7 @@ void taps_update(taps_t *t, float time_mult)
         /* one-pole slew in Q32.32. The delta is converted to float only for the
          * slew multiply — a small delta converts losslessly, so unlike the float
          * version this never stalls at the ULP of a large position. */
-        float step = (float)delta_q * (1.0f / Q32_ONE) * t->slew;
+        float step = q32_to_float(delta_q) * t->slew;
         int64_t step_q = q32_from_float(step);
         if (step_q == 0) t->cur_q[i] = target_q;   /* snap the last <2^-32/slew */
         else             t->cur_q[i] += step_q;
@@ -59,7 +77,7 @@ void taps_update(taps_t *t, float time_mult)
 
 float taps_delay(const taps_t *t, int i)
 {
-    return (float)t->cur_q[i] * (1.0f / Q32_ONE);
+    return q32_to_float(t->cur_q[i]);
 }
 
 void taps_delay_frac(const taps_t *t, int i, uint32_t *d_int, float *d_frac)

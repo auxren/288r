@@ -149,21 +149,26 @@ void bsp_codec_scan(void)
  * (one of them enables/releases the CS42888). From the stock GPIO dump: PC12 high,
  * and PA{0,1,2,4,7,8,11} high. We leave SWD (PA13/14) and AF pins untouched.
  * [BENCH] narrow down which single pin is the codec RESET once it ACKs. */
-static void drive_out_high(GPIO_TypeDef *p, uint32_t n)
+static void drive_out(GPIO_TypeDef *p, uint32_t n, int v)
 {
     p->MODER = (p->MODER & ~(3u << (n*2))) | (1u << (n*2));  /* output */
     p->OTYPER &= ~(1u << n);                                 /* push-pull */
-    p->BSRR = (1u << n);                                     /* high */
+    p->BSRR = v ? (1u << n) : (1u << (n + 16));
 }
 
+/* Codec /RESET = PA2 — RESOLVED from the stock init (sub_2508): it does exactly
+ * `PA2 low; delay(0x1f4); PA2 high` before bringing up the audio path. The old
+ * blanket-drive of PA{0,1,4,7,8,11}+PC12 worked only because PA2 was among them;
+ * it also parked the 4051 mux address lines in a state the stock never uses
+ * (those are set to their stock boot state by bsp_panel_mux_boot_state()). */
 static void codec_reset_release(void)
 {
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOCEN;
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
     (void)RCC->AHB1ENR;
-    drive_out_high(GPIOC, 12);
-    static const uint8_t pa[] = {0, 1, 2, 4, 7, 8, 11};
-    for (unsigned i = 0; i < sizeof(pa); ++i) drive_out_high(GPIOA, pa[i]);
-    for (volatile int d = 0; d < 300000; ++d) { }           /* reset settle */
+    drive_out(GPIOA, 2, 0);                                  /* /RST low   */
+    for (volatile int d = 0; d < 300000; ++d) { }            /* hold reset */
+    drive_out(GPIOA, 2, 1);                                  /* release    */
+    for (volatile int d = 0; d < 300000; ++d) { }            /* settle     */
 }
 
 int bsp_codec_init(void)

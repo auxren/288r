@@ -25,20 +25,18 @@ int main(void)
     panel_decode(BIT(0)|BIT(1)|BIT(2), &p);   ck("bits0,1,2=1 -> D (3)", p.preset == 3);
     panel_decode(0u, &p);                     ck("bit0=0 wins over bit1/2 (priority)", p.preset == 0);
 
-    /* octave — sub_1110 logic: bit10 master. (10=0)->x1, (10=1,9=0)->x4, (10=1,9=1)->x2 */
-    panel_decode(0u, &p);                 ck("bit10=0 -> x1", p.octave == 1);
-    panel_decode(BIT(9), &p);             ck("bit10=0 (bit9 set) still x1", p.octave == 1);
-    panel_decode(BIT(10), &p);            ck("bit10=1,bit9=0 -> x4", p.octave == 4);
-    panel_decode(BIT(10)|BIT(9), &p);     ck("bit10=1,bit9=1 -> x2", p.octave == 2);
+    /* x1/x2 — bit 3, polarity CONFIRMED live on the unit: 1 = x1, 0 = x2 */
+    panel_decode(BIT(3), &p);             ck("bit3=1 -> x1", p.octave == 1);
+    panel_decode(0u, &p);                 ck("bit3=0 -> x2", p.octave == 2);
     ck("octave_factor(x2) == 2.0", panel_octave_factor(&p) == 2.0f);
 
-    /* discrete flags */
+    /* discrete flags (bit map confirmed in the live capture session) */
+    panel_decode(BIT(4), &p); ck("bit4 -> time_pitch",   p.time_pitch == 1);
     panel_decode(BIT(6), &p); ck("bit6 -> bank_b",       p.bank_b == 1);
-    panel_decode(BIT(7), &p); ck("bit7 -> write_trig",   p.write_trig == 1);
-    panel_decode(BIT(8), &p); ck("bit8 -> recirc_trig",  p.recirc_trig == 1);
-    panel_decode(BIT(3), &p); ck("bit3 -> tap_raw_mode", p.tap_raw_mode == 1);
-    panel_decode(0u, &p);     ck("clear word -> all flags 0",
-                                 !p.bank_b && !p.write_trig && !p.recirc_trig && !p.tap_raw_mode);
+    panel_decode(BIT(8), &p); ck("bit8 -> trigger (raw level)",
+                                 p.write_trig == 1 && p.recirc_trig == 1);
+    panel_decode(0u, &p);     ck("clear word -> flags 0",
+                                 !p.bank_b && !p.write_trig && !p.time_pitch);
 
     /* preset phase rows: A is the real default; B/C are flagged placeholders */
     float ph[NUM_TAPS];
