@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <math.h>
 
+#ifndef M_PI            /* POSIX, not C11: glibc hides it under -std=c11 (CI) */
+#define M_PI 3.14159265358979323846
+#endif
+
 static int fails = 0;
 static void ck(const char *name, int cond, double err) {
     printf("  %-34s %s  (max err %.2e)\n", name, cond ? "ok" : "FAIL", err);
