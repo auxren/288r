@@ -62,7 +62,8 @@ void     bsp_panel_out(uint32_t bits24);  /* shift+latch 24 output bits */
 void     bsp_panel_mux_boot_state(void);  /* PA1/7/8/11 high (stock runtime ODR) */
 void     bsp_panel_matrix_init(void);     /* chains + PC1..PC6 row inputs        */
 void     bsp_panel_matrix_scan(uint16_t w[3], uint16_t trim[8]); /* sweep -> DIP words + per-column ADC3 trims (trim may be NULL) */
-void     bsp_panel_strobe(int level);     /* PA0 analog block strobe (audio ISR) */
+void     bsp_panel_strobe(int level);     /* indicator 0 = input LED (audio ISR) */
+void     bsp_panel_ind(unsigned idx, int level); /* indicators 0..4 = PA0/1/7/8/11 */
 void     bsp_panel_match_stock_idle(void); /* match stock's electrical idle state */
 
 /* Called from the SAI DMA ISR with one block of interleaved TDM frames:

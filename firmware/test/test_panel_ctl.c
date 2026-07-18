@@ -17,26 +17,41 @@ int main(void)
 {
     panel_ctl_t p;
 
-    /* preset select — ACTIVE-LOW priority bit0>bit1>bit2 (A/B/C/D), matching the
-     * stock sub_4310(0..2) tap-position lookup. */
-    panel_decode(0u, &p);                     ck("bit0=0 -> A (0)", p.preset == 0);
-    panel_decode(BIT(0), &p);                 ck("bit0=1,bit1=0 -> B (1)", p.preset == 1);
-    panel_decode(BIT(0)|BIT(1), &p);          ck("bits0,1=1,bit2=0 -> C (2)", p.preset == 2);
-    panel_decode(BIT(0)|BIT(1)|BIT(2), &p);   ck("bits0,1,2=1 -> D (3)", p.preset == 3);
-    panel_decode(0u, &p);                     ck("bit0=0 wins over bit1/2 (priority)", p.preset == 0);
+    /* FINAL PROVEN MAP (bench session 5 logger). cal = bit0 active-low */
+    panel_decode(0x1FFF, &p);                ck("bit0=1 -> pre-set mode", p.cal == 0);
+    panel_decode(0x1FFF & ~BIT(0), &p);      ck("bit0=0 -> cal mode", p.cal == 1);
 
-    /* x1/x2 — bit 3, polarity CONFIRMED live on the unit: 1 = x1, 0 = x2 */
-    panel_decode(BIT(3), &p);             ck("bit3=1 -> x1", p.octave == 1);
-    panel_decode(0u, &p);                 ck("bit3=0 -> x2", p.octave == 2);
+    /* preset A/B/C selector: bits 1/2 active-low, C = both high */
+    panel_decode(0x1FFF & ~BIT(1), &p);      ck("bit1=0 -> C", p.preset == 2);
+    panel_decode(0x1FFF & ~BIT(2), &p);      ck("bit2=0 -> B", p.preset == 1);
+    panel_decode(0x1FFF, &p);                ck("both high -> A", p.preset == 0);
+
+    /* x1/x2 bit 3 (measured: 1 = x1) */
+    panel_decode(0x1FFF, &p);                ck("bit3=1 -> x1", p.octave == 1);
+    panel_decode(0x1FFF & ~BIT(3), &p);      ck("bit3=0 -> x2", p.octave == 2);
     ck("octave_factor(x2) == 2.0", panel_octave_factor(&p) == 2.0f);
 
-    /* discrete flags (bit map confirmed in the live capture session) */
-    panel_decode(BIT(4), &p); ck("bit4 -> time_pitch",   p.time_pitch == 1);
-    panel_decode(BIT(6), &p); ck("bit6 -> bank_b",       p.bank_b == 1);
-    panel_decode(BIT(8), &p); ck("bit8 -> trigger (raw level)",
-                                 p.write_trig == 1 && p.recirc_trig == 1);
-    panel_decode(0u, &p);     ck("clear word -> flags 0",
-                                 !p.bank_b && !p.write_trig && !p.time_pitch);
+    /* RED AUTO CONTROL bits 7/8: all-sounds latch / next-sound arm / center */
+    panel_decode(0x1FFF, &p);                ck("7,8 high -> READY (0)", p.automode == 0);
+    panel_decode(0x1FFF & ~BIT(7), &p);      ck("bit7=0 -> all sounds/DELAY (1)", p.automode == 1);
+    panel_decode(0x1FFF & ~BIT(8), &p);      ck("bit8=0 -> next-sound arm (2)", p.automode == 2);
+
+    /* CYCLE 3-way: bits 9/10, sub_1110-exact */
+    panel_decode(0x1FFF & ~BIT(10), &p);     ck("bit10=0 -> cycle 0", p.cycle == 0);
+    panel_decode(0x1FFF & ~BIT(9), &p);      ck("bit9=0 (10=1) -> cycle 2", p.cycle == 2);
+    panel_decode(0x1FFF, &p);                ck("both high -> cycle 1", p.cycle == 1);
+    ck("cycle_factor(center) == 0.5", panel_cycle_factor(&p) == 0.5f);
+    panel_decode(0x1FFF & ~BIT(9), &p);      ck("SHORT end -> 0.25", panel_cycle_factor(&p) == 0.25f);
+    panel_decode(0x1FFF & ~BIT(10), &p);     ck("FULL end -> 1.0", panel_cycle_factor(&p) == 1.0f);
+
+    /* red WRITE/RECIRC momentary: bits 11/12 active-low */
+    panel_decode(0x1FFF, &p);                ck("idle -> no transport press", !p.write_trig && !p.recirc_trig);
+    panel_decode(0x1FFF & ~BIT(11), &p);     ck("bit11=0 -> WRITE pressed", p.write_trig == 1);
+    panel_decode(0x1FFF & ~BIT(12), &p);     ck("bit12=0 -> RECIRC pressed", p.recirc_trig == 1);
+    /* black store switch: bits 5/6 */
+    panel_decode(0x1FFF & ~BIT(5), &p);      ck("bit5=0 -> store beg", p.store_beg == 1);
+    panel_decode(0x1FFF & ~BIT(6), &p);      ck("bit6=0 -> store end", p.store_end == 1);
+    panel_decode(0x1FFF, &p);                ck("bit4 -> time_pitch", (panel_decode(0x1FFF & ~BIT(4), &p), p.time_pitch == 0));
 
     /* preset phase rows: A is the real default; B/C are flagged placeholders */
     float ph[NUM_TAPS];

@@ -81,6 +81,18 @@ extern volatile uint8_t g_spi_raw[2][3];   /* SPI2 control-ADC raw bytes (ch0,ch
 /* TIME control in [0,1]; written in the superloop, read in the audio ISR. */
 static volatile float g_time_raw01 = 0.5f;
 
+/* Input envelope (ISR-updated) for the presence/auto LED comparator (PA11) and
+ * the looper's auto-write trigger. */
+static volatile float g_env = 0.0f;
+
+/* Looper auto-state (community-documented stock behavior): the red AUTO CONTROL
+ * switch (165 bit 4) selects DELAY ("all sounds": continuous write, out of
+ * "ready") vs LOOPER (center: sit READY; signal presence auto-starts a WRITE of
+ * one cycle, then auto-RECIRCs it; the momentary punches manually). */
+enum { LP_READY = 0, LP_WRITE, LP_LOOP };
+static uint8_t  g_lp_state = LP_READY;
+static uint32_t g_lp_start = 0;
+
 /* SWD observability: live panel decode + raw control reads, for labelling the
  * [BENCH] bits at the bench (gdb `p g_dbg_panel`, or `mdw &g_dbg_panel`). Populated
  * in the superloop. Strip pre-release with the other g_dbg_* scaffolding. */
@@ -117,12 +129,21 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
          * (PA0/1/7/8/11 are DSP-driven indicator outputs, NOT mux addresses — the
          * old panel-scan.md label was wrong.) */
         bsp_panel_strobe(x > 0.5f ? 0 : 1);
+        /* input envelope for the AUTO-CONTROL/presence LED (PA11): stock compares
+         * an envelope accumulator (0x200000bc) against 0x200000 = 0.25 FS. */
+        {
+            float ax = (x < 0.0f) ? -x : x;
+            g_env += (ax - g_env) * 0.002f;      /* ~5 ms one-pole @96k */
+        }
         float chan[NUM_TAPS];
         (void)engine_process_multi(&g_engine, x, t, chan);
         for (unsigned s = 0; s < TDM_SLOTS; ++s)
             out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
                                      ? audio_f_to_out(chan[s]) : 0;
     }
+    /* AUTO/presence LED (PA11), stock threshold: envelope > 0x200000/0x800000
+     * = 0.25 FS -> LOW (LED on). Per block is plenty (stock: per main-loop). */
+    bsp_panel_ind(4, (g_env > 0.25f) ? 0 : 1);
 }
 
 int main(void)
@@ -144,9 +165,9 @@ int main(void)
      * DIPs -- tap times, phase/mute -- are the opposite: live controls, scanned
      * out of the audio hot loop.) */
 
-    /* Cycle length (SHORT/FULL) sets the base delay window. FULL = 1 s @96 k. */
-    float base = bsp_sw_full_cycle() ? (float)SAMPLE_RATE_HZ
-                                     : (float)SAMPLE_RATE_HZ / 4.0f;
+    /* Base window = FULL cycle (1 s @96 k). The CYCLE 3-way switch (165 bits
+     * 9/10 — proven) scales it LIVE in the panel tick; no boot read needed. */
+    float base = (float)SAMPLE_RATE_HZ;
     /* config DIP sw1: x10 delay/looper extend. Scale the base window, then clamp so
      * the deepest tap (base*time_hi) still fits the SDRAM buffer. */
     const float time_lo = 0.4f, time_hi = 1.6f;   /* panel legend: 0.4x..1.6x, noon=1.0 */
@@ -234,47 +255,109 @@ int main(void)
             for (int i = 0; i < 3; i++) g_dbg_panel.dip[i] = dip[i];
             for (int i = 0; i < 8; i++) g_dbg_panel.trim[i] = trim[i];
 #endif
-            /* Momentary polarity: boot level = idle (nobody pressing at boot).
-             * Confirmed on the unit: the momentary is bit 8, idle HIGH. */
-            if (scan_first) { idle_w = pc.write_trig; scan_first = 0; }
-            unsigned trig_act = (pc.write_trig != idle_w);
-            unsigned wr_act = trig_act, rc_act = trig_act;   /* single trigger */
+            /* Momentaries PROVEN: bits 11/12 active-low, decode gives pressed=1.
+             * No idle-capture needed. */
+            (void)scan_first; (void)idle_w;
+            unsigned wr_act = pc.write_trig, rc_act = pc.recirc_trig;
             g_dbg_panel.sw165 = sw;
             g_dbg_panel.preset = pc.preset;
             g_dbg_panel.octave = pc.octave;
-            g_dbg_panel.bank_b = pc.time_pitch;   /* dbg slot reused: TIME/pitch */
-            g_dbg_panel.write_trig = (uint8_t)trig_act;
-            g_dbg_panel.recirc_trig = (uint8_t)!transport_should_write(&g_engine.xport);
+            g_dbg_panel.bank_b = pc.automode;    /* dbg slot: red-switch position */
+            g_dbg_panel.write_trig = (uint8_t)wr_act;
+            g_dbg_panel.recirc_trig = (uint8_t)rc_act;
             g_dbg_panel.base = g_engine.taps.base_delay;
 #if PANEL_TRANSPORT_ENABLE
-            /* One confirmed momentary -> TAP toggles WRITE <-> RECIRC (loop capture
-             * on entry to RECIRC), HOLD ~2 s -> preset save (below). */
-            if (trig_act && !g_xtrig.prev_w) {
-                if (transport_should_write(&g_engine.xport)) engine_recirc(&g_engine);
-                else                                          engine_write(&g_engine);
+            /* Stock transport (community-documented + proven switch map):
+             *  - WRITE momentary (bit11): punch into WRITE (record) — write LED
+             *  - RECIRC momentary (bit12): loop the buffer — ready LED
+             *  - RED AUTO CONTROL center: READY/auto — signal presence auto-starts
+             *    a WRITE of one cycle, then auto-RECIRCs it
+             *  - RED side positions ("all sounds"): plain delay — continuous write */
+            int wr_edge = (wr_act && !g_xtrig.prev_w);
+            int rc_edge = (rc_act && !g_xtrig.prev_r);
+            g_xtrig.prev_w = (uint8_t)wr_act;
+            g_xtrig.prev_r = (uint8_t)rc_act;
+
+            if (pc.automode == 1) {
+                /* DELAY mode: continuous write; manual punches still honored */
+                if (rc_edge)      { engine_recirc(&g_engine); }
+                else if (wr_edge || (g_lp_state != LP_LOOP &&
+                                     !transport_should_write(&g_engine.xport)))
+                                  { engine_write(&g_engine); }
+                if (transport_should_write(&g_engine.xport)) {
+                    g_lp_state = LP_READY;
+                    bsp_panel_ind(1, 0); bsp_panel_ind(3, 1);   /* write LED    */
+                } else {
+                    g_lp_state = LP_LOOP;
+                    bsp_panel_ind(1, 1); bsp_panel_ind(3, 0);   /* ready/loop   */
+                }
+            } else {
+                /* LOOPER/auto mode (red switch center) */
+                uint32_t cyc = (uint32_t)g_engine.taps.base_delay;
+                switch (g_lp_state) {
+                case LP_READY:
+                    if (!transport_should_write(&g_engine.xport)) engine_write(&g_engine);
+                    if (g_env > 0.25f || wr_edge || pc.automode == 2) {  /* auto / punch / arm */
+                        g_lp_start = g_engine.dl.wpos;
+                        engine_write(&g_engine);
+                        g_lp_state = LP_WRITE;
+                    }
+                    bsp_panel_ind(1, 1); bsp_panel_ind(3, 0);   /* ready LED */
+                    break;
+                case LP_WRITE: {
+                    uint32_t written = (g_engine.dl.wpos >= g_lp_start)
+                                     ? g_engine.dl.wpos - g_lp_start
+                                     : g_engine.dl.wpos + DELAY_LEN - g_lp_start;
+                    if (written >= cyc || rc_edge) {       /* cycle done / punch-out */
+                        engine_recirc(&g_engine);
+                        g_lp_state = LP_LOOP;
+                    } else if (wr_edge) {                  /* restart the take       */
+                        g_lp_start = g_engine.dl.wpos;
+                        engine_write(&g_engine);
+                    }
+                    bsp_panel_ind(1, 0); bsp_panel_ind(3, 1);   /* write LED */
+                    break; }
+                default: /* LP_LOOP */
+                    if (wr_edge) {                         /* punch a new take       */
+                        g_lp_start = g_engine.dl.wpos;
+                        engine_write(&g_engine);
+                        g_lp_state = LP_WRITE;
+                    }
+                    bsp_panel_ind(1, 1); bsp_panel_ind(3, 0);   /* ready (looping) */
+                    break;
+                }
             }
-            g_xtrig.prev_w = (uint8_t)trig_act;
+            bsp_panel_ind(2, 1);   /* PA7 held high (stock run state) */
 #endif
-            if (pc.octave != prev_octave) {
-                float nb = engine_clamp_base(base_boot * panel_octave_factor(&pc),
+            /* base window = boot base x octave (x1/x2) x cycle (3-way, live) */
+            unsigned oc_key = (unsigned)pc.octave | ((unsigned)pc.cycle << 4);
+            if (oc_key != prev_octave) {
+                float nb = engine_clamp_base(base_boot * panel_octave_factor(&pc)
+                                             * panel_cycle_factor(&pc),
                                              DELAY_LEN, time_hi);
                 taps_set_base_delay(&g_engine.taps, nb);
-                prev_octave = pc.octave;
+                prev_octave = oc_key;
             }
-            if (pc.preset != prev_preset) {
+            /* "cal." position forces the evenly-spaced ramp (stock-exact);
+             * pre-set position recalls the selected A/B/C slot. */
+            unsigned sel_key = pc.cal ? 0xFEu : pc.preset;
+            if (sel_key != prev_preset) {
                 float ph[NUM_TAPS];
 #if PRESET_ENABLE
-                /* Recall the selected slot from flash (capture-live presets). Blank/
-                 * invalid slot -> the A-ramp default. mult recall would pin the knob
-                 * (control-pinning) once the multiplier reads through the panel too. */
-                preset_scene_t sc;
-                (void)preset_load(bsp_preset_flash_base(), pc.preset, &sc);
-                for (int i = 0; i < NUM_TAPS; i++) ph[i] = sc.phase[i];
+                if (pc.cal) {
+                    for (int i = 0; i < NUM_TAPS; i++) ph[i] = 20.0f * (float)(i + 1);
+                } else {
+                    /* Recall the selected slot (capture-live presets). Blank/
+                     * invalid slot -> the A-ramp default. */
+                    preset_scene_t sc;
+                    (void)preset_load(bsp_preset_flash_base(), pc.preset, &sc);
+                    for (int i = 0; i < NUM_TAPS; i++) ph[i] = sc.phase[i];
+                }
 #else
                 (void)panel_preset_phase(pc.preset, ph);
 #endif
                 taps_set_phase(&g_engine.taps, ph);
-                prev_preset = pc.preset;
+                prev_preset = sel_key;
             }
 #if PRESET_ENABLE
             /* Save chord: hold BOTH momentaries ~2 s -> snapshot the current tap

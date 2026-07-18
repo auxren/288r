@@ -95,12 +95,13 @@
  * two pins, set the port/pin below, and flip _MAPPED to 1. Active-low like the rest.
  * (The port/pin values here are unverified placeholders; they do nothing while
  *  _MAPPED = 0.) */
-#define SW_EXTEND_MAPPED     0
-#define SW_EXTEND_PORT       GPIOD
-#define SW_EXTEND_PIN        13u        /* [BENCH] placeholder — trace on the unit */
-#define SW_BANDWIDTH_MAPPED  0
-#define SW_BANDWIDTH_PORT    GPIOD
-#define SW_BANDWIDTH_PIN     7u         /* [BENCH] placeholder — trace on the unit */
+#define SW_EXTEND_MAPPED     1
+#define SW_EXTEND_PORT       GPIOB
+#define SW_EXTEND_PIN        11u        /* PROVEN: stock buffer-length table is x10
+                                           on this pin (0x16120 -> 0xdcb40)        */
+#define SW_BANDWIDTH_MAPPED  1
+#define SW_BANDWIDTH_PORT    GPIOB
+#define SW_BANDWIDTH_PIN     10u        /* rear sw2 (the other f64-read rear pin)  */
 
 /* Owner-confirmed feature behavior. */
 #define DELAY_EXTEND_FACTOR  10.0f      /* sw1: x10 delay time + looper length     */

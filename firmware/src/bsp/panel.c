@@ -104,10 +104,18 @@ void bsp_panel_mux_boot_state(void)
     GPIOB->BSRR  = (1u << 16) | (1u << 17);
 }
 
-/* PA0 block strobe — the stock pulses PA0 low->high inside EVERY audio-block tap
- * service (sub_fe0(0)/sub_102c(0) in sub_1250 AND sub_15dc; observed live at
- * block rate). It clocks the analog side (S&H/envelope). Call from the audio ISR. */
-void bsp_panel_strobe(int level)
+/* DSP-driven indicator/pulse outputs — PA0/1/7/8/11 (stock sub_fe0/sub_102c
+ * index 0..4). NOT mux addresses: the stock drives them from signal/transport
+ * state (PA0 = input>0.5FS comparator, PA11 = envelope presence, PA1/7/8 =
+ * transport mode + loop-wrap pulses). Active-LOW at the LEDs. */
+static const uint8_t IND_PIN[5] = { 0, 1, 7, 8, 11 };
+
+void bsp_panel_ind(unsigned idx, int level)
+{
+    if (idx < 5u) a_set(IND_PIN[idx], level);
+}
+
+void bsp_panel_strobe(int level)   /* legacy name: indicator 0 (input LED) */
 {
     a_set(0, level);
 }
