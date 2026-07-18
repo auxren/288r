@@ -94,3 +94,63 @@ find the RST bit in the 595 pattern.
 3. `bsp_pot_read(1)` standalone → confirm ch1 = knob; combine ch0(CV)+ch1(knob) for the multiplier.
 4. Confirm codec RST (drop `codec_reset_release` or find its 595 bit).
 5. Reconcile pin sharing (codec-reset GPIO block overlaps panel pins) before wiring `panel.c` into main.
+
+
+---
+
+# CORRECTIONS — bench sessions 5-6 + adversarially-verified decompile dig (2026-07-18)
+
+Everything below supersedes conflicting statements above. Each item was traced in the
+decompile by an investigation agent AND spot-checked by an independent verify agent;
+hardware facts were proven live on the unit.
+
+## The real panel architecture
+- **PA0/1/7/8/11 are DSP-driven indicator/pulse OUTPUTS, not mux addresses.**
+  Pin-forced live with the owner naming LEDs: PA0 = input-level comparator LED
+  (sample > +0.5 FS, per-sample), PA1 = WRITE LED, PA7 = RECIRC LED, PA8 = READY
+  LED, PA11 = signal-presence (envelope > 0.25 FS). All active-LOW.
+- **The 165 bit map (all owner-verified live):** bit0 cal./pre-set (low = cal =
+  even ramp); bits1/2 C/B/A selector (bit1 low=C, bit2 low=B, both high=A); bit3
+  ×1/×2 (1=×1); bit4 TIME/pitch (0=TIME); bit5 DEAD (second pole of the store
+  switch — never read by stock); bit6 store beg./end LATCHING POLICY (active-HIGH
+  = store end); bits7/8 red AUTO CONTROL (bit7 latch low = "all sounds"/delay,
+  bit8 momentary low = "next sound" arm, center = ready/looper); bits9/10 CYCLE
+  3-way (sub_1110 decode; bit10 low = FULL, bit9 low = SHORT); bits11/12 red
+  WRITE/RECIRC momentary (active-low).
+- **Pulse input jacks = GPIOG:** PG10 write, PG11 recirc, PG12 arm/next-sound —
+  ACTIVE-HIGH, OR'd with the switch bits (stock sub_3ccc).
+- **Rear DIPs:** PB10 = sw1 ×10 extend (measured live; stock's length table is
+  exactly ×10 on it), PB11 = sw2; PD11/12 = sw3/4 resolution (unchanged).
+
+## The 595 chain + analog truth (verified in the stock image)
+- `sub_3488` (matrix scan) has EXACTLY ONE call site — boot. After it, the 595
+  parks at **0x777777 forever**. There is no runtime column sweep and no hidden
+  4051 INHIBIT (nibble-MSB bits are 0 in every word).
+- The **parked address routes ONE analog channel to ADC3 ch6/PF8: the c.v.
+  ATTENUVERTER (⊖/⊕ knob)** — proven live (owner knob sweep tracked 7..4085).
+  Stock filters it median-25 + boxcar-128 and centers at 0x7ff; control law:
+  **multiplier = knob + cv × att**, att = (adc3 − 0x7ff)/2047, small deadzone.
+- The **36 trimmers are analog-only — never digitized by the MCU.**
+- The matrix words (ours read 0x0ff0/0x00ff/0xff00) are REAL DATA: one-of-two
+  SPDT rows per tap = the preset-bank selectors, expanded at boot into
+  `preset_phase_table` rows for B/C/D (A = computed ramp). Changing those inner
+  DIPs requires a reboot even on stock.
+
+## Stock pitch mode (bit4) — fully traced
+- No PLL retunes in pitch mode. Delay pinned to range minimum (knob no longer
+  scales time). Knob (0..255 after LUT+hysteresis) = pitch-down DEPTH.
+- Sweep: free-running word counter +1/sample, wrap 44141 (FULL) / 11035 (SHORT);
+  offset = amount × 10.3843137 × phase + 1324 samples → constant pitch-down of
+  up to −1.07 st (FULL) / −4.75 st (SHORT); ~1 Hz saw with a click at each wrap
+  (the reported stock bug our crossfaded shifter fixes by design).
+- **STOCK BUG:** path B's saw counter (byte 0x200000b4) doubles as the mod-4
+  tap-slew divider — path B's pitch sweep is dead code (stuck ≤2 counts).
+
+## Store beg./end (bit6) + transport modes — stock semantics
+- Modes: 1=write, 2=recirc, 3=store-pass (auto record), 5=hold, 6=play-stored.
+- bit6=1 ("store end"): writes mirror into Bank B; at the store-pass wrap the
+  window is HELD (mode 5, delay keeps running); RECIRC then plays the stored
+  window from Bank B (mode 6). bit6=0 ("store beg."): auto-recirc at the wrap.
+- WRITE momentary/pulse (bit11/PG10): reopen whole buffer for writing (mode 1).
+  RECIRC momentary/pulse (bit12/PG11): freeze loop at head (mode 2) or play the
+  stored window (5→6). Arm (bit8 momentary / PG12): start the next store-pass.
