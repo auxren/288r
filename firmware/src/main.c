@@ -298,6 +298,13 @@ int main(void)
     float mult_filt = 0.5f;
     pin_free(&g_mult_pin, 0.5f);
     for (;;) {
+#if PITCH_VOICE_ENABLE
+        /* de-glitch service: correlation-aligned splices for the pitch voice.
+         * Cheap check per pass; the actual search (~250k MACs) runs only when a
+         * tap wrap is imminent (every ~0.5 s in pitch mode) — superloop-only,
+         * never in the ISR. Measured: purity 0.98..1.00 vs 0.77..0.98 plain. */
+        if (g_pitch_mode) ps_service(&g_pv.ps, &g_engine.dl);
+#endif
 #if PANEL_SCAN_ENABLE
         /* Panel + control tick (~every 64 passes, ~10 ms). The SPI2 control-ADC
          * probe lives HERE, not every pass: hammering it at loop rate parked the
