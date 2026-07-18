@@ -112,8 +112,8 @@
 #define PITCH_BASE_SAMPLES   256.0f     /* base delay offset (~2.7 ms @96k)         */
 #define PITCH_RATIO_SLEW     0.002f     /* one-pole ratio glide/sample              */
 #define PITCH_VOICE_GAIN     0.7f       /* mix level of the pitch voice into ch0    */
-/* Time-CV (SPI2 ch0, 12-bit, bipolar around 2048) -> volts. [BENCH] calibrate. */
-#define PITCH_CV_CENTER      2048.0f
-#define PITCH_CV_VOLTS_PER_CODE (5.0f / 2048.0f)
+/* Time-CV (SPI2 ch0, 12-bit, RESTS AT 0 unpatched — measured) -> volts. */
+#define PITCH_CV_CENTER      0.0f
+#define PITCH_CV_VOLTS_PER_CODE (5.0f / 4095.0f)
 
 #endif /* BSP_BOARD_H */

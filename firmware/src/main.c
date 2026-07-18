@@ -298,7 +298,9 @@ int main(void)
                 pv_set_cv(&g_pv, ((float)cv - PITCH_CV_CENTER) * PITCH_CV_VOLTS_PER_CODE);
             } else
 #endif
-            raw = (int32_t)knob + ((int32_t)cv - 2048);
+            /* CV rest = 0 on this hardware (measured: spi_cv=0 unpatched) —
+             * additive sum, NOT bipolar-around-2048 (that killed the knob). */
+            raw = (int32_t)knob + (int32_t)cv;
             if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
             mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.01f;
             g_time_raw01 = pin_update(&g_mult_pin, mult_filt);
