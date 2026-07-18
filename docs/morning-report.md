@@ -53,6 +53,10 @@ fixed with the stability rule: proven core locked, inferences gated until proven
 6. Then the full `docs/release-test-plan.md` (v2 addendum included) when you're
    ready to gate the release tag.
 
-## Soak results
-(final stats appended by the morning pass — monitor ran all night; any stall or
-fault would appear below)
+## Soak results — PASSED
+- **6 h 07 m continuous** (01:16–07:23), 728 health samples, **zero stalls, zero faults**
+- Block clock: 3000–3005/s the entire night (mean 3000 — rock steady)
+- Control chain: multiplier tracked the 266's random CV across its full range
+  (mult 0.050–0.910, cv 203–3734) — thousands of smooth modulation excursions
+- 3 logger reconnects, all my own flash/restart cycles — none from the unit
+- Dawn check: unit alive, same build, still tracking (mult=0.35 @ cv=1427)
