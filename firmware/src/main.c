@@ -89,6 +89,7 @@ struct dbg_panel {
     uint16_t spi_cv;      /* raw Time-CV        (SPI2 ch0)         */
     uint16_t spi_knob;    /* raw multiplier knob (SPI2 ch1)       */
     uint16_t dip[3];      /* DIP/preset matrix words (stock c4/c6/c8 layout) */
+    uint16_t trim[8];     /* ADC3/PF8 reading per 595 column (analog scan)   */
     uint8_t  preset;      /* decoded A/B/C (0/1/2)                */
     uint8_t  octave;      /* decoded x1/x2/x4                      */
     uint8_t  bank_b;
@@ -109,6 +110,13 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
     const float t = g_time_raw01;
     for (unsigned f = 0; f < frames; ++f) {
         float x = audio_in_to_f(in[f * TDM_SLOTS + AUDIO_IN_SLOT]);
+        /* INPUT LED (PA0) — decompile-exact: the stock compares each input sample
+         * against +0.5 FS in the tap service and drives PA0 LOW (LED ON) above it:
+         *   if (r5 + 0x400000 > 0x800000) sub_fe0(0); else sub_102c(0);
+         * A per-sample 1-bit envelope PWM: loud input -> more low-time -> brighter.
+         * (PA0/1/7/8/11 are DSP-driven indicator outputs, NOT mux addresses — the
+         * old panel-scan.md label was wrong.) */
+        bsp_panel_strobe(x > 0.5f ? 0 : 1);
         float chan[NUM_TAPS];
         (void)engine_process_multi(&g_engine, x, t, chan);
         for (unsigned s = 0; s < TDM_SLOTS; ++s)
@@ -185,45 +193,46 @@ int main(void)
 #endif
 #endif
 #if PANEL_MATRIX_ENABLE
-    /* Stock-faithful panel bring-up: mux address lines to the stock boot state
-     * (PA1/7/8 high, PA0/11 low — the old codec dance parked them ALL high), row
-     * inputs ready, and the 595 sweep runs from here on. */
+    /* Stock-faithful panel bring-up: mux/control lines to the stock RUNTIME state
+     * (PA1/7/8/11 high — live ODR 0x996), row inputs ready, ADC3 on for the
+     * per-column analog scan, and the 595 sweep runs from here on. */
     bsp_panel_mux_boot_state();
     bsp_panel_matrix_init();
+    bsp_mult_init();               /* ADC3 ch6/PF8 (stock-matching config) */
+    bsp_panel_match_stock_idle();  /* pull-ups off, USART1 pins driven, etc. */
 #endif
 
     float mult_filt = 0.5f;
     for (;;) {
-        /* FAST (every loop) — TIME MULTIPLIER = SPI2 ch0(CV)+ch1(knob), stock order.
-         * Must update quickly or the delay time steps -> zipper. One-pole smoothing
-         * kills the ADC ±1-LSB jitter (stock uses a 128-avg + hysteresis). */
-        bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0, [1]=ch1 */
-        uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
-        uint32_t knob = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
-        uint32_t raw  = knob + cv;
-        if (raw > 4095u) raw = 4095u;
-        mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.03f;
-        g_time_raw01 = mult_filt;
-        g_dbg_panel.spi_cv = (uint16_t)cv;
-        g_dbg_panel.spi_knob = (uint16_t)knob;
-        g_dbg_panel.mult = mult_filt;
-
 #if PANEL_SCAN_ENABLE
-        /* Panel scan (74HC165) — throttled (~every 64 passes, ~10 ms), input-only,
-         * applied ON CHANGE. Octave rescales the base delay (fixed-rate: the taps
-         * slew to the new positions, no clock glitch); A/B/C selects the preset
-         * phase row. Both glide smoothly, so this never zippers the audio. */
+        /* Panel + control tick (~every 64 passes, ~10 ms). The SPI2 control-ADC
+         * probe lives HERE, not every pass: hammering it at loop rate parked the
+         * ADC's chip-select low ~100% duty (stock probes at ~6 Hz, CS idles HIGH
+         * — live dump) and that DC-loads the control-surface analog. ~100 Hz is
+         * still 15x the stock rate; the one-pole + audio-rate tap slew keep the
+         * multiplier smooth. */
         if ((scan_div++ & 0x3Fu) == 0u) {
+            bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0(CV), [1]=ch1(knob) */
+            uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
+            uint32_t knob = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
+            uint32_t raw  = knob + cv;
+            if (raw > 4095u) raw = 4095u;
+            mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.3f;
+            g_time_raw01 = mult_filt;
+            g_dbg_panel.spi_cv = (uint16_t)cv;
+            g_dbg_panel.spi_knob = (uint16_t)knob;
+            g_dbg_panel.mult = mult_filt;
+
             panel_ctl_t pc;
             uint16_t sw = bsp_panel_switches_read();
             panel_decode(sw, &pc);
 #if PANEL_MATRIX_ENABLE
-            /* Full 8-column 595 address sweep + DIP row read (stock: every loop). */
-            uint16_t dip[3];
-            bsp_panel_matrix_scan(dip);
-            g_dbg_panel.dip[0] = dip[0];
-            g_dbg_panel.dip[1] = dip[1];
-            g_dbg_panel.dip[2] = dip[2];
+            /* Full 8-column 595 address sweep + DIP rows + per-column ADC3 trims
+             * (stock: every loop). */
+            uint16_t dip[3], trim[8];
+            bsp_panel_matrix_scan(dip, trim);
+            for (int i = 0; i < 3; i++) g_dbg_panel.dip[i] = dip[i];
+            for (int i = 0; i < 8; i++) g_dbg_panel.trim[i] = trim[i];
 #endif
             /* Momentary polarity: boot level = idle (nobody pressing at boot).
              * Confirmed on the unit: the momentary is bit 8, idle HIGH. */

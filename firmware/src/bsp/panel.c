@@ -68,6 +68,7 @@ uint16_t bsp_panel_switches_read(void)
         if ((GPIOA->IDR >> P165_DATA) & 1u) r |= 1u;
         a_set(P165_CLK, 1); dly();
     }
+    a_set(P165_CLK, 0);   /* idle LOW between reads — matches stock (live ODR) */
     return r;
 }
 
@@ -91,13 +92,57 @@ void bsp_panel_mux_boot_state(void)
 {
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN;
     (void)RCC->AHB1ENR;
-    static const uint8_t pa_lo[] = {0, 11};
-    static const uint8_t pa_hi[] = {1, 7, 8};
+    /* RUNTIME truth from the live stock dump (GPIOA ODR = 0x996): PA1,2,4,7,8,11
+     * HIGH. PA11 is set at runtime by the transport init (sub_102c(4)) — the
+     * .data boot constants alone said low, which was wrong on the wire. */
+    static const uint8_t pa_lo[] = {0};
+    static const uint8_t pa_hi[] = {1, 7, 8, 11};
     for (unsigned i = 0; i < sizeof pa_lo; ++i) { a_out(pa_lo[i]); a_set(pa_lo[i], 0); }
     for (unsigned i = 0; i < sizeof pa_hi; ++i) { a_out(pa_hi[i]); a_set(pa_hi[i], 1); }
     /* PB0/PB1 low (stock clears them at init, never sets them) */
     GPIOB->MODER = (GPIOB->MODER & ~(3u << 0) & ~(3u << 2)) | (1u << 0) | (1u << 2);
     GPIOB->BSRR  = (1u << 16) | (1u << 17);
+}
+
+/* PA0 block strobe — the stock pulses PA0 low->high inside EVERY audio-block tap
+ * service (sub_fe0(0)/sub_102c(0) in sub_1250 AND sub_15dc; observed live at
+ * block rate). It clocks the analog side (S&H/envelope). Call from the audio ISR. */
+void bsp_panel_strobe(int level)
+{
+    a_set(0, level);
+}
+
+/* Match every remaining ELECTRICAL idle-state difference against the live stock
+ * GPIO dump (machine diff, bench session 5). The panel's level LEDs are analog;
+ * any node we load differently (pull-up leakage, a parked chip-select, a floating
+ * driver) shows up as stuck LEDs. Differences fixed here:
+ *   - drop our internal pull-ups on PB10/11, PC1..6, PD11/12 (stock: none — the
+ *     board has external resistors), and the stray PA15 pull
+ *   - PA9/PA10 -> USART1 AF7, USART1 enabled 115200 8N1 exactly like stock (a
+ *     silent debug port, but TX then idles DRIVEN HIGH instead of floating)
+ * Call after all other panel/codec init. */
+void bsp_panel_match_stock_idle(void)
+{
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN | RCC_AHB1ENR_GPIOBEN |
+                    RCC_AHB1ENR_GPIOCEN | RCC_AHB1ENR_GPIODEN;
+    (void)RCC->AHB1ENR;
+
+    GPIOB->PUPDR &= ~((3u << (10*2)) | (3u << (11*2)));                  /* PB10/11 */
+    GPIOC->PUPDR &= ~((3u << (1*2)) | (3u << (2*2)) | (3u << (3*2)) |
+                      (3u << (4*2)) | (3u << (5*2)) | (3u << (6*2)));    /* PC1..6  */
+    GPIOD->PUPDR &= ~((3u << (11*2)) | (3u << (12*2)));                  /* PD11/12 */
+    GPIOA->PUPDR &= ~(3u << (15*2));                                     /* PA15    */
+
+    /* USART1 on PA9/PA10, stock config (BRR=0x2D9 ~= 115200 @84 MHz, CR1=0x200C
+     * = UE|TE|RE). We never send anything; this just drives the pins like stock. */
+    RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
+    (void)RCC->APB2ENR;
+    GPIOA->MODER = (GPIOA->MODER & ~((3u << (9*2)) | (3u << (10*2))))
+                 | (2u << (9*2)) | (2u << (10*2));                       /* AF mode */
+    GPIOA->AFR[1] = (GPIOA->AFR[1] & ~((0xFu << 4) | (0xFu << 8)))
+                  | (7u << 4) | (7u << 8);                               /* AF7     */
+    USART1->BRR = 0x2D9u;
+    USART1->CR1 = 0x200Cu;
 }
 
 /* PC1..PC6 = the 6 matrix row inputs (pull-up, active-low), read per column. */
@@ -118,12 +163,15 @@ void bsp_panel_matrix_init(void)
  *   w[0] (stock 0x200020c4): PC5 -> bit col, PC6 -> bit col+8
  *   w[1] (stock 0x200020c6): PC3 -> bit col, PC4 -> bit col+8
  *   w[2] (stock 0x200020c8): PC1 -> bit col, PC2 -> bit col+8   */
-void bsp_panel_matrix_scan(uint16_t w[3])
+void bsp_panel_matrix_scan(uint16_t w[3], uint16_t trim[8])
 {
     uint16_t acc[3] = {0, 0, 0};
     for (uint32_t col = 0; col < 8u; ++col) {
         bsp_panel_out(col * 0x111111u);
         dly(); dly();
+        /* analog scan: one ADC3/PF8 conversion per column (stock: continuous
+         * ch6 conversions while the 595 sweeps the mux addresses) */
+        if (trim) trim[col] = bsp_mult_read();
         uint32_t idr = GPIOC->IDR;
         if (!(idr & (1u << 5))) acc[0] |= (uint16_t)(1u << col);
         if (!(idr & (1u << 6))) acc[0] |= (uint16_t)(1u << (col + 8));
