@@ -24,7 +24,8 @@ typedef struct {
     int   next_tap;  /* which tap wraps next (0=A at phase 1->0, 1=B at 0.5)     */
 } pitchshift_t;
 
-/* window: W in samples (e.g. 30 ms * fs). base: >= 2, and base + W <= len - 3. */
+/* window: W in samples (e.g. 30 ms * fs). base >= 2; the de-glitch search reads
+ * to base + W + ~1600, so keep base + W + 1600 <= len - 3. */
 void  ps_init(pitchshift_t *p, float window, float base);
 void  ps_set_ratio(pitchshift_t *p, float ratio);   /* clamp to a sane span      */
 void  ps_reset(pitchshift_t *p);                     /* phase = 0                 */

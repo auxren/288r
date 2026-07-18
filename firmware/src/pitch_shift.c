@@ -36,41 +36,56 @@ void ps_reset(pitchshift_t *p)
 }
 
 /* ---- de-glitch: correlation-aligned splices (H949-style) -------------------
- * When tap T is about to wrap, its new read position (delay base+off) should be
- * WAVEFORM-ALIGNED with the other tap (delay ~base+W/2+offOther) so the
- * crossfade sums coherent material instead of combing. We search off in
- * [0, PS_DEGLITCH_MAXLAG) for the offset maximizing normalized correlation
- * between the two delay positions over PS_DEGLITCH_N samples. Runs in the main
- * loop; ~N*MAXLAG MACs (~250k) per wrap (wraps are ~0.5 s apart). */
-#define PS_DEGLITCH_N       384
-#define PS_DEGLITCH_MAXLAG  1200      /* one period down to ~80 Hz @96k */
+ * When tap T is about to wrap, its new read position should be WAVEFORM-ALIGNED
+ * with the other tap so the crossfade sums coherent material instead of combing.
+ * Ranking = acc*|acc|/ein == sign-preserving (NCC)^2 up to the lag-independent
+ * outgoing energy (adversarial-verify blocker #2: plain acc/ein is a least-
+ * squares gain BIASED TOWARD QUIET WINDOWS — it dug 30 dB holes in enveloped
+ * material). Guards: incoming energy >= 1% of outgoing; best NCC >= 0.5, else
+ * fall back to offset 0 (= the plain crossfade). Runs in the MAIN LOOP only.
+ * Range note: reads reach base + W + MAXLAG + N (~ +1600) — callers must keep
+ * that inside the buffer (trivial at SDRAM sizes). Honest low-frequency reach
+ * with N=768 correlation span: ~125 Hz. */
+#define PS_DEGLITCH_N       768
+#define PS_DEGLITCH_MAXLAG  1200
 #define PS_DEGLITCH_LOOKA   0.06f     /* start searching within 6% of the wrap */
 
 void ps_service(pitchshift_t *p, const delay_line_t *d)
 {
     if (p->pend_tap >= 0) return;                 /* already prepared        */
+    if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS) return;  /* bypass: no wraps  */
     float step = (1.0f - p->ratio) / p->window;
-    if (step == 0.0f) return;                     /* unity: no wraps         */
 
-    /* distance (in phase) to the next wrap of next_tap */
+    /* derive which tap wraps next FROM PHASE + DIRECTION every call (the
+     * stored alternation state desyncs when the ratio crosses unity — the
+     * chorus regime; adversarial-verify finding). A wraps at the 0/1 boundary,
+     * B at 0.5. Whichever boundary is nearer in the direction of travel. */
     float ph = p->phase;
-    float dist;
-    if (p->next_tap == 0)                          /* A wraps at 1 (or 0)    */
-        dist = (step > 0.0f) ? (1.0f - ph) : ph;
-    else                                           /* B wraps at 0.5         */
-        dist = (step > 0.0f) ? ((ph < 0.5f) ? 0.5f - ph : 1.5f - ph)
-                             : ((ph >= 0.5f) ? ph - 0.5f : ph + 0.5f);
+    float dA, dB;
+    if (step > 0.0f) { dA = 1.0f - ph; dB = (ph < 0.5f) ? 0.5f - ph : 1.5f - ph; }
+    else             { dA = ph;        dB = (ph >= 0.5f) ? ph - 0.5f : ph + 0.5f; }
+    int   tap  = (dA <= dB) ? 0 : 1;
+    float dist = (dA <= dB) ? dA : dB;
+    p->next_tap = tap;
     float astep = (step > 0.0f) ? step : -step;
     if (dist > PS_DEGLITCH_LOOKA) return;          /* not imminent yet       */
     if (dist < 8.0f * astep) return;               /* too late — skip safely */
 
-    /* correlate: the incoming tap enters at frac 0 for DOWN-shifts (step>0,
-     * delay base) but at frac 1 for UP-shifts (step<0, delay base+W) — the
-     * phase runs backward for ratio>1. The outgoing tap sits mid-window. */
+    /* correlate: the incoming tap enters at frac 0 for DOWN-shifts (delay base)
+     * but frac 1 for UP-shifts (delay base+W; phase runs backward). */
     const float dIn  = (step > 0.0f) ? p->base : p->base + p->window;
-    const float dOut = p->base + 0.5f * p->window + p->off[p->next_tap ^ 1];
-    float best = -1.0e30f; float bestoff = 0.0f;
-    for (int lag = 0; lag < PS_DEGLITCH_MAXLAG; lag += 4) {   /* coarse 4-sample grid */
+    const float dOut = p->base + 0.5f * p->window + p->off[tap ^ 1];
+
+    /* outgoing-window energy once (lag-independent) for the guards */
+    float eb = 0.0f;
+    for (int k = 0; k < PS_DEGLITCH_N; k += 2) {
+        float b = dl_read(d, dOut + (float)k, DL_INTERP_LINEAR);
+        eb += b * b;
+    }
+    if (eb < 1.0e-7f) return;                      /* silence: keep offset 0 */
+
+    float best = 0.0f; int bestlag = 0;
+    for (int lag = 0; lag < PS_DEGLITCH_MAXLAG; lag += 4) {   /* coarse grid */
         float acc = 0.0f, ein = 0.0f;
         for (int k = 0; k < PS_DEGLITCH_N; k += 2) {          /* decimate x2 */
             float a = dl_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
@@ -78,12 +93,37 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
             acc += a * b;
             ein += a * a;
         }
-        float score = (ein > 1.0e-9f) ? acc / (ein + 1.0e-9f) : -1.0e30f;
-        if (score > best) { best = score; bestoff = (float)lag; }
+        if (ein < 0.01f * eb) continue;            /* too quiet to trust     */
+        float score = acc * fabsf(acc) / (ein + 1.0e-9f);   /* sign-kept NCC^2 * eb */
+        if (score > best) { best = score; bestlag = lag; }
     }
-    p->pend_off = bestoff;
+    /* accept only a real match: NCC^2 >= 0.25  <=>  score >= 0.25 * eb */
+    if (best < 0.25f * eb) { bestlag = 0; }
+    else {
+        /* fine search +/-3 around the coarse winner (kills the +/-2-sample
+         * residual comb noted at large shifts) */
+        float fbest = best; int flag = bestlag;
+        for (int lag = bestlag - 3; lag <= bestlag + 3; ++lag) {
+            if (lag < 0 || lag == bestlag || lag >= PS_DEGLITCH_MAXLAG) continue;
+            float acc = 0.0f, ein = 0.0f;
+            for (int k = 0; k < PS_DEGLITCH_N; k += 2) {
+                float a = dl_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
+                float b = dl_read(d, dOut + (float)k, DL_INTERP_LINEAR);
+                acc += a * b;
+                ein += a * a;
+            }
+            if (ein < 0.01f * eb) continue;
+            float score = acc * fabsf(acc) / (ein + 1.0e-9f);
+            if (score > fbest) { fbest = score; flag = lag; }
+        }
+        bestlag = flag;
+    }
+    /* publish only if the wrap geometry is still the one we searched for
+     * (the ISR may have consumed a wrap mid-search at large ratios) */
+    if (p->next_tap != tap || p->pend_tap >= 0) return;
+    p->pend_off = (float)bestlag;
     __asm volatile ("" ::: "memory");              /* order: off BEFORE tap  */
-    p->pend_tap = p->next_tap;                     /* publish AFTER off      */
+    p->pend_tap = tap;
 }
 
 float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
@@ -92,8 +132,10 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
 
     /* Near unity the ramp is frozen and two static taps would comb-filter;
        collapse to a single centered tap so unity is a clean delayed bypass.    */
-    if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS)
+    if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS) {
+        p->pend_tap = -1;                    /* discard stale splice offsets */
         return dl_read(d, p->base + 0.5f * W, interp);
+    }
 
     const float fracA = p->phase;
     const float fracB = (fracA >= 0.5f) ? fracA - 0.5f : fracA + 0.5f;

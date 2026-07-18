@@ -92,6 +92,41 @@ int main(void)
         }
     }
 
+    /* ENVELOPED MATERIAL (the adversarial blind spot): a tremolo tone. The old
+     * acc/ein ranking picked QUIET lags and dug ~30 dB level holes; the NCC^2
+     * ranking must keep the de-glitched output level within a whisker of the
+     * plain shifter's. Compare windowed RMS floor across grains. */
+    {
+        delay_line_t d; pitchshift_t p;
+        for (int mode = 0; mode < 2; mode++) {
+            dl_init(&d, buf, BUFLEN); dl_clear(&d);
+            ps_init(&p, W, BASE); ps_set_ratio(&p, 0.794f);
+            float ph = 0.0f, w = (float)(TWO_PI) * 330.0f / FS;
+            for (int n = 0; n < N; n++) {
+                float env = 0.55f + 0.45f * sinf((float)TWO_PI * 3.0f * (float)n / FS);
+                dl_write(&d, env * sinf(ph));
+                ph += w; if (ph >= (float)TWO_PI) ph -= (float)TWO_PI;
+                if (mode) ps_service(&p, &d);
+                outb[n] = ps_process(&p, &d, DL_INTERP_HERMITE);
+            }
+            /* min windowed RMS after settle (a level hole would crater this) */
+            double minr = 1e9;
+            for (int a2 = A; a2 + 1024 <= N; a2 += 512) {
+                double s2 = 0.0;
+                for (int n = a2; n < a2 + 1024; n++) s2 += (double)outb[n]*outb[n];
+                double r2 = sqrt(s2 / 1024.0);
+                if (r2 < minr) minr = r2;
+            }
+            static double plainf = 0.0;
+            if (mode == 0) plainf = minr;
+            else {
+                printf("    tremolo RMS floor: plain=%.4f deglitch=%.4f\n", plainf, minr);
+                ck("no level holes on enveloped material", minr > plainf * 0.7);
+                ck("tremolo floors are sane (nonzero)", plainf > 0.001 && minr > 0.001);
+            }
+        }
+    }
+
     /* splice continuity must be preserved with offsets in play */
     run(outb, N, 0.917f, W, 1);
     float mx = 0.0f;
