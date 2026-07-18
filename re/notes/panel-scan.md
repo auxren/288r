@@ -40,9 +40,19 @@ PC12 (0x1000) = DATA    PC10 (0x400) = CLOCK    PA15 (0x8000) = LATCH
 Shift 24 bits MSB-first (data on PC12, rising edge on PC10), then pulse PA15 to latch. Source is a
 per-column word `*(0x20000054 + col*4)`. Implemented: `bsp_panel_out(bits24)`.
 
-The 24 output bits drive **the LEDs + the DIP-matrix column-select lines**, and *likely* also the
-**4051 mux enable** and possibly the **codec reset** (see §4). Which bits are the 5 LEDs is **[BENCH]**
-— shift a walking-1 pattern and watch the panel.
+**The 8 column words are constants recovered from the image `.data`** (flash `0x8006c88`→RAM
+`0x20000000`; verified — same block holds `delay_ram_length=0x16120`, `bank_A=0xD0000000`,
+`bank_B=0xD0360000`):
+```
+col0..7 = 0x000000, 0x111111, 0x222222, 0x333333, 0x444444, 0x555555, 0x666666, 0x777777
+```
+So the 595 is NOT a one-hot column strobe — it drives a **6×3-bit address sweep**: the 24 outputs are
+six nibbles, each low-3 bits carrying the column index 0..7 (nibble MSBs = bits 3,7,11,15,19,23 stay 0).
+Reads as **6 mux/DIP banks × 8 channels = 48 inputs** (≈ the 36 trimmers + sliders/pots count; the "many
+4051s"). Key safety point: **no 595 bit is held HIGH across the scan**, so the codec-reset line is *not* a
+hold-high 595 output in this path (it's a GPIO or one of the always-0 nibble-MSB bits). LED drive is a
+*separate* shift (find its routine, or a walking-1) — that + the physical LED→bit map is the only real
+**[BENCH]** left on the 595.
 
 ## 3. Analog controls — 4051 mux → ADC3/PF8, and SPI2
 - **Multiplier CV + knob = SPI2 external ADC** (`sub_ecc`): CS=PB12, SCK=PB13, MISO=PB14. Two reads,
