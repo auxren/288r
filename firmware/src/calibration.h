@@ -32,4 +32,11 @@ int    cal_load(calibration_t *c, const uint8_t *blob, size_t len);  /* 1 = load
 /* Map a raw ADC reading through a [lo,hi] span to [0,1], clamped. hi<=lo -> 0. */
 float  cal_map01(uint16_t lo, uint16_t hi, uint16_t raw);
 
+/* Multiplier-knob panel-legend curve: raw ADC -> panel multiplier (0.4..1.6 at
+ * x1), piecewise-linear through anchors MEASURED ON THE UNIT against the printed
+ * marks (owner point-by-point session, 2026-07-18). Clamped at the end stops. */
+float  cal_knob_panel_mult(uint16_t raw);
+/* Same curve normalized to [0,1] ((mult-0.4)/1.2) — drop-in for the control law. */
+float  cal_knob01(uint16_t raw);
+
 #endif /* CALIBRATION_H */

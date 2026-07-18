@@ -30,3 +30,36 @@ float cal_map01(uint16_t lo, uint16_t hi, uint16_t raw)
     if (raw >= hi) return 1.0f;
     return (float)(raw - lo) / (float)(hi - lo);
 }
+
+/* Panel-legend anchors, measured mark-by-mark on the unit (2026-07-18): the pot
+ * taper is NOT linear against the print (a linear map misreads 0.6 as ~0.57).
+ * Jitter during capture was <=2 counts; medians of 30 samples per mark. */
+static const struct { uint16_t raw; float mult; } k_knob_anchor[] = {
+    {    0, 0.4f },   /* CCW stop  */
+    {  566, 0.6f },
+    { 1409, 0.8f },
+    { 2054, 1.0f },   /* noon      */
+    { 2635, 1.2f },
+    { 3329, 1.4f },
+    { 4094, 1.6f },   /* CW stop   */
+};
+#define KNOB_ANCHORS (sizeof k_knob_anchor / sizeof k_knob_anchor[0])
+
+float cal_knob_panel_mult(uint16_t raw)
+{
+    if (raw <= k_knob_anchor[0].raw) return k_knob_anchor[0].mult;
+    for (unsigned i = 1; i < KNOB_ANCHORS; i++) {
+        if (raw <= k_knob_anchor[i].raw) {
+            float span = (float)(k_knob_anchor[i].raw - k_knob_anchor[i-1].raw);
+            float frac = (float)(raw - k_knob_anchor[i-1].raw) / span;
+            return k_knob_anchor[i-1].mult
+                 + frac * (k_knob_anchor[i].mult - k_knob_anchor[i-1].mult);
+        }
+    }
+    return k_knob_anchor[KNOB_ANCHORS - 1].mult;
+}
+
+float cal_knob01(uint16_t raw)
+{
+    return (cal_knob_panel_mult(raw) - 0.4f) * (1.0f / 1.2f);
+}

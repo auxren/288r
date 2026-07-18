@@ -381,10 +381,11 @@ int main(void)
             bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0(CV), [1]=ch1(knob) */
             uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
             uint32_t knob_raw = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
-            /* stretch the knob's measured usable span to true 0..1 (full-CCW read
-             * ~644 raw = 16%% of travel dead) */
-            uint32_t knob = (uint32_t)(cal_map01(KNOB_ADC_LO, KNOB_ADC_HI,
-                                                 (uint16_t)knob_raw) * 4095.0f);
+            /* panel-legend knob curve (owner mark-by-mark cal 2026-07-18): the
+             * printed 0.4/0.6/0.8/1.0/1.2/1.4/1.6 marks read exactly true.
+             * (Replaces the KNOB_ADC_LO/HI span stretch — the old 620 floor no
+             * longer matches the hardware and ate the bottom fifth of travel.) */
+            uint32_t knob = (uint32_t)(cal_knob01((uint16_t)knob_raw) * 4095.0f);
             int32_t  raw;
             /* attenuverter filter runs in BOTH modes (adversarial-verify find:
              * updating it only in the TIME branch left the Pitch-CV dead until
