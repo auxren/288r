@@ -41,8 +41,8 @@ int main(void)
     panel_decode(0x1FFF & ~BIT(9), &p);      ck("bit9=0 (10=1) -> cycle 2", p.cycle == 2);
     panel_decode(0x1FFF, &p);                ck("both high -> cycle 1", p.cycle == 1);
     ck("cycle_factor(center) == 0.5", panel_cycle_factor(&p) == 0.5f);
-    panel_decode(0x1FFF & ~BIT(9), &p);      ck("bit9-low end -> 1.0", panel_cycle_factor(&p) == 1.0f);
-    panel_decode(0x1FFF & ~BIT(10), &p);     ck("bit10-low end -> 0.25", panel_cycle_factor(&p) == 0.25f);
+    panel_decode(0x1FFF & ~BIT(9), &p);      ck("SHORT (bit9 low) -> 0.25", panel_cycle_factor(&p) == 0.25f);
+    panel_decode(0x1FFF & ~BIT(10), &p);     ck("FULL (bit10 low) -> 1.0", panel_cycle_factor(&p) == 1.0f);
 
     /* red WRITE/RECIRC momentary: bits 11/12 active-low */
     panel_decode(0x1FFF, &p);                ck("idle -> no transport press", !p.write_trig && !p.recirc_trig);

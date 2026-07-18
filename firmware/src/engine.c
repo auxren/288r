@@ -76,3 +76,14 @@ float engine_process(engine_t *e, float input, float time_raw01)
 
 void engine_write(engine_t *e)  { transport_begin_write(&e->xport, e->dl.wpos); }
 void engine_recirc(engine_t *e) { transport_begin_recirc(&e->xport, e->dl.wpos); }
+
+void engine_recirc_window(engine_t *e, uint32_t window)
+{
+    if (window < 2u) window = 2u;
+    if (window > e->dl.len - 4u) window = e->dl.len - 4u;
+    uint32_t head = e->dl.wpos;
+    uint32_t start = (head >= window) ? head - window : head + e->dl.len - window;
+    e->xport.mode = XP_RECIRC;
+    e->xport.loop_start = start;
+    e->xport.loop_end = head;
+}

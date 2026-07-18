@@ -56,5 +56,8 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
 /* Transport control (driven by panel/pulse layer). */
 void  engine_write(engine_t *e);    /* enter WRITE at current head          */
 void  engine_recirc(engine_t *e);   /* enter RECIRC, capture loop window     */
+/* Enter RECIRC looping exactly the last `window` samples (the stock semantics:
+ * "recirc loops the buffer at one of three cycle lengths"). */
+void  engine_recirc_window(engine_t *e, uint32_t window);
 
 #endif /* ENGINE_H */

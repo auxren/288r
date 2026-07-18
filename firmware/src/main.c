@@ -246,18 +246,22 @@ int main(void)
          * — live dump) and that DC-loads the control-surface analog. ~100 Hz is
          * still 15x the stock rate; the one-pole + audio-rate tap slew keep the
          * multiplier smooth. */
-        if ((scan_div++ & 0x3Fu) == 0u) {
+        /* FAST control path (every 4th pass ~1.5 kHz): the knob/CV must update
+         * quickly or the delay time steps (zipper — release-test 2.1). The CV is
+         * BIPOLAR around mid-scale (the panel's -/+ attenuverter): signed offset. */
+        if ((scan_div & 0x3u) == 0u) {
             bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0(CV), [1]=ch1(knob) */
             uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
             uint32_t knob = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
-            uint32_t raw  = knob + cv;
-            if (raw > 4095u) raw = 4095u;
-            mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.3f;
+            int32_t  raw  = (int32_t)knob + ((int32_t)cv - 2048);
+            if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
+            mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.02f;
             g_time_raw01 = pin_update(&g_mult_pin, mult_filt);
             g_dbg_panel.spi_cv = (uint16_t)cv;
             g_dbg_panel.spi_knob = (uint16_t)knob;
             g_dbg_panel.mult = mult_filt;
-
+        }
+        if ((scan_div++ & 0x3Fu) == 0u) {
             panel_ctl_t pc;
             uint16_t sw = bsp_panel_switches_read();
             panel_decode(sw, &pc);
@@ -294,16 +298,20 @@ int main(void)
 
             if (pc.automode == 1) {
                 /* DELAY mode: continuous write; manual punches still honored */
-                if (rc_edge)      { engine_recirc(&g_engine); }
+                if (rc_edge)      { engine_recirc_window(&g_engine,
+                                        (uint32_t)g_engine.taps.base_delay); }
                 else if (wr_edge || (g_lp_state != LP_LOOP &&
                                      !transport_should_write(&g_engine.xport)))
                                   { engine_write(&g_engine); }
                 if (transport_should_write(&g_engine.xport)) {
                     g_lp_state = LP_READY;
-                    bsp_panel_ind(1, 0); bsp_panel_ind(3, 1); bsp_panel_ind(2, 1);
+                    /* WRITE: write LED on, recirc + ready off (PA1/PA7/PA8 map
+                     * pin-forced + owner-named) */
+                    bsp_panel_ind(1, 0); bsp_panel_ind(2, 1); bsp_panel_ind(3, 1);
                 } else {
-                    g_lp_state = LP_LOOP;   /* loop: ready + PA7 indicators   */
-                    bsp_panel_ind(1, 1); bsp_panel_ind(3, 0); bsp_panel_ind(2, 0);
+                    g_lp_state = LP_LOOP;
+                    /* RECIRC: recirc LED on; ready blips at each loop wrap */
+                    bsp_panel_ind(1, 1); bsp_panel_ind(2, 0);
                 }
             } else {
                 /* LOOPER/auto mode (red switch center) */
@@ -316,20 +324,20 @@ int main(void)
                         engine_write(&g_engine);
                         g_lp_state = LP_WRITE;
                     }
-                    bsp_panel_ind(1, 1); bsp_panel_ind(3, 0);   /* ready LED */
+                    bsp_panel_ind(1, 1); bsp_panel_ind(2, 1); bsp_panel_ind(3, 0); /* READY LED (PA8) */
                     break;
                 case LP_WRITE: {
                     uint32_t written = (g_engine.dl.wpos >= g_lp_start)
                                      ? g_engine.dl.wpos - g_lp_start
                                      : g_engine.dl.wpos + DELAY_LEN - g_lp_start;
                     if (written >= cyc || rc_edge) {       /* cycle done / punch-out */
-                        engine_recirc(&g_engine);
+                        engine_recirc_window(&g_engine, cyc);
                         g_lp_state = LP_LOOP;
                     } else if (wr_edge) {                  /* restart the take       */
                         g_lp_start = g_engine.dl.wpos;
                         engine_write(&g_engine);
                     }
-                    bsp_panel_ind(1, 0); bsp_panel_ind(3, 1);   /* write LED */
+                    bsp_panel_ind(1, 0); bsp_panel_ind(2, 1); bsp_panel_ind(3, 1); /* write LED */
                     break; }
                 default: /* LP_LOOP */
                     if (wr_edge) {                         /* punch a new take       */
@@ -337,7 +345,7 @@ int main(void)
                         engine_write(&g_engine);
                         g_lp_state = LP_WRITE;
                     }
-                    bsp_panel_ind(1, 1); bsp_panel_ind(3, 0);   /* ready (looping) */
+                    bsp_panel_ind(1, 1); bsp_panel_ind(2, 0);   /* recirc LED (looping) */
                     break;
                 }
             }
@@ -349,9 +357,9 @@ int main(void)
                 if (g_engine.dl.wpos < g_prev_wpos) g_eoc_blink = 6;
             }
             g_prev_wpos = g_engine.dl.wpos;
-            if (g_eoc_blink) { bsp_panel_ind(3, 0); bsp_panel_ind(2, 0); g_eoc_blink--; }
-            else if (!transport_should_write(&g_engine.xport)) {
-                bsp_panel_ind(3, 1); bsp_panel_ind(2, 1);
+            if (g_eoc_blink) { bsp_panel_ind(3, 0); g_eoc_blink--; }
+            else if (!transport_should_write(&g_engine.xport) && g_lp_state == LP_LOOP) {
+                bsp_panel_ind(3, 1);
             }
             if (g_twinkle) {                     /* saved! — twinkle everything */
                 int ph = (g_twinkle >> 2) & 1;
