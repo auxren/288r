@@ -19,6 +19,8 @@
 #include "audio_io.h"
 #include "led.h"
 #include "panel_ctl.h"
+#include "preset_store.h"
+#include "chord.h"
 #include <stdint.h>
 
 /* Live panel scan (74HC165). Input-only, so acting on a mis-decoded bit can't drop
@@ -31,6 +33,14 @@
  * engine in RECIRC = no input passthrough. [BENCH] confirm the SW14/SW16 bits +
  * polarity (runbook step B), then enable. */
 #define PANEL_TRANSPORT_ENABLE 0
+
+/* Savable presets (Option A: capture-live). A/B/C/D recall a tap pattern from flash;
+ * holding both momentaries ~2 s snapshots the current pattern into the selected slot.
+ * Requires PANEL_SCAN_ENABLE. GATED OFF until the F429 internal-flash backend replaces
+ * the RAM placeholder (flash_preset.c) and the SW14/SW16 bits are confirmed [BENCH].
+ * With it OFF, A/B/C/D use the code-exact panel_preset_phase (A-ramp) as before. */
+#define PRESET_ENABLE 0
+#define PRESET_SAVE_HOLD_TICKS 200u   /* ~2 s at the ~10 ms scan cadence */
 
 /* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
  * chain carries the DIP column-select and (likely) the 4051 mux-enable / codec
@@ -55,6 +65,10 @@ static unsigned    g_led_step;
 
 #if PANEL_SCAN_ENABLE && PANEL_TRANSPORT_ENABLE
 static xport_trig_t g_xtrig;
+#endif
+
+#if PANEL_SCAN_ENABLE && PRESET_ENABLE
+static chord_t g_save_chord;
 #endif
 
 extern volatile uint8_t g_spi_raw[2][3];   /* SPI2 control-ADC raw bytes (ch0,ch1) */
@@ -156,6 +170,10 @@ int main(void)
 #if PANEL_TRANSPORT_ENABLE
     transport_trig_init(&g_xtrig);
 #endif
+#if PRESET_ENABLE
+    chord_init(&g_save_chord);
+    prev_preset = 0xFFu;    /* force a load of the selected slot on the first scan */
+#endif
 #endif
 
     float mult_filt = 0.5f;
@@ -203,10 +221,36 @@ int main(void)
             }
             if (pc.preset != prev_preset) {
                 float ph[NUM_TAPS];
+#if PRESET_ENABLE
+                /* Recall the selected slot from flash (capture-live presets). Blank/
+                 * invalid slot -> the A-ramp default. mult recall would pin the knob
+                 * (control-pinning) once the multiplier reads through the panel too. */
+                preset_scene_t sc;
+                (void)preset_load(bsp_preset_flash_base(), pc.preset, &sc);
+                for (int i = 0; i < NUM_TAPS; i++) ph[i] = sc.phase[i];
+#else
                 (void)panel_preset_phase(pc.preset, ph);
+#endif
                 taps_set_phase(&g_engine.taps, ph);
                 prev_preset = pc.preset;
             }
+#if PRESET_ENABLE
+            /* Save chord: hold BOTH momentaries ~2 s -> snapshot the current tap
+             * pattern + mult into the selected slot. Distinct from the momentary
+             * WRITE/RECIRC taps, so it won't fire by accident. */
+            if (chord_update(&g_save_chord, pc.write_trig && pc.recirc_trig,
+                             PRESET_SAVE_HOLD_TICKS)) {
+                preset_scene_t sc;
+                for (int i = 0; i < NUM_TAPS; i++) sc.phase[i] = g_engine.taps.phase[i];
+                sc.mult      = g_time_raw01;
+                sc.octave    = (uint8_t)prev_octave;
+                sc.mute_mask = 0;
+                sc.rsvd[0] = sc.rsvd[1] = 0;
+                uint8_t blob[PRESET_SLOT_BYTES];
+                unsigned n = (unsigned)preset_pack(&sc, blob);
+                (void)bsp_preset_flash_write(pc.preset, blob, n);
+            }
+#endif
         }
 #endif
 

@@ -43,6 +43,13 @@ void     bsp_mult_init(void);
 uint16_t bsp_mult_read(void);        /* raw 12-bit */
 float    bsp_mult_read01(void);      /* 0..1 */
 
+/* Preset persistence backend (F429 internal-flash EEPROM emulation). [BENCH]: the
+ * default flash_preset.c is a RAM placeholder -- works within a power cycle so the
+ * save-chord + recall UX validates on hardware, but is NOT reboot-persistent. Swap
+ * for real sector erase+program (reads stay memory-mapped). */
+const uint8_t *bsp_preset_flash_base(void);                          /* store base  */
+int  bsp_preset_flash_write(unsigned slot, const uint8_t *blob, unsigned len);
+
 /* Bit-banged panel I/O (74HC165 switches in, 74HC595 LEDs/columns out). */
 void     bsp_panel_init(void);            /* both chains (165 in + 595 out)      */
 void     bsp_panel_switches_init(void);   /* 165 input pins ONLY (no 595 output) */
