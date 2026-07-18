@@ -53,6 +53,10 @@
  * drives the crossfaded-tap pitch voice at 1.2 V/oct (Buchla) instead of the
  * delay-time multiplier; the multiplier stays knob-only. Voice sums into ch0. */
 #define PITCH_VOICE_ENABLE 1
+
+/* Stock attenuverter control law — OFF until the parked ADC3 channel is proven
+ * (observe g_dbg_panel.trim[0] while turning the c.v. knob). */
+#define CTRL_ATTENUVERTER_LAW 0
 #define PRESET_SAVE_HOLD_BLOCKS 6000u   /* 2 s (measured block clock ~3 kHz) */
 
 /* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
@@ -310,26 +314,29 @@ int main(void)
             int32_t  raw;
 #if PITCH_VOICE_ENABLE
             if (g_pitch_mode) {
-                /* STOCK pitch mode: delay pinned (knob no longer scales time);
-                 * knob = pitch-down depth (max -1.07 st FULL / -4.75 st SHORT);
-                 * our addition: the CV shifts bipolar at 1.2 V/oct on top. */
-                raw = 0;                                   /* taps -> range min  */
-                float depth = (float)knob * (1.0f / 4095.0f);
-                float span  = (pc_cycle_now == 2) ? 0.24f : 0.06f;
+                /* STABLE pitch mode: the delay keeps behaving EXACTLY like TIME
+                 * mode (no pinned taps, no repurposed knob — those stock behaviors
+                 * return once the control channels are bench-proven); the pitch
+                 * voice rides on top, CV-driven at 1.2 V/oct, transparent at 0. */
                 float volts = ((float)cv - PITCH_CV_CENTER) * PITCH_CV_VOLTS_PER_CODE;
-                float ratio = (1.0f - depth * span) * fm_exp2f(volts * (1.0f/1.2f));
-                pv_set_ratio(&g_pv, ratio);
-            } else
+                pv_set_ratio(&g_pv, fm_exp2f(volts * (1.0f / 1.2f)));
+            }
 #endif
+            /* PROVEN-STABLE law: additive knob+cv (the state the owner verified).
+             * The stock attenuverter law (mult = knob + cv*att from the parked
+             * ADC3 channel) is gated OFF until that channel is PROVEN live —
+             * we only OBSERVE it into dbg below. */
             {
-                /* STOCK control law (decompile-proven): the parked ADC3 channel is
-                 * the c.v. ATTENUVERTER (⊖/⊕ knob): multiplier = knob + cv*att,
-                 * att in [-1,+1] with a small center deadzone. */
                 uint16_t a3 = bsp_mult_read();
                 g_att_filt += ((float)a3 - g_att_filt) * 0.05f;
+                g_dbg_panel.trim[0] = (uint16_t)g_att_filt;   /* observe only */
+#if CTRL_ATTENUVERTER_LAW
                 float att = (g_att_filt - 2047.0f) * (1.0f / 2048.0f);
                 if (att > -0.05f && att < 0.05f) att = 0.0f;
                 raw = (int32_t)knob + (int32_t)((float)cv * att);
+#else
+                raw = (int32_t)knob + (int32_t)cv;
+#endif
             }
             if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
             mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.01f;
