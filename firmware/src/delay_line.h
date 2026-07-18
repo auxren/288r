@@ -18,7 +18,13 @@
 
 typedef enum {
     DL_INTERP_LINEAR = 0,   /* 2-point: cheapest, ~0.5 dB HF droop near Nyquist   */
-    DL_INTERP_HERMITE,      /* 4-point cubic: better HF, still stateless          */
+    DL_INTERP_HERMITE,      /* 4-point cubic: better HF, still stateless.
+                               MEASURED (moving-tap chorus sweep @96 k, vs exact
+                               resampler): -67 dB @5 k, -48 dB @10 k, -35 dB @15 k
+                               — effectively transparent under modulation. The
+                               once-planned all-pass option measured 30+ dB WORSE
+                               while sweeping (recursive-state transients; it is
+                               flat-magnitude only for STATIC taps) — rejected.  */
 } dl_interp_t;
 
 typedef struct {
