@@ -93,3 +93,22 @@ cycle at **full**; rear DIPs all OFF.
 
 **When 1–8 are all ☑:** tell me "sections 1–8 pass" (plus any notes from 9–10) and I
 tag `v0.9` — CI builds and publishes the release with the one-click flasher zip.
+
+
+---
+
+# v2 addendum — features landed after the first pass (bench 6 / overnight)
+
+- ☐ **A1 attenuverter (⊖/⊕):** CV patched: knob **center = CV ignored**, CW = CV adds
+  to delay time, CCW = CV **subtracts/inverts**. (Stock law, channel proven live.)
+- ☐ **A2 pitch mode (stock semantics):** TIME/pitch → pitch: delay pins to minimum;
+  the **multiplier knob now sets pitch-down depth** (up to ~1 st FULL / ~5 st SHORT
+  cycle); CV bends bipolar at 1.2 V/oct scaled by the attenuverter. Knob CCW + no
+  CV = transparent. Flip back to TIME: knob returns to delay-time duty.
+- ☐ **A3 store end (hold):** black switch at **store end**, red AUTO at center:
+  play a phrase → it records one cycle → **write+ready LEDs together** (held, delay
+  keeps running) → hit **recirc** any time later → the held window loops.
+- ☐ **A4 pulse inputs:** a trigger/gate into the **write** or **recirc** pulse jacks
+  acts exactly like the momentary; a pulse into **arm** starts a next-sound capture.
+- ☐ **A5 persistence re-check:** presets (now also capturing ×1/×2 + cycle) survive
+  a power cycle; recalled switch values yield to the physical switch on first move.

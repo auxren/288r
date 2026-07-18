@@ -68,6 +68,17 @@ better engine; add new features/controls/modulation only *after* the clone is na
   Codec is actually a **CS42448** (ID 0x04). Rear DIPs: PB11=x10 extend (stock table exactly x10),
   PB10=rear sw2. NOTE: preset persistence is still the RAM placeholder — lost at power-off until the
   internal-flash backend lands.
+- **Bench session 6 + ultracode dig (2026-07-18, overnight): FEATURE-COMPLETE against the stock.**
+  An 8-agent adversarially-verified decompile dig settled the full architecture (see the
+  panel-scan.md CORRECTIONS addendum): boot-once matrix scan + 595 parked at 0x777777; the parked
+  ADC3 channel = the c.v. ATTENUVERTER (proven live by an owner knob sweep) → stock control law
+  `mult = knob + cv×att` ENABLED; stock pitch mode implemented on our crossfaded shifter (knob =
+  pitch-down depth −1.07/−4.75 st, delay pinned, CV bipolar 1.2 V/oct through the same attenuverter
+  — and the dig found a STOCK BUG: their path-B pitch sweep is dead code); store beg./end = bit-6
+  latching policy (store-end → HOLD the window, RECIRC recalls it); pulse input jacks PG10/11/12
+  (write/recirc/arm) wired; pitch branch formally merged. Preset flash persistence live (sector 3).
+  A stray patched CV was the source of a whole evening of "worse" reports — the STABILITY rule now
+  in force: proven core locked, inferences gated until wire-proven. `make test` = 21 suites.
 - **Still [BENCH]:** the coarse multiplier KNOB (SPI2 ch1 read — CV works, knob TBD); config-DIP sw1/sw2
   GPIO pins (`SW_*_MAPPED=0` until traced); the 595 bit→LED/column/mux/codec-reset map (run the walk);
   the tap-time DIP matrix + phase/mute + transport momentaries; TIME/pitch mode switch + Pitch-CV cal;
