@@ -116,4 +116,10 @@
 #define PITCH_CV_CENTER      0.0f
 #define PITCH_CV_VOLTS_PER_CODE (5.0f / 4095.0f)
 
+/* Multiplier knob usable ADC span (measured live: full-CCW reads ~644, full-CW
+ * ~4094). cal_map01 stretches it to true 0..1 so the whole travel counts. The
+ * power-up calibration routine will replace these with per-unit values. */
+#define KNOB_ADC_LO          620u
+#define KNOB_ADC_HI          4080u
+
 #endif /* BSP_BOARD_H */

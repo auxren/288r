@@ -23,6 +23,7 @@
 #include "chord.h"
 #include "pitch_voice.h"
 #include "fast_math.h"
+#include "calibration.h"
 #include "storage.h"
 #include <stdint.h>
 
@@ -310,7 +311,11 @@ int main(void)
         {
             bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0(CV), [1]=ch1(knob) */
             uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
-            uint32_t knob = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
+            uint32_t knob_raw = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
+            /* stretch the knob's measured usable span to true 0..1 (full-CCW read
+             * ~644 raw = 16%% of travel dead) */
+            uint32_t knob = (uint32_t)(cal_map01(KNOB_ADC_LO, KNOB_ADC_HI,
+                                                 (uint16_t)knob_raw) * 4095.0f);
             int32_t  raw;
 #if PITCH_VOICE_ENABLE
             if (g_pitch_mode) {
