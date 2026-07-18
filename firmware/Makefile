@@ -19,7 +19,7 @@ CROSS   ?= arm-none-eabi-
 CC_HOST ?= cc
 
 MCU     := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
-CFLAGS  := -std=c11 -Wall -Wextra -O2 -ffreestanding -ffunction-sections -fdata-sections
+CFLAGS  := -std=c11 -Wall -Wextra -O3 -flto -ffreestanding -ffunction-sections -fdata-sections
 INC     := -Isrc
 
 # LIB_SRC = the hardware-independent, host-testable engine (excludes the app main).
@@ -68,7 +68,7 @@ FW_OBJ  := $(addprefix $(FWDIR)/,$(notdir $(FW_CSRC:.c=.o))) \
 vpath %.c src src/bsp $(CMSIS_DEV)/Source
 vpath %.s $(CMSIS_DEV)/Source
 
-FW_LDFLAGS := $(MCU) -nostdlib -T STM32F429.ld -Wl,--gc-sections -Wl,-Map=$(FWDIR)/$(TARGET).map
+FW_LDFLAGS := $(MCU) -O3 -flto -nostdlib -T STM32F429.ld -Wl,--gc-sections -Wl,-Map=$(FWDIR)/$(TARGET).map
 
 firmware: $(FWDIR)/$(TARGET).hex $(FWDIR)/$(TARGET).bin
 	@$(CROSS)size $(FWDIR)/$(TARGET).elf

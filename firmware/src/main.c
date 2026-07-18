@@ -74,7 +74,11 @@
 #define DELAY_LEN  (SDRAM_BYTES / sizeof(float))     /* 2,097,152 samples */
 static float delay_buf[DELAY_LEN] __attribute__((section(".sdram")));
 
-static engine_t g_engine;
+/* Hot DSP state in CCM (0x10000000): zero-wait-state core-coupled RAM, saves
+ * SRAM-bus contention with the SAI DMA. CCM is CPU-only — safe here because the
+ * DMA touches only the SAI buffers (SRAM) and the SDRAM delay memory. The .ccmram
+ * section is NOLOAD: main() zeroes [_sccm,_eccm) before any init runs. */
+static engine_t g_engine __attribute__((section(".ccmram")));
 
 #if PANEL_LED_ENABLE
 static led_state_t g_leds;
@@ -114,7 +118,7 @@ static uint32_t g_lp_end = 0;    /* store-end: head when the window completed */
 static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next onset triggers */
 
 #if PITCH_VOICE_ENABLE
-static pitch_voice_t g_pv;
+static pitch_voice_t g_pv __attribute__((section(".ccmram")));
 static volatile uint8_t g_pitch_mode = 0;   /* tick-written, ISR-read */
 static volatile uint8_t pc_cycle_now = 1;   /* cycle pos for pitch span   */
 #endif
@@ -210,6 +214,10 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 
 int main(void)
 {
+    /* zero the NOLOAD CCM section before anything touches it */
+    extern uint32_t _sccm, _eccm;
+    for (uint32_t *p = &_sccm; p < &_eccm; ++p) *p = 0u;
+
     bsp_clock_init();
     bsp_sdram_init();
     bsp_panel_gpio_init();

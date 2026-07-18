@@ -77,6 +77,7 @@ void taps_update(taps_t *t, float time_mult)
     for (int i = 0; i < NUM_TAPS; i++) {
         int64_t target_q = t->tgt_q[i];
         int64_t delta_q  = target_q - t->cur_q[i];
+        if (delta_q == 0) continue;               /* lane settled: skip      */
 
         /* one-pole slew in Q32.32. The delta is converted to float only for the
          * slew multiply — a small delta converts losslessly, so unlike the float

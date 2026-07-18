@@ -120,7 +120,22 @@ float dl_vintage_quantize(float x, int bits, float dither)
 static float read_frac_at_index(const float *b, uint32_t len, uint32_t a0,
                                 float f, dl_interp_t interp)
 {
-    /* a0 = buffer index of the sample at integer delay k (delay k+1 is a0-1) */
+    /* a0 = buffer index of the sample at integer delay k (delay k+1 is a0-1).
+     * FAST PATH: when the 4-sample stencil a0-2..a0+1 cannot wrap (the ~always
+     * case on a 2M buffer), index directly — the wrap() branches cost real
+     * cycles at 3M fetches/s, and sequential addressing keeps SDRAM row hits. */
+    if (a0 >= 2u && a0 + 1u < len) {
+        const float x2  = b[a0 - 2];
+        const float x1  = b[a0 - 1];
+        const float x0  = b[a0];
+        if (interp == DL_INTERP_LINEAR)
+            return x0 + (x1 - x0) * f;
+        const float xm1 = b[a0 + 1];
+        const float c1 = 0.5f * (x1 - xm1);
+        const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+        const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+        return ((c3 * f + c2) * f + c1) * f + x0;
+    }
     const float x0 = b[a0];
     const float x1 = b[wrap((int32_t)a0 - 1, len)];
 
