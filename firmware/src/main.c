@@ -113,6 +113,11 @@ static volatile float g_sens_env[2] = { 0.0f, 0.0f };
  * which the LED stays lit, + an event counter for SWD verification. */
 static volatile uint32_t g_clip_until = 0;
 static volatile uint8_t  g_clip_count = 0;
+
+/* SWD-driven DAC-slot solo for slot->slider mapping at the bench: -1 = normal,
+ * 0..7 = only that TDM slot carries audio (others muted). Written over SWD
+ * (mwb &g_dac_solo N); strip with the rest of the g_dbg scaffolding. */
+volatile int8_t g_dac_solo __attribute__((used)) = -1;
 static float g_att_filt = 2047.0f;   /* c.v. attenuverter (ADC3 parked ch) */
 
 /* Audio-block clock (ISR-incremented, ~6000/s): the loop-pass "tick" rate varies
@@ -251,6 +256,9 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         for (unsigned s = 0; s < TDM_SLOTS; ++s)
             out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
                                      ? audio_f_to_out(chan[s]) : 0;
+        if (g_dac_solo >= 0)                       /* bench slot->slider mapping */
+            for (unsigned s = 0; s < TDM_SLOTS; ++s)
+                if (s != (unsigned)g_dac_solo) out[f * TDM_SLOTS + s] = 0;
     }
     g_blocks++;
 #if LED_INPUT_CLIP_MODE
