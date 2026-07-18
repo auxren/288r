@@ -52,6 +52,20 @@ float fm_exp2f(float x)
     return p * v.fl;
 }
 
+float fm_sqrtf(float x)
+{
+    if (x <= 0.0f) return 0.0f;
+#if defined(__arm__) || defined(__ARM_EABI__)
+    float r;
+    __asm ("vsqrt.f32 %0, %1" : "=t"(r) : "t"(x));
+    return r;
+#else
+    /* hosted: one Newton step off the bit-trick seed is plenty for fade gains,
+     * but just defer to the compiler builtin (links against libm's sqrtf). */
+    return __builtin_sqrtf(x);
+#endif
+}
+
 /* On the bare-metal target, satisfy pitch_shift.c's standard-name calls with no
  * libm. On a hosted build these names come from libm (linked with -lm), so do NOT
  * define them here or the link would see duplicates. */
@@ -59,4 +73,5 @@ float fm_exp2f(float x)
 float sinf(float x)  { return fm_sinf(x); }
 float fabsf(float x) { return fm_fabsf(x); }
 float cosf(float x)  { return fm_cosf(x); }
+float sqrtf(float x) { return fm_sqrtf(x); }
 #endif

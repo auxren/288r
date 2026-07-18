@@ -137,6 +137,38 @@ int main(void)
     printf("    max sample step with deglitch = %.4f\n", mx);
     ck("no clicks with aligned splices", mx < 0.35f);
 
+    /* DEEP-WPOS regression (SDRAM-scale positions): dl_read computes
+     * (float)wpos - delay, which quantizes to 1/4 sample once wpos is in the
+     * millions — periodic phase jitter on the pitch voice's ramping taps.
+     * ps_read (int+frac via dl_read_frac) must keep purity identical whether
+     * wpos is shallow or ~4M deep. Uses a 4M-sample host buffer. */
+    {
+        enum { DEEPLEN = 1 << 22 };            /* 4,194,304 samples */
+        static float deepbuf[DEEPLEN];
+        delay_line_t d; dl_init(&d, deepbuf, DEEPLEN); dl_clear(&d);
+        pitchshift_t p; ps_init(&p, W, BASE); ps_set_ratio(&p, 0.794f);
+        float ph = 0.0f, w = (float)(TWO_PI) * F_IN / FS;
+        /* park the write pointer deep: fill nearly the whole buffer */
+        for (int n = 0; n < DEEPLEN - 4096; n++) {
+            dl_write(&d, sinf(ph));
+            ph += w; if (ph >= (float)TWO_PI) ph -= (float)TWO_PI;
+        }
+        for (int n = 0; n < N; n++) {          /* now shift at deep wpos */
+            dl_write(&d, sinf(ph));
+            ph += w; if (ph >= (float)TWO_PI) ph -= (float)TWO_PI;
+            ps_service(&p, &d);
+            outb[n] = ps_process(&p, &d, DL_INTERP_HERMITE);
+        }
+        double fexp = 0.794 * F_IN;
+        double fd = domf(outb, A, N, fexp);
+        double pd = purity(outb, A, N, fd);
+        /* shallow reference from the earlier loop was ~>=0.97; gate absolute */
+        printf("    deep-wpos (%d): freq err %.2f%%, purity %.3f\n",
+               DEEPLEN - 4096, fabs(fd - fexp) / fexp * 100.0, pd);
+        ck("deep wpos: frequency still tracks (<2%)", fabs(fd - fexp) / fexp * 100.0 < 2.0);
+        ck("deep wpos: purity survives (>0.95)", pd > 0.95);
+    }
+
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

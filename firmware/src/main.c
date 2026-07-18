@@ -136,6 +136,13 @@ static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next on
 
 #if PITCH_VOICE_ENABLE
 static pitch_voice_t g_pv __attribute__((section(".ccmram")));
+/* per-tap decorrelation of the shared pitch voice: distinct micro-delays
+ * (0..9 ms) so the 8 channels are never bit-identical — an inverted pair on
+ * the output mixer combs instead of CANCELLING (owner's phase test), and
+ * cross-channel AM coherence drops. Ring lives in CCM; zeroed at boot. */
+static float    g_pv_ring[1024] __attribute__((section(".ccmram")));
+static uint32_t g_pv_w = 0;
+static const uint16_t k_pv_decor[8] = { 0, 127, 251, 383, 509, 641, 769, 887 };
 static volatile uint8_t g_pitch_mode = 0;   /* tick-written, ISR-read */
 static volatile uint8_t pc_cycle_now = 1;   /* cycle pos for pitch span   */
 #endif
@@ -237,13 +244,15 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             float wet = dev * 50.0f; if (wet > 1.0f) wet = 1.0f;
             /* REPLACE, don't layer (stock: pitch-mode output IS the shifted
              * signal): the dry min-delay passthrough masked the voice — owner
-             * could not hear the shift at all. And ALL taps get the voice
-             * (stock sweeps the whole output; owner confirmed only slider 1 =
-             * tap 0 shifted). One shared voice, computed once — the taps are
-             * pinned to min delay in pitch mode so their dry outputs were
-             * near-identical anyway. Crossfade keeps ratio=1 transparent. */
-            for (unsigned pi = 0; pi < (unsigned)NUM_TAPS; ++pi)
-                chan[pi] = (1.0f - wet) * chan[pi] + (PITCH_VOICE_GAIN * wet) * y;
+             * could not hear the shift at all. ALL taps get the voice, each
+             * through its own micro-delay (see g_pv_ring) so channels stay
+             * decorrelated. Crossfade keeps ratio=1 transparent. */
+            g_pv_ring[g_pv_w & 1023u] = y;
+            for (unsigned pi = 0; pi < (unsigned)NUM_TAPS; ++pi) {
+                float yi = g_pv_ring[(g_pv_w - k_pv_decor[pi]) & 1023u];
+                chan[pi] = (1.0f - wet) * chan[pi] + (PITCH_VOICE_GAIN * wet) * yi;
+            }
+            g_pv_w++;
         }
 #endif
 #if LED_INPUT_CLIP_MODE
@@ -425,6 +434,12 @@ int main(void)
                  * report). The raw pot is physically smooth. */
                 float d01  = (float)knob_raw * (1.0f / 4094.0f);
                 if (d01 > 1.0f) d01 = 1.0f;
+                /* unity SNAP: bottom ~2% of travel = exactly no shift. Measured
+                 * on the owner's recording: knob "at CCW" parked the shifter at
+                 * -44 cents (a few % of residual travel), which beats against
+                 * the dry signal — audible AM. Snapped, ratio converges into
+                 * the PS_UNITY_EPS clean-bypass window. */
+                if (d01 < 0.02f) d01 = 0.0f;
                 float span = (pc_cycle_now == 2) ? 0.24f : 0.06f;
                 float att  = (g_att_filt - 2047.0f) * (1.0f / 2047.0f);
                 if (att > -0.05f && att < 0.05f) att = 0.0f;

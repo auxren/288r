@@ -17,6 +17,12 @@ typedef struct {
     float phase;    /* fracA accumulator in [0,1)                                */
     /* --- de-glitch (H949-style correlation-aligned splices) ---------------- */
     float off[2];    /* per-tap splice offsets (>=0, deeper into the past)       */
+    float rho[2];    /* per-tap splice coherence (NCC of the chosen offset, 0..1):
+                        drives the ADAPTIVE fade law — coherent grains fade
+                        amplitude-complementary (flat sum), incoherent grains
+                        fade power-complementary (flat power). Fixes the -3 dB
+                        mid-fade AM dip on unaligned material.                   */
+    volatile float pend_rho;  /* coherence for the NEXT wrap (same protocol)     */
     volatile float pend_off;  /* offset chosen by ps_service for the NEXT wrap   */
     volatile int   pend_tap;  /* which tap it is for (-1 = none). PROTOCOL:
                                  service writes pend_off, BARRIER, then pend_tap;

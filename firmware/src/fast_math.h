@@ -16,5 +16,6 @@ float fm_sinf(float x);    /* sin(x), |err| < ~1e-4 over several periods */
 float fm_cosf(float x);
 float fm_fabsf(float x);
 float fm_exp2f(float x);   /* 2^x, single precision, rel err < ~1e-4 for |x|<=32 */
+float fm_sqrtf(float x);   /* sqrt(x), x>=0 (VSQRT on the target); 0 for x<0 */
 
 #endif /* FAST_MATH_H */

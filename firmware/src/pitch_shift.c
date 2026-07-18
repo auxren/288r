@@ -2,8 +2,25 @@
 #include "pitch_shift.h"
 #include <math.h>
 
+/* the freestanding ARM build's math.h does not declare sqrtf (sinf/fabsf come
+ * through it fine); the definition is fast_math.c's VSQRT-backed sqrtf. A
+ * redundant identical declaration is harmless on the hosted build. */
+float sqrtf(float);
+
 #define PS_PI      3.14159265358979f
 #define PS_UNITY_EPS 1.0e-4f          /* |1-ratio| below this -> treat as bypass  */
+
+/* Exact-position read at a float DISTANCE: split into int+frac BEFORE the
+ * write pointer enters the math. dl_read() computes (float)wpos - delay, which
+ * quantizes to 1/4 sample once wpos is millions of samples into the SDRAM
+ * buffer — periodic phase jitter on this voice's continuously-ramping taps,
+ * and it re-quantizes the sub-sample splice offsets the correlator refines.
+ * The distance itself is < ~16k samples, so this split is exact to ~2^-10. */
+static inline float ps_read(const delay_line_t *d, float dist, dl_interp_t interp)
+{
+    uint32_t di = (uint32_t)dist;
+    return dl_read_frac(d, di, dist - (float)di, interp);
+}
 
 void ps_init(pitchshift_t *p, float window, float base)
 {
@@ -13,6 +30,12 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->phase  = 0.0f;
     p->off[0] = 0.0f;
     p->off[1] = 0.0f;
+    /* coherence prior = 1 (amplitude-complementary): before the first splice
+     * the two taps read overlapping content and ARE coherent; 0 here would
+     * put a +3 dB power-law bump on tones until the first service pass. */
+    p->rho[0] = 1.0f;
+    p->rho[1] = 1.0f;
+    p->pend_rho = 1.0f;
     p->pend_off = 0.0f;
     p->pend_tap = -1;
     p->next_tap = 0;
@@ -79,7 +102,7 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
     /* outgoing-window energy once (lag-independent) for the guards */
     float eb = 0.0f;
     for (int k = 0; k < PS_DEGLITCH_N; k += 2) {
-        float b = dl_read(d, dOut + (float)k, DL_INTERP_LINEAR);
+        float b = ps_read(d, dOut + (float)k, DL_INTERP_LINEAR);
         eb += b * b;
     }
     if (eb < 1.0e-7f) return;                      /* silence: keep offset 0 */
@@ -88,8 +111,8 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
     for (int lag = 0; lag < PS_DEGLITCH_MAXLAG; lag += 4) {   /* coarse grid */
         float acc = 0.0f, ein = 0.0f;
         for (int k = 0; k < PS_DEGLITCH_N; k += 2) {          /* decimate x2 */
-            float a = dl_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
-            float b = dl_read(d, dOut + (float)k, DL_INTERP_LINEAR);
+            float a = ps_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
+            float b = ps_read(d, dOut + (float)k, DL_INTERP_LINEAR);
             acc += a * b;
             ein += a * a;
         }
@@ -111,8 +134,8 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
             if (lag < 0 || lag >= PS_DEGLITCH_MAXLAG) continue;
             float acc = 0.0f, ein = 0.0f;
             for (int k = 0; k < PS_DEGLITCH_N; k += 2) {
-                float a = dl_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
-                float b = dl_read(d, dOut + (float)k, DL_INTERP_LINEAR);
+                float a = ps_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
+                float b = ps_read(d, dOut + (float)k, DL_INTERP_LINEAR);
                 acc += a * b;
                 ein += a * a;
             }
@@ -134,8 +157,13 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
     /* publish only if the wrap geometry is still the one we searched for
      * (the ISR may have consumed a wrap mid-search at large ratios) */
     if (p->next_tap != tap || p->pend_tap >= 0) return;
+    /* coherence of the chosen splice (NCC in 0..1): best = NCC^2 * eb */
+    float ncc2 = best / eb;
+    if (ncc2 < 0.0f) ncc2 = 0.0f;
+    if (ncc2 > 1.0f) ncc2 = 1.0f;
+    p->pend_rho = sqrtf(ncc2);
     p->pend_off = bestoff;
-    __asm volatile ("" ::: "memory");              /* order: off BEFORE tap  */
+    __asm volatile ("" ::: "memory");              /* order: rho/off BEFORE tap */
     p->pend_tap = tap;
 }
 
@@ -147,7 +175,7 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
        collapse to a single centered tap so unity is a clean delayed bypass.    */
     if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS) {
         p->pend_tap = -1;                    /* discard stale splice offsets */
-        return dl_read(d, p->base + 0.5f * W, interp);
+        return ps_read(d, p->base + 0.5f * W, interp);
     }
 
     const float fracA = p->phase;
@@ -157,8 +185,17 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
     const float wA = sA * sA;           /* sin^2(pi*fracA)          */
     const float wB = 1.0f - wA;         /* = sin^2(pi*fracB) exactly */
 
-    const float out = wA * dl_read(d, p->base + fracA * W + p->off[0], interp)
-                    + wB * dl_read(d, p->base + fracB * W + p->off[1], interp);
+    /* COHERENCE-ADAPTIVE fade law (fixes grain-rate AM, owner report):
+     * aligned grains (rho~1) sum coherently -> amplitude-complementary
+     * weights (wA+wB=1) are flat; UNALIGNED grains (rho~0) add in power ->
+     * amplitude-complementary dips -3 dB mid-fade. Blend toward
+     * power-complementary (sqrt) weights as coherence falls. */
+    const float c  = 0.5f * (p->rho[0] + p->rho[1]);
+    const float gA = wA + (1.0f - c) * (sqrtf(wA) - wA);
+    const float gB = wB + (1.0f - c) * (sqrtf(wB) - wB);
+
+    const float out = gA * ps_read(d, p->base + fracA * W + p->off[0], interp)
+                    + gB * ps_read(d, p->base + fracB * W + p->off[1], interp);
 
     /* advance: delay changes by (1 - ratio) samples per output sample          */
     float ph = p->phase + (1.0f - p->ratio) / W;
@@ -166,11 +203,13 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
        A wraps when phase crosses 1 (or 0 going down); B when phase crosses 0.5. */
     if (ph >= 1.0f || ph < 0.0f) {
         p->off[0] = (p->pend_tap == 0) ? p->pend_off : 0.0f;
+        p->rho[0] = (p->pend_tap == 0) ? p->pend_rho : 0.0f;
         p->pend_tap = -1; p->next_tap = 1;
     } else {
         int sideNew = (ph >= 0.5f), sideOld = (p->phase >= 0.5f);
         if (sideNew != sideOld) {                    /* B's frac wrapped */
             p->off[1] = (p->pend_tap == 1) ? p->pend_off : 0.0f;
+            p->rho[1] = (p->pend_tap == 1) ? p->pend_rho : 0.0f;
             p->pend_tap = -1; p->next_tap = 0;
         }
     }
