@@ -121,6 +121,10 @@ struct dbg_panel {
     uint8_t  write_trig;  /* polarity-corrected (pressed=1)       */
     uint8_t  recirc_trig; /* polarity-corrected (pressed=1)       */
     uint8_t  saved_blink; /* increments on each preset save        */
+    uint8_t  lp_state;    /* looper state READY/WRITE/LOOP         */
+    uint8_t  xp_mode;     /* transport 1=WRITE 2=RECIRC            */
+    uint8_t  env_q;       /* envelope x100                          */
+    uint8_t  eoc;         /* eoc blink counter (nonzero = blinking) */
     float    mult;        /* smoothed multiplier [0,1]            */
     float    base;        /* current taps base_delay (samples)    */
 };
@@ -249,13 +253,13 @@ int main(void)
         /* FAST control path (every 4th pass ~1.5 kHz): the knob/CV must update
          * quickly or the delay time steps (zipper — release-test 2.1). The CV is
          * BIPOLAR around mid-scale (the panel's -/+ attenuverter): signed offset. */
-        if ((scan_div & 0x3u) == 0u) {
+        {
             bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0(CV), [1]=ch1(knob) */
             uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
             uint32_t knob = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
             int32_t  raw  = (int32_t)knob + ((int32_t)cv - 2048);
             if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
-            mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.02f;
+            mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.01f;
             g_time_raw01 = pin_update(&g_mult_pin, mult_filt);
             g_dbg_panel.spi_cv = (uint16_t)cv;
             g_dbg_panel.spi_knob = (uint16_t)knob;
@@ -361,6 +365,10 @@ int main(void)
             else if (!transport_should_write(&g_engine.xport) && g_lp_state == LP_LOOP) {
                 bsp_panel_ind(3, 1);
             }
+            g_dbg_panel.lp_state = g_lp_state;
+            g_dbg_panel.xp_mode = (uint8_t)g_engine.xport.mode;
+            { float e100 = g_env * 100.0f; g_dbg_panel.env_q = (e100 > 255.0f) ? 255 : (uint8_t)e100; }
+            g_dbg_panel.eoc = g_eoc_blink;
             if (g_twinkle) {                     /* saved! — twinkle everything */
                 int ph = (g_twinkle >> 2) & 1;
                 bsp_panel_ind(0, ph); bsp_panel_ind(1, !ph);

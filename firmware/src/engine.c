@@ -86,4 +86,9 @@ void engine_recirc_window(engine_t *e, uint32_t window)
     e->xport.mode = XP_RECIRC;
     e->xport.loop_start = start;
     e->xport.loop_end = head;
+    /* snap the head INTO the window: leaving it on loop_end lets dl_advance_loop
+     * increment past the boundary and free-run the whole buffer (loop AUDIO was
+     * right — reads are window-mapped — but the head never wrapped, so no
+     * end-of-cycle events fired). */
+    e->dl.wpos = start;
 }
