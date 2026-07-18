@@ -272,7 +272,12 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
              * faded by |ratio-1| so pitch mode is transparent at zero CV. */
             float y = pv_process(&g_pv, &g_engine.dl, DL_INTERP_HERMITE);
             float dev = g_pv.ratio - 1.0f; if (dev < 0.0f) dev = -dev;
-            float wet = dev * 50.0f; if (wet > 1.0f) wet = 1.0f;
+            /* steep wet slope: full wet by 0.5% ratio deviation (~9 cents).
+             * The old 2% band let CV/attenuverter offsets PARK in a dry+shift
+             * partial mix whose slow beating read as a broken tremolo (owner:
+             * "weird stuff"); passing through the sliver during slews is
+             * inaudible, living in it is not. */
+            float wet = dev * 200.0f; if (wet > 1.0f) wet = 1.0f;
             /* REPLACE, don't layer (stock: pitch-mode output IS the shifted
              * signal). Dry leg for the unity-transition sliver = ONE tap-0
              * read (the taps sit at min delay in pitch mode; per-channel dry
