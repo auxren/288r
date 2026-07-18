@@ -17,17 +17,20 @@ Pulse PA4 to load the parallel inputs, then clock 13 bits MSB-first on PA5, samp
 
 | Bit(s) | Function |
 |---|---|
-| 0/1/2 | **A/B/C preset select** (`lookup_preset_tap_position` row) |
+| 0/1/2 | **preset A/B/C/D select — ACTIVE-LOW priority** bit0>bit1>bit2. In the tap-position lookup: `bit0=0`→ A = linear ramp `(tap+1)*20` (=20,40,..,160); `bit1=0`→ B = `preset_phase_table[tap+16]`; `bit2=0`→ C = `preset_phase_table[tap]`; none low → D = `preset_phase_table[tap+8]`. |
 | 3 | tap-target mode (phase×mult vs raw read) |
 | 4 | transport/mode gate (guards `transport_mode` 0x200000d0) |
 | 6 | **bank_B** (second delay buffer / recirc) |
 | 7, 8 | **transport triggers** (write/recirc entry — the momentary SW14/SW16 candidates); the code they gate retunes the SAI **PLL** (`RCC 0x40023888/8c`) + advances loop pointers |
-| 9/10 | octave/rate ×1/×2/×4 (also → PLL retune) |
+| 9/10 | **octave/rate ×1/×2/×4** — `get_mode_from_switches` (sub_1110): `if(!bit10) ×1; else if(!bit9) ×4; else ×2` (bit10 master). Also → PLL retune. |
 | 11, 12 | transport / loop-window control (write ptr `0x200000c4`, loop `0x200013c0`) |
 
 Confirms the stock coarse-delay scheme = **PLL octave retune** in the transport path (bits 7/8/9/10/11)
-— exactly what the fixed-rate + fractional-read rewrite eliminates. Full per-bit polarity is **[BENCH]**
-(toggle each switch, read `panel_switch_bits`). SHORT/FULL cycle, cal/preset, resolution are *separate*
+— exactly what the fixed-rate + fractional-read rewrite eliminates. The preset + octave **decode logic is
+code-exact** (replicated in `firmware/src/panel_ctl.c` — no bench guessing needed; we drive the same 165
+on PA4/5/6 so the switch→bit mapping is identical). Only the **B/C/D preset phase VALUES** are pending —
+the stock fills `preset_phase_table` from the physical preset-DIP matrix (`scan_all_preset_dipswitches`,
+sub_3488), so those need the matrix scan. SHORT/FULL cycle, cal/preset, resolution are *separate*
 direct-GPIO reads (PB11, PB10, PD11/12) already in `gpio_panel.c`.
 
 ## 2. LED / column output — 74HC595  (`sub_3408`, 24 bits/column)

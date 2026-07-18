@@ -17,18 +17,20 @@ int main(void)
 {
     panel_ctl_t p;
 
-    /* preset select: bit0=A, bit1=B, bit2=C, priority C>B>A */
-    panel_decode(0u, &p);         ck("no preset bit -> A (0)", p.preset == 0);
-    panel_decode(BIT(1), &p);     ck("bit1 -> preset B (1)",   p.preset == 1);
-    panel_decode(BIT(2), &p);     ck("bit2 -> preset C (2)",   p.preset == 2);
-    panel_decode(BIT(1)|BIT(2), &p); ck("B+C -> C wins (priority)", p.preset == 2);
+    /* preset select — ACTIVE-LOW priority bit0>bit1>bit2 (A/B/C/D), matching the
+     * stock sub_4310(0..2) tap-position lookup. */
+    panel_decode(0u, &p);                     ck("bit0=0 -> A (0)", p.preset == 0);
+    panel_decode(BIT(0), &p);                 ck("bit0=1,bit1=0 -> B (1)", p.preset == 1);
+    panel_decode(BIT(0)|BIT(1), &p);          ck("bits0,1=1,bit2=0 -> C (2)", p.preset == 2);
+    panel_decode(BIT(0)|BIT(1)|BIT(2), &p);   ck("bits0,1,2=1 -> D (3)", p.preset == 3);
+    panel_decode(0u, &p);                     ck("bit0=0 wins over bit1/2 (priority)", p.preset == 0);
 
-    /* octave from bits 9/10: 00->1, 01->2, 10->4, 11->4 */
-    panel_decode(0u, &p);                 ck("octave 00 -> x1", p.octave == 1);
-    panel_decode(BIT(9), &p);             ck("octave 01 -> x2", p.octave == 2);
-    panel_decode(BIT(10), &p);            ck("octave 10 -> x4", p.octave == 4);
-    panel_decode(BIT(9)|BIT(10), &p);     ck("octave 11 -> x4", p.octave == 4);
-    ck("octave_factor(x4) == 4.0", panel_octave_factor(&p) == 4.0f);
+    /* octave — sub_1110 logic: bit10 master. (10=0)->x1, (10=1,9=0)->x4, (10=1,9=1)->x2 */
+    panel_decode(0u, &p);                 ck("bit10=0 -> x1", p.octave == 1);
+    panel_decode(BIT(9), &p);             ck("bit10=0 (bit9 set) still x1", p.octave == 1);
+    panel_decode(BIT(10), &p);            ck("bit10=1,bit9=0 -> x4", p.octave == 4);
+    panel_decode(BIT(10)|BIT(9), &p);     ck("bit10=1,bit9=1 -> x2", p.octave == 2);
+    ck("octave_factor(x2) == 2.0", panel_octave_factor(&p) == 2.0f);
 
     /* discrete flags */
     panel_decode(BIT(6), &p); ck("bit6 -> bank_b",       p.bank_b == 1);
