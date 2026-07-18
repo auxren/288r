@@ -15,6 +15,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->in_gain = 1.0f;
     e->auto_correction = 0.0f;
     e->vintage_bits = 0;
+    e->skip_tap_reads = 0;
     e->dith = 0x1234567u;                 /* dither PRNG seed */
     transport_begin_write(&e->xport, e->dl.wpos);
 }
@@ -59,6 +60,13 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
         dl_write(&e->dl, x);
     } else {
         dl_advance_loop(&e->dl, ls, le);
+    }
+
+    /* pitch mode at full wet: the crossfade discards the tap outputs, so skip
+     * the 8 SDRAM reads entirely (control, write, recirc all ran above). */
+    if (e->skip_tap_reads) {
+        for (int i = 0; i < NUM_TAPS; i++) chan[i] = 0.0f;
+        return 0.0f;
     }
 
     /* 3. read the 8 taps (loop-aware in RECIRC) — exact int+frac path, so the

@@ -254,6 +254,15 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             g_sens_env[1] += (s2 - g_sens_env[1]) * 0.002f;
         }
         float chan[NUM_TAPS];
+#if PITCH_VOICE_ENABLE
+        /* pitch mode NEVER uses the engine's 8 tap outputs (full wet discards
+         * them; the transition sliver's dry leg is a single tap-0 read below)
+         * — skip the 8 SDRAM reads that pushed the ISR into DMA overrun (the
+         * owner's "glitches": 104-110% of block budget, torn output blocks
+         * that the external feedback patch then recirculated). Write/recirc/
+         * control still run inside the engine. */
+        g_engine.skip_tap_reads = g_pitch_mode ? 1 : 0;
+#endif
         (void)engine_process_multi(&g_engine, x, t, chan);
 #if PITCH_VOICE_ENABLE
         if (g_pitch_mode) {
@@ -265,14 +274,20 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             float dev = g_pv.ratio - 1.0f; if (dev < 0.0f) dev = -dev;
             float wet = dev * 50.0f; if (wet > 1.0f) wet = 1.0f;
             /* REPLACE, don't layer (stock: pitch-mode output IS the shifted
-             * signal): the dry min-delay passthrough masked the voice — owner
-             * could not hear the shift at all. ALL taps get the voice, each
-             * through its own micro-delay (see g_pv_ring) so channels stay
-             * decorrelated. Crossfade keeps ratio=1 transparent. */
+             * signal). Dry leg for the unity-transition sliver = ONE tap-0
+             * read (the taps sit at min delay in pitch mode; per-channel dry
+             * diversity there isn't worth 7 more SDRAM reads of ISR budget). */
+            float dry = 0.0f;
+            if (wet < 0.999f) {
+                uint32_t d_int; float d_frac;
+                taps_delay_frac(&g_engine.taps, 0, &d_int, &d_frac);
+                if (d_int < 1) { d_int = 1; d_frac = 0.0f; }
+                dry = dl_read_frac(&g_engine.dl, d_int, d_frac, DL_INTERP_HERMITE);
+            }
             g_pv_ring[g_pv_w & 1023u] = y;
             for (unsigned pi = 0; pi < (unsigned)NUM_TAPS; ++pi) {
                 float yi = g_pv_ring[(g_pv_w - k_pv_decor[pi]) & 1023u];
-                chan[pi] = (1.0f - wet) * chan[pi] + (PITCH_VOICE_GAIN * wet) * yi;
+                chan[pi] = (1.0f - wet) * dry + (PITCH_VOICE_GAIN * wet) * yi;
             }
             g_pv_w++;
         }

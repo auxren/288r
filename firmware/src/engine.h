@@ -31,6 +31,13 @@ typedef struct {
     float        in_gain;
     float        auto_correction;  /* AUTO CONTROL term (placeholder; calibrate) */
     int          vintage_bits;     /* 0 = full precision, else e.g. 12 (vintage)  */
+    int          skip_tap_reads;   /* 1 = run control+write/recirc but skip the 8
+                                      tap reads (chan[]=0, return 0). Set by the
+                                      pitch mode at full wet, where the crossfade
+                                      multiplies the taps by zero anyway — the 8
+                                      SDRAM reads were ~30% of the ISR budget and
+                                      pushed pitch mode into DMA overrun (the
+                                      owner's "glitches"). */
     uint32_t     dith;             /* TPDF dither PRNG state (vintage modes)      */
 } engine_t;
 
