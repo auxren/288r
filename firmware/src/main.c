@@ -46,7 +46,7 @@
  * the selected slot. Backend is flash_preset.c — currently the RAM placeholder, so
  * saves last until power-off ([BENCH]: swap in internal-flash for reboot-proof). */
 #define PRESET_ENABLE 1
-#define PRESET_SAVE_HOLD_TICKS 80u    /* ~2 s (measured: ~40 ticks/s) */
+#define PRESET_SAVE_HOLD_BLOCKS 6000u   /* 2 s (measured block clock ~3 kHz) */
 
 /* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
  * chain carries the DIP column-select and (likely) the 4051 mux-enable / codec
@@ -86,6 +86,10 @@ static volatile float g_time_raw01 = 0.5f;
  * the looper's auto-write trigger. */
 static volatile float g_env = 0.0f;
 
+/* Audio-block clock (ISR-incremented, ~6000/s): the loop-pass "tick" rate varies
+ * with superloop load, so anything timed (save-hold, blinks) counts blocks. */
+static volatile uint32_t g_blocks = 0;
+
 /* Looper auto-state (community-documented stock behavior): the red AUTO CONTROL
  * switch (165 bit 4) selects DELAY ("all sounds": continuous write, out of
  * "ready") vs LOOPER (center: sit READY; signal presence auto-starts a WRITE of
@@ -95,9 +99,10 @@ static uint8_t  g_lp_state = LP_READY;
 static uint32_t g_lp_start = 0;
 static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next onset triggers */
 
-/* preset-saved feedback: while >0 the scan tick twinkles all indicator LEDs and
- * the ISR holds off its own PA0/PA11 writes. */
-static volatile uint8_t g_twinkle = 0;
+/* preset-saved feedback: until this block count, the scan tick sparkles the
+ * indicator LEDs pseudo-randomly and the ISR holds off its PA0/PA11 writes. */
+static volatile uint32_t g_twinkle_until = 0;
+static uint32_t g_twinkle_rng = 0x12345678u;
 
 /* multiplier control-pinning: preset recall pins the SAVED multiplier until the
  * physical knob sweeps through it (storage.h pin_*) — no value jumps. */
@@ -146,7 +151,7 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
          * A per-sample 1-bit envelope PWM: loud input -> more low-time -> brighter.
          * (PA0/1/7/8/11 are DSP-driven indicator outputs, NOT mux addresses — the
          * old panel-scan.md label was wrong.) */
-        if (!g_twinkle) bsp_panel_strobe(x > 0.5f ? 0 : 1);
+        if (g_blocks >= g_twinkle_until) bsp_panel_strobe(x > 0.5f ? 0 : 1);
         /* input envelope for the AUTO-CONTROL/presence LED (PA11): stock compares
          * an envelope accumulator (0x200000bc) against 0x200000 = 0.25 FS. */
         {
@@ -159,9 +164,10 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
                                      ? audio_f_to_out(chan[s]) : 0;
     }
+    g_blocks++;
     /* AUTO/presence LED (PA11), stock threshold: envelope > 0x200000/0x800000
      * = 0.25 FS -> LOW (LED on). Per block is plenty (stock: per main-loop). */
-    if (!g_twinkle) bsp_panel_ind(4, (g_env > 0.25f) ? 0 : 1);
+    if (g_blocks >= g_twinkle_until) bsp_panel_ind(4, (g_env > 0.25f) ? 0 : 1);
 }
 
 int main(void)
@@ -375,12 +381,12 @@ int main(void)
             g_dbg_panel.xp_mode = (uint8_t)g_engine.xport.mode;
             { float e100 = g_env * 100.0f; g_dbg_panel.env_q = (e100 > 255.0f) ? 255 : (uint8_t)e100; }
             g_dbg_panel.eoc = g_eoc_blink;
-            if (g_twinkle) {                     /* saved! — twinkle everything */
-                int ph = (g_twinkle >> 2) & 1;
-                bsp_panel_ind(0, ph); bsp_panel_ind(1, !ph);
-                bsp_panel_ind(2, ph); bsp_panel_ind(3, !ph);
-                bsp_panel_ind(4, ph);
-                g_twinkle--;
+            if (g_blocks < g_twinkle_until) {    /* saved! — random sparkle, 1 s */
+                g_twinkle_rng ^= g_twinkle_rng << 13;   /* xorshift32 */
+                g_twinkle_rng ^= g_twinkle_rng >> 17;
+                g_twinkle_rng ^= g_twinkle_rng << 5;
+                for (unsigned i = 0; i < 5u; i++)
+                    bsp_panel_ind(i, (int)((g_twinkle_rng >> i) & 1u));
             }
             /* base window = boot base x octave (x1/x2) x cycle (3-way, live) */
             unsigned oc_key = (unsigned)pc.octave | ((unsigned)pc.cycle << 4);
@@ -417,8 +423,12 @@ int main(void)
             /* Save chord: hold BOTH momentaries ~2 s -> snapshot the current tap
              * pattern + mult into the selected slot. Distinct from the momentary
              * WRITE/RECIRC taps, so it won't fire by accident. */
-            if (chord_update(&g_save_chord, (int)wr_act,
-                             PRESET_SAVE_HOLD_TICKS)) {
+            static uint32_t save_press_at = 0; static uint8_t save_latched = 0;
+            if (!wr_act) { save_press_at = 0; save_latched = 0; }
+            else if (!save_press_at) save_press_at = g_blocks ? g_blocks : 1u;
+            if (wr_act && !save_latched && save_press_at &&
+                (g_blocks - save_press_at) > PRESET_SAVE_HOLD_BLOCKS) {
+                save_latched = 1;
                 preset_scene_t sc;
                 for (int i = 0; i < NUM_TAPS; i++) sc.phase[i] = g_engine.taps.phase[i];
                 sc.mult      = g_time_raw01;
@@ -429,7 +439,8 @@ int main(void)
                 unsigned n = (unsigned)preset_pack(&sc, blob);
                 (void)bsp_preset_flash_write(pc.preset, blob, n);
                 g_dbg_panel.saved_blink++;      /* SWD-visible save confirmation */
-                g_twinkle = 80;                 /* ~0.8 s LED twinkle           */
+                g_twinkle_until = g_blocks + 3000u;   /* 1 s sparkle          */
+                g_twinkle_rng ^= g_blocks;            /* reseed per save       */
             }
 #endif
         }
