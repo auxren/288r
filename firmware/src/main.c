@@ -314,13 +314,19 @@ int main(void)
             int32_t  raw;
 #if PITCH_VOICE_ENABLE
             if (g_pitch_mode) {
-                /* STABLE pitch mode: the delay keeps behaving EXACTLY like TIME
-                 * mode (no pinned taps, no repurposed knob — those stock behaviors
-                 * return once the control channels are bench-proven); the pitch
-                 * voice rides on top, CV-driven at 1.2 V/oct, transparent at 0. */
-                float volts = ((float)cv - PITCH_CV_CENTER) * PITCH_CV_VOLTS_PER_CODE;
-                pv_set_ratio(&g_pv, fm_exp2f(volts * (1.0f / 1.2f)));
-            }
+                /* STOCK pitch mode (decompile-verified, adversarially checked):
+                 * delay pinned to range minimum (knob no longer scales time);
+                 * knob = pitch-down depth, span -1.07 st FULL / -4.75 st SHORT;
+                 * the CV adds bipolar 1.2 V/oct through the SAME attenuverter. */
+                raw = 0;                                   /* taps -> range min  */
+                float depth = (float)knob * (1.0f / 4095.0f);
+                float span  = (pc_cycle_now == 2) ? 0.24f : 0.06f;
+                float att   = (g_att_filt - 2047.0f) * (1.0f / 2047.0f);
+                if (att > -0.05f && att < 0.05f) att = 0.0f;
+                float volts = (float)cv * PITCH_CV_VOLTS_PER_CODE * att;
+                float ratio = (1.0f - depth * span) * fm_exp2f(volts * (1.0f/1.2f));
+                pv_set_ratio(&g_pv, ratio);
+            } else
 #endif
             /* PROVEN-STABLE law: additive knob+cv (the state the owner verified).
              * The stock attenuverter law (mult = knob + cv*att from the parked
