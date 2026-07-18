@@ -32,6 +32,7 @@ int  bsp_sw_full_cycle(void);    /* SHORT/FULL     */
 unsigned bsp_resolution_bits(void); /* 12/16/20 from the 2-bit selector */
 int  bsp_sw_delay_extend(void);     /* config DIP sw1: x10 delay/looper ([BENCH] pin) */
 int  bsp_sw_bandwidth_limit(void);  /* config DIP sw2: 11025 Hz limit ([BENCH] pin)   */
+int  bsp_pulse_in(unsigned which);  /* pulse jacks: 0=write(PG10) 1=recirc(PG11) 2=arm(PG12), active-high */
 
 /* Control-surface ADC over SPI2 (sliders/pots). */
 void     bsp_spi2_adc_init(void);

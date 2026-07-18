@@ -358,7 +358,9 @@ int main(void)
             /* Momentaries PROVEN: bits 11/12 active-low, decode gives pressed=1.
              * No idle-capture needed. */
             (void)scan_first; (void)idle_w;
-            unsigned wr_act = pc.write_trig, rc_act = pc.recirc_trig;
+            unsigned wr_act = pc.write_trig | (unsigned)bsp_pulse_in(0);
+            unsigned rc_act = pc.recirc_trig | (unsigned)bsp_pulse_in(1);
+            unsigned arm_in = (unsigned)bsp_pulse_in(2);
             g_dbg_panel.sw165 = sw;
             g_dbg_panel.preset = pc.preset;
             g_dbg_panel.octave = pc.octave;
@@ -409,7 +411,7 @@ int main(void)
                      * onset — so entering READY mid-signal holds READY (LED on)
                      * until the sound stops and restarts. */
                     if (g_env < 0.10f) g_lp_armed = 1;
-                    if ((g_lp_armed && g_env > 0.25f) || wr_edge || pc.automode == 2) {
+                    if ((g_lp_armed && g_env > 0.25f) || wr_edge || pc.automode == 2 || arm_in) {
                         g_lp_start = g_engine.dl.wpos;
                         engine_write(&g_engine);
                         g_lp_state = LP_WRITE;

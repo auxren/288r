@@ -64,6 +64,16 @@ int bsp_sw_delay_extend(void)
 #endif
 }
 
+/* Pulse-input jacks (stock sub_3ccc, decompile-verified): PG10 = WRITE pulse in,
+ * PG11 = RECIRC pulse in, PG12 = arm/"next sound" pulse in. ACTIVE-HIGH (the
+ * stock acts when the jack reads 1). GPIOG clock is enabled by sdram_init. */
+int bsp_pulse_in(unsigned which)   /* 0=write 1=recirc 2=arm */
+{
+    static const uint8_t pin[3] = { 10u, 11u, 12u };
+    if (which > 2u) return 0;
+    return (GPIOG->IDR >> pin[which]) & 1u;
+}
+
 int bsp_sw_bandwidth_limit(void)
 {
 #if SW_BANDWIDTH_MAPPED
