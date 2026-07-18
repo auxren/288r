@@ -44,11 +44,20 @@ uint32_t ab_capacity_samples(const audio_buffer_t *ab);
 /* Push one sample (float, normalized [-1,1]; clamped) and advance the head. */
 void  ab_write(audio_buffer_t *ab, float x);
 
-/* Fractional reads — identical semantics to delay_line, returning float. */
+/* Fractional reads — identical semantics to delay_line, returning float.
+ * Same PRECISION NOTE as dl_read(): the float32 position quantizes the fraction
+ * at SDRAM sizes (1/8 sample @2M, 1/4 @4M). Use ab_read_frac for the engine. */
 float ab_read(const audio_buffer_t *ab, float delay, dl_interp_t interp);
 float ab_read_at(const audio_buffer_t *ab, float index, dl_interp_t interp);
 float ab_read_loop(const audio_buffer_t *ab, float delay,
                    uint32_t loop_start, uint32_t loop_end, dl_interp_t interp);
+
+/* Exact int+frac reads — identical semantics to dl_read_frac/dl_read_loop_frac:
+ * full interpolation precision at any buffer size / head position. */
+float ab_read_frac(const audio_buffer_t *ab, uint32_t d_int, float d_frac,
+                   dl_interp_t interp);
+float ab_read_loop_frac(const audio_buffer_t *ab, uint32_t d_int, float d_frac,
+                        uint32_t loop_start, uint32_t loop_end, dl_interp_t interp);
 void  ab_advance_loop(audio_buffer_t *ab, uint32_t loop_start, uint32_t loop_end);
 
 #endif /* AUDIO_BUFFER_H */

@@ -103,3 +103,69 @@ float dl_vintage_quantize(float x, int bits, float dither)
     q = (q >= 0.0f) ? (float)(int32_t)(q + 0.5f) : (float)(int32_t)(q - 0.5f);
     return q / steps;
 }
+
+/* ---- exact int+frac read path (SDRAM-size safe) ----------------------------
+ *
+ * dl_read()'s float32 position loses fractional resolution as wpos grows (ULP
+ * = 1/8 sample at 2M, 1/4 at 4M — i.e. exactly the smooth-modulation artifact
+ * this engine exists to kill, reintroduced by the 8 MB SDRAM). Here the integer
+ * part of the tap is pure uint32 arithmetic and the fraction is carried
+ * separately, so precision is independent of buffer size and head position.
+ *
+ * The interpolation is evaluated in DELAY space: x0 = sample at integer delay
+ * k, x1 at k+1 (one sample older), fraction f toward x1, outer Hermite
+ * neighbours at k-1 / k+2. Catmull-Rom is direction-symmetric, so this is the
+ * same polynomial dl_read_at evaluates in index space. Kernel kept in lockstep
+ * with dl_read_at / audio_buffer.c. */
+static float read_frac_at_index(const float *b, uint32_t len, uint32_t a0,
+                                float f, dl_interp_t interp)
+{
+    /* a0 = buffer index of the sample at integer delay k (delay k+1 is a0-1) */
+    const float x0 = b[a0];
+    const float x1 = b[wrap((int32_t)a0 - 1, len)];
+
+    if (interp == DL_INTERP_LINEAR)
+        return x0 + (x1 - x0) * f;
+
+    const float xm1 = b[wrap((int32_t)a0 + 1, len)];   /* delay k-1 (newer)  */
+    const float x2  = b[wrap((int32_t)a0 - 2, len)];   /* delay k+2 (older)  */
+
+    const float c0 = x0;
+    const float c1 = 0.5f * (x1 - xm1);
+    const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+    const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+    return ((c3 * f + c2) * f + c1) * f + c0;
+}
+
+float dl_read_frac(const delay_line_t *d, uint32_t d_int, float d_frac,
+                   dl_interp_t interp)
+{
+    const uint32_t len = d->len;
+    if (d_int >= len) d_int %= len;
+    const uint32_t a0 = (d_int <= d->wpos) ? d->wpos - d_int
+                                           : d->wpos + len - d_int;
+    return read_frac_at_index(d->buf, len, a0, d_frac, interp);
+}
+
+float dl_read_loop_frac(const delay_line_t *d, uint32_t d_int, float d_frac,
+                        uint32_t loop_start, uint32_t loop_end, dl_interp_t interp)
+{
+    const uint32_t len = d->len;
+    uint32_t span = (loop_end >= loop_start) ? loop_end - loop_start
+                                             : len - (loop_start - loop_end);
+    if (span < 1) return dl_read_frac(d, d_int, d_frac, interp);
+
+    uint32_t pos = (loop_start <= d->wpos) ? d->wpos - loop_start
+                                           : d->wpos + len - loop_start;
+    if (pos >= span) pos %= span;            /* head inside the window       */
+
+    uint32_t k = d_int;
+    if (k >= span) k %= span;                /* tap wraps within the window  */
+    uint32_t r0 = (k <= pos) ? pos - k : pos + span - k;
+
+    uint32_t a0 = loop_start + r0;           /* absolute buffer index        */
+    if (a0 >= len) a0 -= len;
+    /* neighbours fetch whole-buffer adjacent samples, matching dl_read_loop's
+     * seam behaviour (faithful-clone question — see notes) */
+    return read_frac_at_index(d->buf, len, a0, d_frac, interp);
+}

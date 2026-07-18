@@ -37,8 +37,21 @@ void dl_clear(delay_line_t *d);
 void dl_write(delay_line_t *d, float x);
 
 /* Read a tap `delay` samples behind the write head (delay may be fractional,
- * 1.0 .. len-2). `interp` selects the interpolation kernel. */
+ * 1.0 .. len-2). `interp` selects the interpolation kernel.
+ *
+ * PRECISION NOTE: the read position is computed as a single float32, whose ULP
+ * grows with the write-head index — at 2M samples (a ~20 s SDRAM bank @96 kHz)
+ * the fraction quantizes to 1/8 sample, at 4M to 1/4. Fine for host tests and
+ * short buffers; for SDRAM-sized buffers use dl_read_frac(), which is exact at
+ * any length. */
 float dl_read(const delay_line_t *d, float delay, dl_interp_t interp);
+
+/* Read a tap (d_int + d_frac) samples behind the write head, d_frac in [0,1).
+ * Integer index arithmetic + exact fraction: full interpolation precision at
+ * ANY buffer size / head position (use this for the SDRAM engine path).
+ * Valid d_int: 1 .. len-2 (linear), 1 .. len-3 (Hermite). */
+float dl_read_frac(const delay_line_t *d, uint32_t d_int, float d_frac,
+                   dl_interp_t interp);
 
 /* Read at an absolute fractional buffer index (wrapped mod len). */
 float dl_read_at(const delay_line_t *d, float index, dl_interp_t interp);
@@ -48,6 +61,11 @@ float dl_read_at(const delay_line_t *d, float index, dl_interp_t interp);
  * Used in RECIRC/looper mode. */
 float dl_read_loop(const delay_line_t *d, float delay,
                    uint32_t loop_start, uint32_t loop_end, dl_interp_t interp);
+
+/* Loop/recirc read with the exact int+frac tap position (see dl_read_frac).
+ * Same window semantics as dl_read_loop. */
+float dl_read_loop_frac(const delay_line_t *d, uint32_t d_int, float d_frac,
+                        uint32_t loop_start, uint32_t loop_end, dl_interp_t interp);
 
 /* Advance the head one sample within a loop window (RECIRC playback, no write):
  * head++ ; if it passes loop_end it snaps back to loop_start. */

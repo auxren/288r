@@ -52,13 +52,15 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
         dl_advance_loop(&e->dl, ls, le);
     }
 
-    /* 3. read the 8 taps (loop-aware in RECIRC) */
+    /* 3. read the 8 taps (loop-aware in RECIRC) — exact int+frac path, so the
+     * fraction survives at SDRAM buffer sizes (see dl_read_frac) */
     float taps[NUM_TAPS];
     for (int i = 0; i < NUM_TAPS; i++) {
-        float delay = e->taps.cur[i];
-        if (delay < 1.0f) delay = 1.0f;   /* keep off the write head */
-        taps[i] = recirc ? dl_read_loop(&e->dl, delay, ls, le, e->interp)
-                         : dl_read(&e->dl, delay, e->interp);
+        uint32_t d_int; float d_frac;
+        taps_delay_frac(&e->taps, i, &d_int, &d_frac);
+        if (d_int < 1) { d_int = 1; d_frac = 0.0f; }   /* keep off the write head */
+        taps[i] = recirc ? dl_read_loop_frac(&e->dl, d_int, d_frac, ls, le, e->interp)
+                         : dl_read_frac(&e->dl, d_int, d_frac, e->interp);
     }
 
     /* 4. mix: 8 per-tap DAC channels + the summed ("mixed") output */

@@ -7,6 +7,10 @@
 #include <stdio.h>
 #include <math.h>
 
+#ifndef M_PI                     /* strict -std=c11 glibc doesn't define it */
+#define M_PI 3.14159265358979323846
+#endif
+
 #define FS 48000.0f
 
 static int fails = 0;

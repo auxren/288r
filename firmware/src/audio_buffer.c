@@ -140,3 +140,58 @@ void ab_advance_loop(audio_buffer_t *ab, uint32_t loop_start, uint32_t loop_end)
     if (p == loop_end) p = loop_start;
     ab->wpos = p;
 }
+
+/* ---- exact int+frac read path (SDRAM-size safe) ----------------------------
+ * Mirrors delay_line.c's dl_read_frac / dl_read_loop_frac (kept in lockstep);
+ * see the comment there. Evaluated in delay space over ab_load(). */
+static float ab_read_frac_at_index(const audio_buffer_t *ab, uint32_t a0,
+                                   float f, dl_interp_t interp)
+{
+    const uint32_t len = ab->len;
+
+    const float x0 = ab_load(ab, a0);
+    const float x1 = ab_load(ab, wrap((int32_t)a0 - 1, len));
+
+    if (interp == DL_INTERP_LINEAR)
+        return x0 + (x1 - x0) * f;
+
+    const float xm1 = ab_load(ab, wrap((int32_t)a0 + 1, len));  /* delay k-1 */
+    const float x2  = ab_load(ab, wrap((int32_t)a0 - 2, len));  /* delay k+2 */
+
+    const float c0 = x0;
+    const float c1 = 0.5f * (x1 - xm1);
+    const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+    const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+    return ((c3 * f + c2) * f + c1) * f + c0;
+}
+
+float ab_read_frac(const audio_buffer_t *ab, uint32_t d_int, float d_frac,
+                   dl_interp_t interp)
+{
+    const uint32_t len = ab->len;
+    if (d_int >= len) d_int %= len;
+    const uint32_t a0 = (d_int <= ab->wpos) ? ab->wpos - d_int
+                                            : ab->wpos + len - d_int;
+    return ab_read_frac_at_index(ab, a0, d_frac, interp);
+}
+
+float ab_read_loop_frac(const audio_buffer_t *ab, uint32_t d_int, float d_frac,
+                        uint32_t loop_start, uint32_t loop_end, dl_interp_t interp)
+{
+    const uint32_t len = ab->len;
+    uint32_t span = (loop_end >= loop_start) ? loop_end - loop_start
+                                             : len - (loop_start - loop_end);
+    if (span < 1) return ab_read_frac(ab, d_int, d_frac, interp);
+
+    uint32_t pos = (loop_start <= ab->wpos) ? ab->wpos - loop_start
+                                            : ab->wpos + len - loop_start;
+    if (pos >= span) pos %= span;
+
+    uint32_t k = d_int;
+    if (k >= span) k %= span;
+    uint32_t r0 = (k <= pos) ? pos - k : pos + span - k;
+
+    uint32_t a0 = loop_start + r0;
+    if (a0 >= len) a0 -= len;
+    return ab_read_frac_at_index(ab, a0, d_frac, interp);
+}

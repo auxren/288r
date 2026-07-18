@@ -23,8 +23,10 @@
 #define PHASE_FULLSCALE 160.0f
 
 typedef struct {
-    float phase[NUM_TAPS];   /* per-tap PHASE SELECT position, 0..PHASE_FULLSCALE */
-    float cur[NUM_TAPS];     /* current (slewing) delay in samples                */
+    float   phase[NUM_TAPS]; /* per-tap PHASE SELECT position, 0..PHASE_FULLSCALE */
+    int64_t cur_q[NUM_TAPS]; /* current (slewing) delay, Q32.32 samples — fixed
+                                point so the slew resolves 2^-32 samples at ANY
+                                delay (a float stalls at 1/8 sample near 2M)     */
     float base_delay;        /* samples at phase=fullscale, time_mult=1 (cycle len)*/
     float slew;              /* one-pole coeff per update, (0,1]; 1 = instant      */
 } taps_t;
@@ -44,7 +46,12 @@ float taps_target(const taps_t *t, int i, float time_mult);
 /* Advance all taps one slew step toward the current target. */
 void  taps_update(taps_t *t, float time_mult);
 
-/* Current (slewed) delay in samples for tap i — pass to dl_read(). */
+/* Current (slewed) delay in samples for tap i — float convenience view (loses
+ * fractional precision above ~1M samples; fine for tests/UI). */
 float taps_delay(const taps_t *t, int i);
+
+/* Current (slewed) delay as integer samples + fraction in [0,1) — the exact
+ * view; pass straight to dl_read_frac()/ab_read_frac(). */
+void  taps_delay_frac(const taps_t *t, int i, uint32_t *d_int, float *d_frac);
 
 #endif /* TAPS_H */
