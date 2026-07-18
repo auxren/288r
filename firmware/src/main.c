@@ -247,9 +247,16 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
     if (g_blocks >= g_twinkle_until)
         bsp_panel_strobe((g_blocks < g_clip_until) ? 0 : 1);
 #endif
-    /* AUTO/presence LED (PA11), stock threshold: envelope > 0x200000/0x800000
-     * = 0.25 FS -> LOW (LED on). Per block is plenty (stock: per main-loop). */
+    /* AUTO/presence LED (PA11) — owner spec: illuminate ONLY when incoming
+     * audio exceeds the threshold set by the sens. knob (sens channel envelope
+     * vs the fixed reference — same comparison that fires the auto-trigger).
+     * Until the sens slot is wire-proven, fall back to the stock 0.25 FS law. */
+#if SENS_IN_SLOT >= 0
+    if (g_blocks >= g_twinkle_until)
+        bsp_panel_ind(4, (g_sens_env[SENS_IN_SLOT - 1] > SENS_REF) ? 0 : 1);
+#else
     if (g_blocks >= g_twinkle_until) bsp_panel_ind(4, (g_env > 0.25f) ? 0 : 1);
+#endif
 }
 
 int main(void)
@@ -286,7 +293,11 @@ int main(void)
     const float base_boot = base;     /* pre-octave base; the scan rescales from here */
     /* TIME MULTIPLIER range from the panel legend (1.0 at noon). The x1/x2 octave
      * switch will scale this once wired. */
-    engine_init(&g_engine, delay_buf, DELAY_LEN, base, time_lo, time_hi, /*slew*/ 0.15f);
+    /* slew 0.001/sample = tau ~10 ms @96k (fc ~15 Hz): buries the discrete
+     * control ticks (owner: 0.15 zippered on knob/CV/signal moves — tau was
+     * 67 us, so the read head SNAPPED tick to tick at ~10x read velocity)
+     * while still tracking chorus/flanger-rate CV. */
+    engine_init(&g_engine, delay_buf, DELAY_LEN, base, time_lo, time_hi, /*slew*/ 0.001f);
 
     /* Fidelity from config DIP SW1 sw3/sw4 (PD11/PD12): 24-bit = full precision
      * (clean), 12/8/4-bit = vintage bit-crush. Owner-confirmed; all-off = 24-bit. */
