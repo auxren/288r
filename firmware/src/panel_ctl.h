@@ -24,12 +24,15 @@ typedef struct {
     uint8_t automode;      /* RED AUTO CONTROL: 0=center(ready/looper), 1/2=sides
                               (bits 7/8, five clean flips each — proven)        */
     uint8_t cycle;         /* CYCLE 3-way position 0/1/2 (bits 9/10, sub_1110)  */
-    uint8_t bank_b;        /* bit 6 (RE guess, unused)                          */
+
     uint8_t write_trig;    /* WRITE momentary,  bit 7 ACTIVE-LOW -> pressed=1
                               (the RED toggle between the write/recirc jacks)   */
     uint8_t recirc_trig;   /* RECIRC momentary, bit 8 ACTIVE-LOW -> pressed=1   */
-    uint8_t store_beg;     /* STORE BEG. momentary, bit 11 -> pressed=1         */
-    uint8_t store_end;     /* STORE END  momentary, bit 12 -> pressed=1         */
+    uint8_t store_end_mode;/* black 'store beg./store end' switch = bit 6 RAW,
+                              active-HIGH: 0='store beg.' (auto-loop at cycle
+                              end), 1='store end' (hold window, recirc recalls).
+                              LATCHING policy selector (stock sub_4310(6));
+                              bit 5 = second pole, never read by stock.        */
     uint8_t tap_raw_mode;  /* unused                                            */
 } panel_ctl_t;
 

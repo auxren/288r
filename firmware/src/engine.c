@@ -93,6 +93,17 @@ void engine_recirc_window(engine_t *e, uint32_t window)
     e->dl.wpos = start;
 }
 
+void engine_recirc_span(engine_t *e, uint32_t start, uint32_t end)
+{
+    if (start >= e->dl.len) start %= e->dl.len;
+    if (end   >= e->dl.len) end   %= e->dl.len;
+    if (start == end) return;
+    e->xport.mode = XP_RECIRC;
+    e->xport.loop_start = start;
+    e->xport.loop_end = end;
+    e->dl.wpos = start;
+}
+
 void engine_recirc_between(engine_t *e, uint32_t start)
 {
     uint32_t head = e->dl.wpos;

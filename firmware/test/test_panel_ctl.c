@@ -48,9 +48,9 @@ int main(void)
     panel_decode(0x1FFF, &p);                ck("idle -> no transport press", !p.write_trig && !p.recirc_trig);
     panel_decode(0x1FFF & ~BIT(11), &p);     ck("bit11=0 -> WRITE pressed", p.write_trig == 1);
     panel_decode(0x1FFF & ~BIT(12), &p);     ck("bit12=0 -> RECIRC pressed", p.recirc_trig == 1);
-    /* black store switch: bits 5/6 */
-    panel_decode(0x1FFF & ~BIT(5), &p);      ck("bit5=0 -> store beg", p.store_beg == 1);
-    panel_decode(0x1FFF & ~BIT(6), &p);      ck("bit6=0 -> store end", p.store_end == 1);
+    /* black store switch = bit 6 latching policy (active-HIGH = store end) */
+    panel_decode(0x1FFF, &p);                ck("bit6=1 -> store-end mode", p.store_end_mode == 1);
+    panel_decode(0x1FFF & ~BIT(6), &p);      ck("bit6=0 -> store-beg mode", p.store_end_mode == 0);
     panel_decode(0x1FFF, &p);                ck("bit4 -> time_pitch", (panel_decode(0x1FFF & ~BIT(4), &p), p.time_pitch == 0));
 
     /* preset phase rows: A is the real default; B/C are flagged placeholders */

@@ -171,15 +171,12 @@ void bsp_panel_matrix_init(void)
  *   w[0] (stock 0x200020c4): PC5 -> bit col, PC6 -> bit col+8
  *   w[1] (stock 0x200020c6): PC3 -> bit col, PC4 -> bit col+8
  *   w[2] (stock 0x200020c8): PC1 -> bit col, PC2 -> bit col+8   */
-void bsp_panel_matrix_scan(uint16_t w[3], uint16_t trim[8])
+void bsp_panel_matrix_scan(uint16_t w[3])
 {
     uint16_t acc[3] = {0, 0, 0};
     for (uint32_t col = 0; col < 8u; ++col) {
         bsp_panel_out(col * 0x111111u);
         dly(); dly();
-        /* analog scan: one ADC3/PF8 conversion per column (stock: continuous
-         * ch6 conversions while the 595 sweeps the mux addresses) */
-        if (trim) trim[col] = bsp_mult_read();
         uint32_t idr = GPIOC->IDR;
         if (!(idr & (1u << 5))) acc[0] |= (uint16_t)(1u << col);
         if (!(idr & (1u << 6))) acc[0] |= (uint16_t)(1u << (col + 8));
@@ -189,4 +186,5 @@ void bsp_panel_matrix_scan(uint16_t w[3], uint16_t trim[8])
         if (!(idr & (1u << 2))) acc[2] |= (uint16_t)(1u << (col + 8));
     }
     w[0] = acc[0]; w[1] = acc[1]; w[2] = acc[2];
+    bsp_panel_out(7u * 0x111111u);   /* stock parks here forever after boot */
 }

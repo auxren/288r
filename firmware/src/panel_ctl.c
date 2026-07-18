@@ -25,7 +25,7 @@
 #define B_SEL_B     2
 #define B_X2        3
 #define B_TIMEPITCH 4
-#define B_BANKB     6
+#define B_STORE_END 6
 /* bits 7/8 = RED AUTO CONTROL (all sounds latch / next-sound momentary) */
 #define B_CYC0      9
 #define B_CYC1      10
@@ -47,7 +47,6 @@ void panel_decode(uint16_t bits, panel_ctl_t *out)
 
     out->octave     = bit(bits, B_X2) ? 1u : 2u;         /* measured polarity   */
     out->time_pitch = (uint8_t)bit(bits, B_TIMEPITCH);
-    out->bank_b     = (uint8_t)bit(bits, B_BANKB);
 
     /* RED AUTO CONTROL (owner-verified live): bit7 LATCHING low = "all sounds"
      * (delay mode); bit8 momentary low = "next sound" arm; center = ready. */
@@ -63,8 +62,7 @@ void panel_decode(uint16_t bits, panel_ctl_t *out)
     /* momentaries: ACTIVE-LOW, polarity proven -> deliver pressed = 1 */
     out->write_trig  = (uint8_t)!bit(bits, B_WRITE_M);
     out->recirc_trig = (uint8_t)!bit(bits, B_RECIRC_M);
-    out->store_beg   = (uint8_t)!bit(bits, 5);
-    out->store_end   = (uint8_t)!bit(bits, 6);
+    out->store_end_mode = (uint8_t)bit(bits, B_STORE_END);  /* active-HIGH policy */
     out->tap_raw_mode = 0;
 }
 

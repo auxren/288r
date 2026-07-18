@@ -22,6 +22,7 @@
 #include "preset_store.h"
 #include "chord.h"
 #include "pitch_voice.h"
+#include "fast_math.h"
 #include "storage.h"
 #include <stdint.h>
 
@@ -91,6 +92,7 @@ static volatile float g_time_raw01 = 0.5f;
 /* Input envelope (ISR-updated) for the presence/auto LED comparator (PA11) and
  * the looper's auto-write trigger. */
 static volatile float g_env = 0.0f;
+static float g_att_filt = 2047.0f;   /* c.v. attenuverter (ADC3 parked ch) */
 
 /* Audio-block clock (ISR-incremented, ~6000/s): the loop-pass "tick" rate varies
  * with superloop load, so anything timed (save-hold, blinks) counts blocks. */
@@ -100,14 +102,16 @@ static volatile uint32_t g_blocks = 0;
  * switch (165 bit 4) selects DELAY ("all sounds": continuous write, out of
  * "ready") vs LOOPER (center: sit READY; signal presence auto-starts a WRITE of
  * one cycle, then auto-RECIRCs it; the momentary punches manually). */
-enum { LP_READY = 0, LP_WRITE, LP_LOOP };
+enum { LP_READY = 0, LP_WRITE, LP_HOLD, LP_LOOP };
 static uint8_t  g_lp_state = LP_READY;
 static uint32_t g_lp_start = 0;
+static uint32_t g_lp_end = 0;    /* store-end: head when the window completed */
 static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next onset triggers */
 
 #if PITCH_VOICE_ENABLE
 static pitch_voice_t g_pv;
 static volatile uint8_t g_pitch_mode = 0;   /* tick-written, ISR-read */
+static volatile uint8_t pc_cycle_now = 1;   /* cycle pos for pitch span   */
 #endif
 
 /* preset-saved feedback: until this block count, the scan tick sparkles the
@@ -122,8 +126,6 @@ static ctrl_pin_t g_mult_pin;
 /* switch-pinning for recalled octave/cycle: the preset's values apply until the
  * PHYSICAL switch moves from its recall-time position (then live wins). */
 static uint8_t g_sw_pin_on = 0;
-static uint32_t g_store_mark = 0;         /* store-beg. loop marker              */
-static uint8_t  g_store_prev = 0xFF;      /* change detection (bits 5/6 raw)     */
 static uint8_t g_pin_oct, g_pin_cyc;        /* saved values being applied   */
 static uint8_t g_pin_oct_phys, g_pin_cyc_phys; /* physical pos at recall    */
 
@@ -274,11 +276,18 @@ int main(void)
      * per-column analog scan, and the 595 sweep runs from here on. */
     bsp_panel_mux_boot_state();
     bsp_panel_matrix_init();
+    {   /* stock-exact: the DIP/preset matrix is read ONCE at boot, then the 595
+         * parks at 0x777777 forever (proven from the decompile: sub_3488 has one
+         * call site). The parked address routes the c.v. ATTENUVERTER to ADC3. */
+        uint16_t dip[3];
+        bsp_panel_matrix_scan(dip);
+        for (int i = 0; i < 3; i++) g_dbg_panel.dip[i] = dip[i];
+    }
     bsp_mult_init();               /* ADC3 ch6/PF8 (stock-matching config) */
     bsp_panel_match_stock_idle();  /* pull-ups off, USART1 pins driven, etc. */
+#endif
 #if PITCH_VOICE_ENABLE
     pv_init(&g_pv, PITCH_WINDOW_SAMPLES, PITCH_BASE_SAMPLES, PITCH_RATIO_SLEW);
-#endif
 #endif
 
     float mult_filt = 0.5f;
@@ -301,13 +310,27 @@ int main(void)
             int32_t  raw;
 #if PITCH_VOICE_ENABLE
             if (g_pitch_mode) {
-                raw = (int32_t)knob;                       /* knob-only in pitch  */
-                pv_set_cv(&g_pv, ((float)cv - PITCH_CV_CENTER) * PITCH_CV_VOLTS_PER_CODE);
+                /* STOCK pitch mode: delay pinned (knob no longer scales time);
+                 * knob = pitch-down depth (max -1.07 st FULL / -4.75 st SHORT);
+                 * our addition: the CV shifts bipolar at 1.2 V/oct on top. */
+                raw = 0;                                   /* taps -> range min  */
+                float depth = (float)knob * (1.0f / 4095.0f);
+                float span  = (pc_cycle_now == 2) ? 0.24f : 0.06f;
+                float volts = ((float)cv - PITCH_CV_CENTER) * PITCH_CV_VOLTS_PER_CODE;
+                float ratio = (1.0f - depth * span) * fm_exp2f(volts * (1.0f/1.2f));
+                pv_set_ratio(&g_pv, ratio);
             } else
 #endif
-            /* CV rest = 0 on this hardware (measured: spi_cv=0 unpatched) —
-             * additive sum, NOT bipolar-around-2048 (that killed the knob). */
-            raw = (int32_t)knob + (int32_t)cv;
+            {
+                /* STOCK control law (decompile-proven): the parked ADC3 channel is
+                 * the c.v. ATTENUVERTER (⊖/⊕ knob): multiplier = knob + cv*att,
+                 * att in [-1,+1] with a small center deadzone. */
+                uint16_t a3 = bsp_mult_read();
+                g_att_filt += ((float)a3 - g_att_filt) * 0.05f;
+                float att = (g_att_filt - 2047.0f) * (1.0f / 2048.0f);
+                if (att > -0.05f && att < 0.05f) att = 0.0f;
+                raw = (int32_t)knob + (int32_t)((float)cv * att);
+            }
             if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
             mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.01f;
             g_time_raw01 = pin_update(&g_mult_pin, mult_filt);
@@ -319,14 +342,6 @@ int main(void)
             panel_ctl_t pc;
             uint16_t sw = bsp_panel_switches_read();
             panel_decode(sw, &pc);
-#if PANEL_MATRIX_ENABLE
-            /* Full 8-column 595 address sweep + DIP rows + per-column ADC3 trims
-             * (stock: every loop). */
-            uint16_t dip[3], trim[8];
-            bsp_panel_matrix_scan(dip, trim);
-            for (int i = 0; i < 3; i++) g_dbg_panel.dip[i] = dip[i];
-            for (int i = 0; i < 8; i++) g_dbg_panel.trim[i] = trim[i];
-#endif
             /* Momentaries PROVEN: bits 11/12 active-low, decode gives pressed=1.
              * No idle-capture needed. */
             (void)scan_first; (void)idle_w;
@@ -337,22 +352,11 @@ int main(void)
             g_dbg_panel.bank_b = pc.automode;    /* dbg slot: red-switch position */
 #if PITCH_VOICE_ENABLE
             g_pitch_mode = pc.time_pitch;        /* bit4: 1 = pitch mode */
+            pc_cycle_now = pc.cycle;
 #endif
             g_dbg_panel.write_trig = (uint8_t)wr_act;
             g_dbg_panel.recirc_trig = (uint8_t)rc_act;
             g_dbg_panel.base = g_engine.taps.base_delay;
-            /* STORE BEG./STORE END (black switch, bits 5/6): any CHANGE of the
-             * beg side marks the loop-begin point at the current head; any change
-             * of the end side loops [mark, head] and enters RECIRC. Change-edge
-             * driven because the switch's resting state reads both-active. */
-            {
-                uint8_t st = (uint8_t)(pc.store_beg | (pc.store_end << 1));
-                if (g_store_prev == 0xFF) g_store_prev = st;   /* boot seed */
-                uint8_t chg = st ^ g_store_prev;
-                g_store_prev = st;
-                if (chg & 1u) g_store_mark = g_engine.dl.wpos;         /* beg */
-                if (chg & 2u) engine_recirc_between(&g_engine, g_store_mark); /* end */
-            }
 #if PANEL_TRANSPORT_ENABLE
             /* Stock transport (community-documented + proven switch map):
              *  - WRITE momentary (bit11): punch into WRITE (record) — write LED
@@ -404,15 +408,36 @@ int main(void)
                     uint32_t written = (g_engine.dl.wpos >= g_lp_start)
                                      ? g_engine.dl.wpos - g_lp_start
                                      : g_engine.dl.wpos + DELAY_LEN - g_lp_start;
-                    if (written >= cyc || rc_edge) {       /* cycle done / punch-out */
-                        engine_recirc_window(&g_engine, cyc);
+                    if (rc_edge) {                         /* manual punch-out      */
+                        engine_recirc_between(&g_engine, g_lp_start);
                         g_lp_state = LP_LOOP;
+                    } else if (written >= cyc) {
+                        if (!pc.store_end_mode) {          /* 'store beg.': auto-loop */
+                            engine_recirc_window(&g_engine, cyc);
+                            g_lp_state = LP_LOOP;
+                        } else {                           /* 'store end': hold      */
+                            g_lp_end = g_engine.dl.wpos;
+                            g_lp_state = LP_HOLD;          /* delay keeps running    */
+                        }
                     } else if (wr_edge) {                  /* restart the take       */
                         g_lp_start = g_engine.dl.wpos;
                         engine_write(&g_engine);
                     }
                     bsp_panel_ind(1, 0); bsp_panel_ind(2, 1); bsp_panel_ind(3, 1); /* write LED */
                     break; }
+                case LP_HOLD:  /* stock mode 5: window stored, delay keeps running */
+                    if (!transport_should_write(&g_engine.xport)) engine_write(&g_engine);
+                    if (rc_edge) {                         /* recall the saved window */
+                        engine_recirc_span(&g_engine, g_lp_start, g_lp_end);
+                        g_lp_state = LP_LOOP;
+                    } else if (wr_edge) {                  /* new take               */
+                        g_lp_start = g_engine.dl.wpos;
+                        engine_write(&g_engine);
+                        g_lp_state = LP_WRITE;
+                    }
+                    /* stored-and-waiting: write + ready LEDs together */
+                    bsp_panel_ind(1, 0); bsp_panel_ind(2, 1); bsp_panel_ind(3, 0);
+                    break;
                 default: /* LP_LOOP */
                     if (wr_edge) {                         /* punch a new take       */
                         g_lp_start = g_engine.dl.wpos;

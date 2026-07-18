@@ -61,5 +61,8 @@ void  engine_recirc(engine_t *e);   /* enter RECIRC, capture loop window     */
 void  engine_recirc_window(engine_t *e, uint32_t window);
 /* Enter RECIRC looping [start, current head] (store-beg/store-end marking). */
 void  engine_recirc_between(engine_t *e, uint32_t start);
+/* Enter RECIRC over an explicit SAVED window [start,end] (store-end hold: the
+ * head has moved past end, so recirc_between can't express it). */
+void  engine_recirc_span(engine_t *e, uint32_t start, uint32_t end);
 
 #endif /* ENGINE_H */
