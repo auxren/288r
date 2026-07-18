@@ -135,9 +135,11 @@
 /* ---- global pitch voice (PITCH_SHIFT.md) — active in pitch mode (bit 4) ---- */
 #define PITCH_WINDOW_SAMPLES (0.060f * (float)SAMPLE_RATE_HZ)  /* 60 ms crossfade   */
 #define PITCH_BASE_SAMPLES   256.0f     /* base delay offset (~2.7 ms @96k)         */
-#define PITCH_RATIO_SLEW     0.0003f    /* one-pole ratio glide/sample: tau ~35 ms
-                                           portamento — owner reported knob sweeps
-                                           sounded "steppy" at the old 5 ms       */
+#define PITCH_RATIO_SLEW     0.0007f    /* one-pole ratio glide/sample: tau ~15 ms.
+                                           5 ms exposed control ticks ("steppy");
+                                           35 ms lagged the knob ("takes time to
+                                           catch up"). ~15 ms tracks a hand sweep
+                                           within ~70 ms while burying ticks.    */
 #define PITCH_VOICE_GAIN     1.0f       /* wet-leg level of the pitch crossfade on
                                            ch0 (replace semantics — see main.c)  */
 /* Time-CV (SPI2 ch0, 12-bit, RESTS AT 0 unpatched — measured) -> volts. */

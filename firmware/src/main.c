@@ -418,7 +418,13 @@ int main(void)
                  * knob = pitch-down depth, span -1.07 st FULL / -4.75 st SHORT;
                  * the CV adds bipolar 1.2 V/oct through the SAME attenuverter. */
                 raw = 0;                                   /* taps -> range min  */
-                float d01  = (float)knob * (1.0f / 4095.0f);  /* (not "depth": shadows outer) */
+                /* depth = RAW pot travel, NOT the panel-legend curve: the
+                 * legend (0.4x..1.6x) is a TIME-multiplier scale, meaningless
+                 * for pitch — and its piecewise-anchor slope kinks made the
+                 * pitch response audibly uneven across the rotation (owner
+                 * report). The raw pot is physically smooth. */
+                float d01  = (float)knob_raw * (1.0f / 4094.0f);
+                if (d01 > 1.0f) d01 = 1.0f;
                 float span = (pc_cycle_now == 2) ? 0.24f : 0.06f;
                 float att  = (g_att_filt - 2047.0f) * (1.0f / 2047.0f);
                 if (att > -0.05f && att < 0.05f) att = 0.0f;
