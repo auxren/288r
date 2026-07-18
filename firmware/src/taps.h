@@ -27,6 +27,9 @@ typedef struct {
     int64_t cur_q[NUM_TAPS]; /* current (slewing) delay, Q32.32 samples — fixed
                                 point so the slew resolves 2^-32 samples at ANY
                                 delay (a float stalls at 1/8 sample near 2M)     */
+    int64_t tgt_q[NUM_TAPS]; /* cached Q32.32 targets (recomputed on mult change)  */
+    float last_mult;         /* control value the cache was built for              */
+    int   targets_dirty;     /* set by base/phase changes -> recompute targets     */
     float base_delay;        /* samples at phase=fullscale, time_mult=1 (cycle len)*/
     float slew;              /* one-pole coeff per update, (0,1]; 1 = instant      */
 } taps_t;

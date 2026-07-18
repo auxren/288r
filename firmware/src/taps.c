@@ -37,6 +37,8 @@ void taps_init(taps_t *t, float base_delay, float slew)
 {
     t->base_delay = base_delay;
     t->slew = slew;
+    t->last_mult = -1.0e30f;
+    t->targets_dirty = 1;
     for (int i = 0; i < NUM_TAPS; i++) {
         /* faithful default preset: evenly spaced 20,40,..,160 */
         t->phase[i] = 20.0f * (float)(i + 1);
@@ -47,11 +49,13 @@ void taps_init(taps_t *t, float base_delay, float slew)
 void taps_set_phase(taps_t *t, const float phase[NUM_TAPS])
 {
     for (int i = 0; i < NUM_TAPS; i++) t->phase[i] = phase[i];
+    t->targets_dirty = 1;
 }
 
 void taps_set_base_delay(taps_t *t, float base_delay)
 {
     t->base_delay = base_delay;   /* fixed-rate: just rescales the taps, no clock change */
+    t->targets_dirty = 1;
 }
 
 float taps_target(const taps_t *t, int i, float time_mult)
@@ -61,8 +65,17 @@ float taps_target(const taps_t *t, int i, float time_mult)
 
 void taps_update(taps_t *t, float time_mult)
 {
+    /* targets only move when the CONTROL value moves (~kHz), not per audio
+     * sample: recompute the 8 targets only on change. Profiled on hardware:
+     * per-sample target math was 19% of the whole CPU. */
+    if (time_mult != t->last_mult || t->targets_dirty) {
+        for (int i = 0; i < NUM_TAPS; i++)
+            t->tgt_q[i] = q32_from_float(taps_target(t, i, time_mult));
+        t->last_mult = time_mult;
+        t->targets_dirty = 0;
+    }
     for (int i = 0; i < NUM_TAPS; i++) {
-        int64_t target_q = q32_from_float(taps_target(t, i, time_mult));
+        int64_t target_q = t->tgt_q[i];
         int64_t delta_q  = target_q - t->cur_q[i];
 
         /* one-pole slew in Q32.32. The delta is converted to float only for the

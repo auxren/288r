@@ -315,7 +315,7 @@ int main(void)
         /* FAST control path (every 4th pass ~1.5 kHz): the knob/CV must update
          * quickly or the delay time steps (zipper — release-test 2.1). The CV is
          * BIPOLAR around mid-scale (the panel's -/+ attenuverter): signed offset. */
-        {
+        if ((scan_div & 0x3u) == 0u) {
             bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0(CV), [1]=ch1(knob) */
             uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
             uint32_t knob_raw = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
@@ -357,7 +357,7 @@ int main(void)
 #endif
             }
             if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
-            mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.01f;
+            mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.04f;
             g_time_raw01 = pin_update(&g_mult_pin, mult_filt);
             g_dbg_panel.spi_cv = (uint16_t)cv;
             g_dbg_panel.spi_knob = (uint16_t)knob;
