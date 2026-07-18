@@ -180,9 +180,16 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         float chan[NUM_TAPS];
         (void)engine_process_multi(&g_engine, x, t, chan);
 #if PITCH_VOICE_ENABLE
-        if (g_pitch_mode)
-            chan[0] += PITCH_VOICE_GAIN *
-                       pv_process(&g_pv, &g_engine.dl, DL_INTERP_HERMITE);
+        if (g_pitch_mode) {
+            /* fade the voice in with |ratio-1| so pitch mode is TRANSPARENT at
+             * zero CV (a unity-ratio voice is still a 33 ms doubled tap — very
+             * audible comb; only blend it as an actual shift is commanded). */
+            float dev = g_pv.ratio - 1.0f; if (dev < 0.0f) dev = -dev;
+            float wet = dev * 50.0f; if (wet > 1.0f) wet = 1.0f;
+            if (wet > 0.001f)
+                chan[0] += (PITCH_VOICE_GAIN * wet) *
+                           pv_process(&g_pv, &g_engine.dl, DL_INTERP_HERMITE);
+        }
 #endif
         for (unsigned s = 0; s < TDM_SLOTS; ++s)
             out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
