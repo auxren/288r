@@ -223,8 +223,11 @@ where `grain_rate = |1−ρ|·fs / W`. Short windows raise `grain_rate` and wors
 ## Going cleaner (if/when the character isn't wanted)
 
 - **Bigger window** is the cheapest lever (table above): ~50–60 ms is clean to <1% here.
-- **4× overlap** (four taps at quarter-window offsets, `Σw = 1`) roughly halves the residual at a
-  given `W`, for 2× the reads.
+- **4× overlap** (four taps at quarter-window offsets, `Σw = 1`) — **MEASURED AND REJECTED
+  (2026-07-18)**: with correlation-aligned splices in place, 2-tap+alignment beats 4-tap-plain
+  decisively even on chords (3-note chord, poly-purity: 2tap 0.49 → 2tap+aligned **0.99** vs
+  4tap 0.63 at −1 oct). The alignment locks to the composite waveform's repetition structure;
+  overlap only averages misalignment. Not worth 2× the reads.
 - **Correlation-aligned splices** (PSOLA-style: nudge the wrap to a pitch-period boundary) remove
   it almost entirely but need a pitch estimate and a search — a separate project, out of scope for
   this engine.

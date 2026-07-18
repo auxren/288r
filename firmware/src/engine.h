@@ -31,6 +31,7 @@ typedef struct {
     float        in_gain;
     float        auto_correction;  /* AUTO CONTROL term (placeholder; calibrate) */
     int          vintage_bits;     /* 0 = full precision, else e.g. 12 (vintage)  */
+    uint32_t     dith;             /* TPDF dither PRNG state (vintage modes)      */
 } engine_t;
 
 /* buf/len: delay memory. base_delay: cycle length in samples (SHORT/FULL).

@@ -15,6 +15,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->in_gain = 1.0f;
     e->auto_correction = 0.0f;
     e->vintage_bits = 0;
+    e->dith = 0x1234567u;                 /* dither PRNG seed */
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -45,8 +46,16 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
     if (!recirc) {
         float x = mixer_input(input, e->in_gain);
         x = bw_process(&e->bw, x);            /* sw2 bandwidth limit (bypass=identity) */
-        if (e->vintage_bits > 0)
-            x = dl_vintage_quantize(x, e->vintage_bits, 0.0f);
+        if (e->vintage_bits > 0) {
+            /* TPDF dither (two xorshift uniforms, triangular in [-1,1] quantum
+             * units): decorrelates the bit-crush distortion into benign noise —
+             * proper lo-fi instead of gritty correlated error. */
+            e->dith ^= e->dith << 13; e->dith ^= e->dith >> 17; e->dith ^= e->dith << 5;
+            uint32_t r1 = e->dith;
+            e->dith ^= e->dith << 13; e->dith ^= e->dith >> 17; e->dith ^= e->dith << 5;
+            float tp = ((float)(r1 >> 8) + (float)(e->dith >> 8)) * (1.0f / 16777216.0f) - 1.0f;
+            x = dl_vintage_quantize(x, e->vintage_bits, tp);
+        }
         dl_write(&e->dl, x);
     } else {
         dl_advance_loop(&e->dl, ls, le);

@@ -99,12 +99,16 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
     }
     /* accept only a real match: NCC^2 >= 0.25  <=>  score >= 0.25 * eb */
     if (best < 0.25f * eb) { bestlag = 0; }
-    else {
-        /* fine search +/-3 around the coarse winner (kills the +/-2-sample
-         * residual comb noted at large shifts) */
-        float fbest = best; int flag = bestlag;
-        for (int lag = bestlag - 3; lag <= bestlag + 3; ++lag) {
-            if (lag < 0 || lag == bestlag || lag >= PS_DEGLITCH_MAXLAG) continue;
+    float bestoff = (float)bestlag;
+    if (best >= 0.25f * eb) {
+        /* fine search +/-3 around the coarse winner, keeping neighbours for a
+         * parabolic sub-sample refinement (the interpolated dl_read makes a
+         * FRACTIONAL splice offset directly usable) */
+        float sc[7]; int flag = bestlag; float fbest = -1.0e30f;
+        for (int j = 0; j < 7; ++j) {
+            int lag = bestlag - 3 + j;
+            sc[j] = -1.0e30f;
+            if (lag < 0 || lag >= PS_DEGLITCH_MAXLAG) continue;
             float acc = 0.0f, ein = 0.0f;
             for (int k = 0; k < PS_DEGLITCH_N; k += 2) {
                 float a = dl_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
@@ -113,15 +117,24 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
                 ein += a * a;
             }
             if (ein < 0.01f * eb) continue;
-            float score = acc * fabsf(acc) / (ein + 1.0e-9f);
-            if (score > fbest) { fbest = score; flag = lag; }
+            sc[j] = acc * fabsf(acc) / (ein + 1.0e-9f);
+            if (sc[j] > fbest) { fbest = sc[j]; flag = lag; }
         }
-        bestlag = flag;
+        int j0 = flag - (bestlag - 3);
+        bestoff = (float)flag;
+        if (j0 >= 1 && j0 <= 5 && sc[j0-1] > -1.0e29f && sc[j0+1] > -1.0e29f) {
+            float den = sc[j0-1] - 2.0f * sc[j0] + sc[j0+1];
+            if (den < -1.0e-12f) {                 /* concave peak            */
+                float dlt = 0.5f * (sc[j0-1] - sc[j0+1]) / den;
+                if (dlt > -1.0f && dlt < 1.0f) bestoff += dlt;   /* sub-sample */
+            }
+        }
+        if (bestoff < 0.0f) bestoff = 0.0f;
     }
     /* publish only if the wrap geometry is still the one we searched for
      * (the ISR may have consumed a wrap mid-search at large ratios) */
     if (p->next_tap != tap || p->pend_tap >= 0) return;
-    p->pend_off = (float)bestlag;
+    p->pend_off = bestoff;
     __asm volatile ("" ::: "memory");              /* order: off BEFORE tap  */
     p->pend_tap = tap;
 }
