@@ -1,0 +1,95 @@
+# b288 community firmware — v0.9 release validation plan
+
+Run top to bottom on the unit with the current `build/fw/b288-community.hex` flashed.
+Mark each ☐. **Release gate:** every test in sections 1–8 must PASS; sections 9–10 are
+record-the-result (known-provisional features). If anything in 1–8 fails, we fix and
+re-run that section before tagging.
+
+**Setup:** module powered in the case; a signal source you can start/stop (sustained
+tone AND some plucky/percussive material is ideal); listening on **mixed out**; input
+mixer A up; output sliders 0, 3, 8 up; multiplier at noon; red AUTO CONTROL switch at
+**"all sounds"**; cal./pre-set at **pre-set**; selector at **A**; ×1/×2 at **×1**;
+cycle at **full**; rear DIPs all OFF.
+
+---
+
+## 1. Boot & audio path
+- ☐ **1.1** Power-cycle the module. Within ~2 s of power-on, audio passes and the
+  delay taps echo. No stuck notes, no silence, no noise burst.
+- ☐ **1.2** Let it sit 10 minutes with signal. No dropouts, resets, or degradation.
+
+## 2. Multiplier knob + Time-CV
+- ☐ **2.1** Knob at noon ⇒ echoes at the "1.0" spacing. Sweep slowly full CCW→CW:
+  delay time glides **smoothly** (pitch-bend character, no zipper, no steps).
+- ☐ **2.2** At full CW: delay is long but **clean** (no distortion/garbling).
+- ☐ **2.3** Patch a slow LFO/CV into **c.v. in**: delay time follows it smoothly —
+  chorus/flanger movement, the headline feature. Remove CV: knob takes back over.
+
+## 3. ×1/×2 switch
+- ☐ **3.1** Flip ×1→×2: delay time audibly **doubles**, smoothly (no click/glitch).
+  Flip back: halves. Labels match direction (×2 = longer).
+
+## 4. Cycle switch (short / mid / full)
+- ☐ **4.1** Each of the three positions changes the delay window: full = longest,
+  short = quartered. Direction matches the panel labels. Transitions are smooth.
+  *(If direction is inverted, note it — one-line fix, not a redesign.)*
+
+## 5. Transport (red write/recirc momentary) + indicator LEDs
+- ☐ **5.1** At rest: **write LED on** (unit is writing = normal delay).
+- ☐ **5.2** Flick toward **recirc.**: audio freezes into a loop of the current
+  buffer; write LED goes off; the **end-of-cycle indicator blinks at the loop rate**.
+- ☐ **5.3** Flick toward **write**: live delay resumes; write LED back on; blinking
+  stops.
+- ☐ **5.4** Loop length follows the cycle switch (recirc with cycle at short = a
+  quarter-length loop).
+
+## 6. Level LEDs
+- ☐ **6.1** **Input mixer LED** tracks the input: dark with no signal, lights with
+  hot signal, pings with plucky material. (It's a >½-full-scale comparator — quiet
+  signals won't light it; that's stock behavior.)
+- ☐ **6.2** **Auto-control LED** lights while signal is present (envelope >¼ FS)
+  and goes dark shortly after the signal stops.
+
+## 7. Presets (the new feature)
+- ☐ **7.1 Save:** knob full CCW → **hold the write side ~2 s** → all indicator LEDs
+  **twinkle** (~1 s). A brief audio hiccup during the save is expected (flash write).
+- ☐ **7.2 Second slot:** selector to **B**, knob full CW → hold write 2 s → twinkle.
+- ☐ **7.3 Recall:** flip selector A ↔ B: the delay time jumps between the two saved
+  settings, regardless of where the knob sits.
+- ☐ **7.4 Knob catch:** after a recall, sweep the knob slowly — it "catches" as it
+  nears the saved value and follows your hand from there (no value jumps).
+- ☐ **7.5 POWER-CYCLE PERSISTENCE:** power the module off, wait 5 s, power on.
+  Selector A ⇒ the CCW setting; B ⇒ the CW setting. **Saves survived the reboot.**
+- ☐ **7.6 cal./pre-set:** with A/B saved differently, flip to **cal.** ⇒ the fixed
+  evenly-spaced tap pattern; back to **pre-set** ⇒ the selected slot again.
+
+## 8. Rear DIPs (boot-time straps — power-cycle after each change!)
+- ☐ **8.1 Resolution (sw3/sw4):** all off = clean 24-bit. sw3 on + power-cycle =
+  audibly crunchy (12-bit). Back off + power-cycle = clean again.
+- ☐ **8.2 ×10 extend (sw1):** sw1 on + power-cycle = delay times ~10× longer at the
+  same knob position. Off + power-cycle = normal. *(Newly mapped — first live test.)*
+- ☐ **8.3 Bandwidth (sw2):** sw2 on + power-cycle = highs rolled off (~11 kHz).
+  *(Tentative pin — if nothing changes, record it; not a release blocker.)*
+
+---
+
+## 9. Auto mode — record the result (provisional)
+- ☐ **9.1** Red AUTO CONTROL to **center**, no signal: unit sits armed ("ready").
+- ☐ **9.2** Start a phrase: it should auto-punch into WRITE (write LED), record one
+  cycle, then **auto-loop it** (end-of-cycle blinking) without touching anything.
+- ☐ **9.3** "next sound" momentary: re-arms/captures the next phrase.
+- Write down what actually happens — this is our reconstruction of the stock auto
+  behavior and may need tuning (threshold, timing), not correctness fixes.
+
+## 10. Known limitations in v0.9 (verify they're the ONLY gaps)
+- Front tap-time DIP matrix + phase/mute DIPs: not yet read (stock preset rows B/C/D
+  fall back to the ramp; OUR savable presets replace the feature).
+- store beg./end switch: decoded, not yet acting.
+- TIME/pitch switch: decoded, function lands with the pitch voice (v1.x, branch ready).
+- 36 trimmers: scanned (values visible over SWD), not yet applied to parameters.
+- Sliders/pots on the output mixer: analog, unaffected by firmware (should all work).
+
+---
+
+**When 1–8 are all ☑:** tell me "sections 1–8 pass" (plus any notes from 9–10) and I
+tag `v0.9` — CI builds and publishes the release with the one-click flasher zip.
