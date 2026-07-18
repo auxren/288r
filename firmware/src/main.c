@@ -56,7 +56,7 @@
 
 /* Stock attenuverter control law — OFF until the parked ADC3 channel is proven
  * (observe g_dbg_panel.trim[0] while turning the c.v. knob). */
-#define CTRL_ATTENUVERTER_LAW 0
+#define CTRL_ATTENUVERTER_LAW 1   /* PROVEN: owner's knob sweep tracked adc3 7..4085 */
 #define PRESET_SAVE_HOLD_BLOCKS 6000u   /* 2 s (measured block clock ~3 kHz) */
 
 /* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
@@ -331,7 +331,7 @@ int main(void)
                 g_att_filt += ((float)a3 - g_att_filt) * 0.05f;
                 g_dbg_panel.trim[0] = (uint16_t)g_att_filt;   /* observe only */
 #if CTRL_ATTENUVERTER_LAW
-                float att = (g_att_filt - 2047.0f) * (1.0f / 2048.0f);
+                float att = (g_att_filt - 2047.0f) * (1.0f / 2047.0f);  /* stock-exact scale */
                 if (att > -0.05f && att < 0.05f) att = 0.0f;
                 raw = (int32_t)knob + (int32_t)((float)cv * att);
 #else
