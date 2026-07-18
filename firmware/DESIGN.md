@@ -121,6 +121,8 @@ try to preserve buffer contents across a width/bank-count change.
   sweeps delay time and clicks when it resets at the buffer wrap. Fix = a **dual-head crossfaded
   read** (classic crossfaded pitch tap) so the wrap is hidden. Host-testable: assert no output
   discontinuity across the wrap. Needs the pitch-mode control context (bench) before wiring.
+  → the crossfaded-tap pitch shifter this implies is written up in **[PITCH_SHIFT.md](PITCH_SHIFT.md)**
+  and now lives in `src/pitch_shift.{c,h}` (host-tested: `test/test_pitch_shift.c`).
 
 ### Delay-time changes: glide vs. crossfade (sequencing the TIME control)
 A sudden delay-time change does **not** alter the recorded/feedback audio, but it **teleports the
