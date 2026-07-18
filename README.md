@@ -31,6 +31,24 @@ extend it, and to serve as a learning resource for embedded audio / STM32 revers
 
 ---
 
+## Flashing your device (the easy way)
+
+Each [release](../../releases) ships **`288r-Flasher.zip`** — a one-click flasher (the
+"Easel Weasel"). To install the community firmware:
+
+1. Download `288r-Flasher.zip` from the latest release and unzip it.
+2. Plug the **ST-Link V2** (included with the kit) into your computer and connect it to the
+   module's SWD header; power the module on.
+3. Double-click the file for your OS: `Flash-on-Mac.command`, `Flash-on-Windows.bat`, or
+   `Flash-on-Linux.sh` — and follow the friendly prompts.
+
+macOS only: the **first** time, right-click → **Open** (Gatekeeper). You'll need one of
+`openocd` (`brew install openocd` / `apt install openocd`), `stlink-tools`, or
+STM32CubeProgrammer installed — the flasher finds whichever you have and tells you if none.
+
+To restore the stock firmware, flash `Compiled FW/B288-REV1.0.hex` the same way
+(`python3 flasher/flash.py --file "Compiled FW/B288-REV1.0.hex"`).
+
 ## 1. What is the 288 / 288r?
 
 - The original **Buchla 288 "Time Domain Processor"** was an 8-stage voltage-controlled looping

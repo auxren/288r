@@ -52,12 +52,19 @@ jobs:
           release: '13.3.Rel1'
       - name: Build release image
         run: make -C firmware firmware
-      - name: Publish release with .hex/.bin
+      - name: Package one-click flasher (Easel Weasel)
+        run: |
+          cp firmware/build/fw/b288-community.hex flasher/firmware/
+          # `zip` preserves the executable bit on the .command/.sh launchers
+          zip -r 288r-Flasher.zip flasher -x "flasher/__pycache__/*" "flasher/**/*.pyc"
+      - name: Publish release with .hex/.bin + flasher zip
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             firmware/build/fw/b288-community.hex \
             firmware/build/fw/b288-community.bin \
+            288r-Flasher.zip \
             --title "b288 community firmware ${GITHUB_REF_NAME}" \
-            --generate-notes
+            --generate-notes \
+            --notes "**Easiest install:** download \`288r-Flasher.zip\`, unzip, double-click the file for your OS (Flash-on-Mac / Flash-on-Windows / Flash-on-Linux) with the ST-Link plugged in. macOS: right-click → Open the first time (Gatekeeper). Needs openocd, stlink-tools, or STM32CubeProgrammer installed."
