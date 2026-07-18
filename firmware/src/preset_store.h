@@ -24,9 +24,10 @@
 typedef struct {
     float   phase[PRESET_TAPS];   /* tap phase-select 0..160 (the preset core)      */
     float   mult;                 /* time-multiplier [0,1] (pinned on recall)       */
-    uint8_t octave;               /* 1/2/4 coarse                                   */
+    uint8_t octave;               /* x1/x2 (applied until the switch moves)         */
     uint8_t mute_mask;            /* per-tap mute bits                              */
-    uint8_t rsvd[2];              /* frozen padding / future use                    */
+    uint8_t cycle;                /* cycle position 0/1/2 (applied until moved)     */
+    uint8_t rsvd;                 /* frozen padding                                 */
 } preset_scene_t;
 
 _Static_assert(sizeof(preset_scene_t) == 40, "preset scene layout is frozen");

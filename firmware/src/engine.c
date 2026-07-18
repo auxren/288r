@@ -92,3 +92,14 @@ void engine_recirc_window(engine_t *e, uint32_t window)
      * end-of-cycle events fired). */
     e->dl.wpos = start;
 }
+
+void engine_recirc_between(engine_t *e, uint32_t start)
+{
+    uint32_t head = e->dl.wpos;
+    if (start >= e->dl.len) start %= e->dl.len;
+    if (start == head) return;                /* zero-length: ignore */
+    e->xport.mode = XP_RECIRC;
+    e->xport.loop_start = start;
+    e->xport.loop_end = head;
+    e->dl.wpos = start;
+}

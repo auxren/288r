@@ -97,14 +97,23 @@
  *  _MAPPED = 0.) */
 #define SW_EXTEND_MAPPED     1
 #define SW_EXTEND_PORT       GPIOB
-#define SW_EXTEND_PIN        11u        /* PROVEN: stock buffer-length table is x10
-                                           on this pin (0x16120 -> 0xdcb40)        */
+#define SW_EXTEND_PIN        10u        /* MEASURED: rear sw1 ON pulls PB10 low
+                                           (live IDR capture, bench session 6)    */
 #define SW_BANDWIDTH_MAPPED  1
 #define SW_BANDWIDTH_PORT    GPIOB
-#define SW_BANDWIDTH_PIN     10u        /* rear sw2 (the other f64-read rear pin)  */
+#define SW_BANDWIDTH_PIN     11u        /* rear sw2 (the other f64-read rear pin)  */
 
 /* Owner-confirmed feature behavior. */
 #define DELAY_EXTEND_FACTOR  10.0f      /* sw1: x10 delay time + looper length     */
 #define BANDWIDTH_LIMIT_HZ   11025.0f   /* sw2: record-path bandwidth limit         */
+
+/* ---- global pitch voice (PITCH_SHIFT.md) — active in pitch mode (bit 4) ---- */
+#define PITCH_WINDOW_SAMPLES (0.060f * (float)SAMPLE_RATE_HZ)  /* 60 ms crossfade   */
+#define PITCH_BASE_SAMPLES   256.0f     /* base delay offset (~2.7 ms @96k)         */
+#define PITCH_RATIO_SLEW     0.002f     /* one-pole ratio glide/sample              */
+#define PITCH_VOICE_GAIN     0.7f       /* mix level of the pitch voice into ch0    */
+/* Time-CV (SPI2 ch0, 12-bit, bipolar around 2048) -> volts. [BENCH] calibrate. */
+#define PITCH_CV_CENTER      2048.0f
+#define PITCH_CV_VOLTS_PER_CODE (5.0f / 2048.0f)
 
 #endif /* BSP_BOARD_H */

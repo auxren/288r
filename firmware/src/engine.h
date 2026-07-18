@@ -59,5 +59,7 @@ void  engine_recirc(engine_t *e);   /* enter RECIRC, capture loop window     */
 /* Enter RECIRC looping exactly the last `window` samples (the stock semantics:
  * "recirc loops the buffer at one of three cycle lengths"). */
 void  engine_recirc_window(engine_t *e, uint32_t window);
+/* Enter RECIRC looping [start, current head] (store-beg/store-end marking). */
+void  engine_recirc_between(engine_t *e, uint32_t start);
 
 #endif /* ENGINE_H */

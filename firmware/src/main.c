@@ -21,6 +21,7 @@
 #include "panel_ctl.h"
 #include "preset_store.h"
 #include "chord.h"
+#include "pitch_voice.h"
 #include "storage.h"
 #include <stdint.h>
 
@@ -46,6 +47,11 @@
  * the selected slot. Backend is flash_preset.c — currently the RAM placeholder, so
  * saves last until power-off ([BENCH]: swap in internal-flash for reboot-proof). */
 #define PRESET_ENABLE 1
+
+/* PITCH mode (TIME/pitch switch, 165 bit 4, 0=TIME per the owner): the Time-CV
+ * drives the crossfaded-tap pitch voice at 1.2 V/oct (Buchla) instead of the
+ * delay-time multiplier; the multiplier stays knob-only. Voice sums into ch0. */
+#define PITCH_VOICE_ENABLE 1
 #define PRESET_SAVE_HOLD_BLOCKS 6000u   /* 2 s (measured block clock ~3 kHz) */
 
 /* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
@@ -99,6 +105,11 @@ static uint8_t  g_lp_state = LP_READY;
 static uint32_t g_lp_start = 0;
 static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next onset triggers */
 
+#if PITCH_VOICE_ENABLE
+static pitch_voice_t g_pv;
+static volatile uint8_t g_pitch_mode = 0;   /* tick-written, ISR-read */
+#endif
+
 /* preset-saved feedback: until this block count, the scan tick sparkles the
  * indicator LEDs pseudo-randomly and the ISR holds off its PA0/PA11 writes. */
 static volatile uint32_t g_twinkle_until = 0;
@@ -107,6 +118,14 @@ static uint32_t g_twinkle_rng = 0x12345678u;
 /* multiplier control-pinning: preset recall pins the SAVED multiplier until the
  * physical knob sweeps through it (storage.h pin_*) — no value jumps. */
 static ctrl_pin_t g_mult_pin;
+
+/* switch-pinning for recalled octave/cycle: the preset's values apply until the
+ * PHYSICAL switch moves from its recall-time position (then live wins). */
+static uint8_t g_sw_pin_on = 0;
+static uint32_t g_store_mark = 0;         /* store-beg. loop marker              */
+static uint8_t  g_store_prev = 0xFF;      /* change detection (bits 5/6 raw)     */
+static uint8_t g_pin_oct, g_pin_cyc;        /* saved values being applied   */
+static uint8_t g_pin_oct_phys, g_pin_cyc_phys; /* physical pos at recall    */
 
 /* end-of-cycle blink: loop-wrap detector state */
 static uint32_t g_prev_wpos = 0;
@@ -160,6 +179,11 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         }
         float chan[NUM_TAPS];
         (void)engine_process_multi(&g_engine, x, t, chan);
+#if PITCH_VOICE_ENABLE
+        if (g_pitch_mode)
+            chan[0] += PITCH_VOICE_GAIN *
+                       pv_process(&g_pv, &g_engine.dl, DL_INTERP_HERMITE);
+#endif
         for (unsigned s = 0; s < TDM_SLOTS; ++s)
             out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
                                      ? audio_f_to_out(chan[s]) : 0;
@@ -245,6 +269,9 @@ int main(void)
     bsp_panel_matrix_init();
     bsp_mult_init();               /* ADC3 ch6/PF8 (stock-matching config) */
     bsp_panel_match_stock_idle();  /* pull-ups off, USART1 pins driven, etc. */
+#if PITCH_VOICE_ENABLE
+    pv_init(&g_pv, PITCH_WINDOW_SAMPLES, PITCH_BASE_SAMPLES, PITCH_RATIO_SLEW);
+#endif
 #endif
 
     float mult_filt = 0.5f;
@@ -264,7 +291,14 @@ int main(void)
             bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0(CV), [1]=ch1(knob) */
             uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
             uint32_t knob = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
-            int32_t  raw  = (int32_t)knob + ((int32_t)cv - 2048);
+            int32_t  raw;
+#if PITCH_VOICE_ENABLE
+            if (g_pitch_mode) {
+                raw = (int32_t)knob;                       /* knob-only in pitch  */
+                pv_set_cv(&g_pv, ((float)cv - PITCH_CV_CENTER) * PITCH_CV_VOLTS_PER_CODE);
+            } else
+#endif
+            raw = (int32_t)knob + ((int32_t)cv - 2048);
             if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
             mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.01f;
             g_time_raw01 = pin_update(&g_mult_pin, mult_filt);
@@ -292,9 +326,24 @@ int main(void)
             g_dbg_panel.preset = pc.preset;
             g_dbg_panel.octave = pc.octave;
             g_dbg_panel.bank_b = pc.automode;    /* dbg slot: red-switch position */
+#if PITCH_VOICE_ENABLE
+            g_pitch_mode = pc.time_pitch;        /* bit4: 1 = pitch mode */
+#endif
             g_dbg_panel.write_trig = (uint8_t)wr_act;
             g_dbg_panel.recirc_trig = (uint8_t)rc_act;
             g_dbg_panel.base = g_engine.taps.base_delay;
+            /* STORE BEG./STORE END (black switch, bits 5/6): any CHANGE of the
+             * beg side marks the loop-begin point at the current head; any change
+             * of the end side loops [mark, head] and enters RECIRC. Change-edge
+             * driven because the switch's resting state reads both-active. */
+            {
+                uint8_t st = (uint8_t)(pc.store_beg | (pc.store_end << 1));
+                if (g_store_prev == 0xFF) g_store_prev = st;   /* boot seed */
+                uint8_t chg = st ^ g_store_prev;
+                g_store_prev = st;
+                if (chg & 1u) g_store_mark = g_engine.dl.wpos;         /* beg */
+                if (chg & 2u) engine_recirc_between(&g_engine, g_store_mark); /* end */
+            }
 #if PANEL_TRANSPORT_ENABLE
             /* Stock transport (community-documented + proven switch map):
              *  - WRITE momentary (bit11): punch into WRITE (record) — write LED
@@ -388,11 +437,18 @@ int main(void)
                 for (unsigned i = 0; i < 5u; i++)
                     bsp_panel_ind(i, (int)((g_twinkle_rng >> i) & 1u));
             }
-            /* base window = boot base x octave (x1/x2) x cycle (3-way, live) */
-            unsigned oc_key = (unsigned)pc.octave | ((unsigned)pc.cycle << 4);
+            /* base window = boot base x octave x cycle. Recalled presets pin
+             * octave/cycle until the physical switch MOVES from its recall-time
+             * position. */
+            if (g_sw_pin_on &&
+                (pc.octave != g_pin_oct_phys || pc.cycle != g_pin_cyc_phys))
+                g_sw_pin_on = 0;                        /* touched -> live wins */
+            panel_ctl_t eff = pc;
+            if (g_sw_pin_on) { eff.octave = g_pin_oct; eff.cycle = g_pin_cyc; }
+            unsigned oc_key = (unsigned)eff.octave | ((unsigned)eff.cycle << 4);
             if (oc_key != prev_octave) {
-                float nb = engine_clamp_base(base_boot * panel_octave_factor(&pc)
-                                             * panel_cycle_factor(&pc),
+                float nb = engine_clamp_base(base_boot * panel_octave_factor(&eff)
+                                             * panel_cycle_factor(&eff),
                                              DELAY_LEN, time_hi);
                 taps_set_base_delay(&g_engine.taps, nb);
                 prev_octave = oc_key;
@@ -409,8 +465,13 @@ int main(void)
                     /* Recall the selected slot (capture-live presets). Blank/
                      * invalid slot -> the A-ramp default. */
                     preset_scene_t sc;
-                    if (preset_load(bsp_preset_flash_base(), pc.preset, &sc))
+                    if (preset_load(bsp_preset_flash_base(), pc.preset, &sc)) {
                         pin_recall(&g_mult_pin, sc.mult);   /* knob pinned to saved */
+                        g_sw_pin_on = 1;                    /* switches pinned too  */
+                        g_pin_oct = sc.octave;  g_pin_cyc = sc.cycle;
+                        g_pin_oct_phys = pc.octave; g_pin_cyc_phys = pc.cycle;
+                        prev_octave = 0xFFu;                /* force base recompute */
+                    }
                     for (int i = 0; i < NUM_TAPS; i++) ph[i] = sc.phase[i];
                 }
 #else
@@ -432,9 +493,10 @@ int main(void)
                 preset_scene_t sc;
                 for (int i = 0; i < NUM_TAPS; i++) sc.phase[i] = g_engine.taps.phase[i];
                 sc.mult      = g_time_raw01;
-                sc.octave    = (uint8_t)prev_octave;
+                sc.octave    = pc.octave;
                 sc.mute_mask = 0;
-                sc.rsvd[0] = sc.rsvd[1] = 0;
+                sc.cycle     = pc.cycle;
+                sc.rsvd      = 0;
                 uint8_t blob[PRESET_SLOT_BYTES];
                 unsigned n = (unsigned)preset_pack(&sc, blob);
                 (void)bsp_preset_flash_write(pc.preset, blob, n);

@@ -2,7 +2,7 @@
 #include "preset_store.h"
 #include "storage.h"
 
-#define PRESET_VERSION 1
+#define PRESET_VERSION 2   /* v2: +cycle in the scene */
 
 void preset_defaults(preset_scene_t *s)
 {
@@ -11,8 +11,8 @@ void preset_defaults(preset_scene_t *s)
     s->mult      = 0.5f;                          /* noon */
     s->octave    = 1;
     s->mute_mask = 0;
-    s->rsvd[0]   = 0;
-    s->rsvd[1]   = 0;
+    s->cycle     = 2;   /* FULL */
+    s->rsvd      = 0;
 }
 
 size_t preset_pack(const preset_scene_t *s, uint8_t *blob)
