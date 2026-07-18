@@ -16,7 +16,7 @@ separate images. **Flashing is optional and reversible** — the stock image can
 |---|---|
 | `Compiled FW/B288-REV1.0.hex` | Factory firmware, unmodified. Your safe restore point. |
 | `Compiled FW/B288-REV1.0-interp-EXPERIMENTAL.hex` | Stock firmware + the fractional-interpolation patch (smooth TIME-mode modulation). Experimental. |
-| Community firmware (`firmware/`) | The full rewrite. In development — not yet a flashable release. |
+| Community firmware (`firmware/`) | The full rewrite — **released (v1.0.1)** and running on hardware. Take the `.hex`/`.bin` or the one-click flasher zip from the tagged GitHub release, or build it with `make firmware`. |
 
 ## What you need
 

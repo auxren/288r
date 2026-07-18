@@ -2,9 +2,12 @@
 
 ## The basic patch
 
-1. Patch audio into an **input**; bring up the relevant **input pot(s)**.
+1. Patch audio into an **input**; bring up the relevant **input pot(s)**. To gain-stage, raise the
+   input level until the **input-mixer LED** (the whole-chain clip indicator) lights, then back off
+   until it stays dark.
 2. Choose a **preset bank** (A/B/C) and the **SHORT/FULL cycle** length.
-3. Raise a few **output-mixer sliders** to hear individual taps, or take the **mixed out** for the sum.
+3. Raise a few **output-mixer sliders** to hear individual taps — sliders **1–8** are taps 1–8;
+   slider **0** is the always-on **dry** input feed — or take the **mixed out** for the sum.
 4. Set the **multiplier** for the delay time you want; use **TIME** mode to modulate it (see
    [Time & pitch](05-time-and-pitch.md)).
 
@@ -23,7 +26,11 @@ recording or freezes a region and loops it:
   frozen loop, so you get a repeating phrase you can process with the taps and mixer.
 
 The **momentary switches** and **pulse inputs** drive these transitions (manually or from a clock).
-The community firmware smooths the record→recirc handoff so loop boundaries don't click.
+Automatic capture (the red transport switch in its center position) is keyed by the **sens.** knob:
+it triggers when incoming audio exceeds the sens. threshold. The **AUTO CONTROL** LED lights while
+the signal is above that threshold — the same comparison that fires the capture — and with sens.
+fully CCW auto triggering is disabled. The community firmware smooths the record→recirc handoff so
+loop boundaries don't click.
 
 ## Feedback
 
@@ -54,5 +61,11 @@ Sweeping the multiplier (by hand or with CV) in **TIME** mode moves all taps tog
 community firmware reads the taps at **fractional** positions, that sweep is smooth — which is exactly
 what makes **chorus, flanger and doppler/tape** effects possible. On the stock firmware the same
 sweep stepped in whole samples and "zippered," and coarse changes retuned the audio clock in octave
-jumps; that's the limitation this project set out to fix. See [Time & pitch](05-time-and-pitch.md)
+jumps; that's the limitation this project set out to fix.
+
+In TIME mode the multiplier knob's printed marks read true — **0.4** at the CCW stop, **1.0** at
+noon, **1.6** at the CW stop. CV modulation goes through the **c.v. attenuverter**:
+`mult = knob + CV × attenuverter`, so the attenuverter must be off its center detent (a dead zone
+where CV is ignored) for CV to have any effect, and turning it CCW inverts the sweep. The same
+attenuverter also scales the pitch CV in **PITCH** mode. See [Time & pitch](05-time-and-pitch.md)
 for the details and for **PITCH** mode.

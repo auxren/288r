@@ -17,8 +17,8 @@ User manual for the Buchla-format **288r Time Domain Processor** and the open-so
 3. [Front-panel reference](03-front-panel-reference.md) — every control and jack
 4. [Operation](04-operation.md) — delay, looper, feedback, and modulation
 5. [Time & pitch modes](05-time-and-pitch.md) — the multiplier, smooth modulation, and pitch
-6. [Presets, taps & mixers](06-presets-taps-mixers.md) — the four banks, phase, tap times, output mixer
-7. [Fidelity, tone & settings](07-fidelity-tone-settings.md) — bit-depth, analog tone, the settings mode
+6. [Presets, taps & mixers](06-presets-taps-mixers.md) — the A/B/C preset slots, phase, output mixer
+7. [Fidelity, tone & settings](07-fidelity-tone-settings.md) — bit-depth, tone, the rear DIP settings
 8. [Troubleshooting](08-troubleshooting.md) — recovery and common issues
 9. [Firmware & contributing](09-firmware-and-contributing.md) — the community-firmware project
 

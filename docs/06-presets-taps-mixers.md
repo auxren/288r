@@ -1,23 +1,29 @@
 # 6. Presets, taps & mixers
 
-The 288r's "presets" are not saved files — they are **physical trimmers and DIP switches read live**.
-What's on the panel *is* the state. This chapter explains how the taps are placed and mixed.
+On the stock firmware the 288r's "presets" were not saved files — they were **physical trimmers and
+DIP switches read live**. The community firmware keeps the panel-first design but makes the presets
+**savable A/B/C slots**, persisted in internal flash. This chapter explains how the taps are placed
+and mixed.
 
-## The four preset banks
+## The A / B / C preset slots
 
-There are four columns of nine trimmers each — the **preset banks** (a default plus A / B / C). Each
-trimmer sets one tap's **phase** on the printed **0–160** scale. The **A / B / C** selector chooses
-which bank feeds the taps right now:
+The panel has four columns of nine trimmers each — the stock firmware's **preset banks**. The
+community firmware does not read the trimmers; instead, each position of the **A / B / C** selector
+recalls a **saved slot** holding a full tap pattern (per-tap **phase** on the printed **0–160**
+scale, plus the multiplier):
 
 | Selector | Tap placement source |
 |---|---|
-| default | Even spacing (20, 40, 60 … 160) |
-| **A** | Bank A trimmers |
-| **B** | Bank B trimmers |
-| **C** | Bank C trimmers |
+| **A** | Slot A |
+| **B** | Slot B |
+| **C** | Slot C |
 
-Because banks are read live, you "store" a pattern simply by setting the trimmers — and you switch
-between four patterns instantly with the selector. There is nothing to save and nothing to lose.
+An empty slot falls back to the default even spacing (20, 40, 60 … 160).
+
+**To save:** hold the red **write** switch for ~2 s — the LEDs twinkle to confirm — and the current
+pattern is stored to the selected slot. Presets persist across power cycles. **On recall**, the
+stored multiplier is **pinned**: the physical knob is ignored until you sweep it through the stored
+value, so a recalled preset never jumps to match the panel.
 
 ## Tap placement math
 
@@ -27,29 +33,33 @@ Each tap reads the delay memory at:
 tap distance = base_time × (phase[tap] / 160) × multiplier
 ```
 
-- **phase[tap]** — the active bank's trimmer for that tap (0–160).
-- **base_time** — the **tap-time DIPs** (binary, 10 ms per step) and the **SHORT/FULL cycle** switch
-  (FULL = full window, SHORT = quarter).
+- **phase[tap]** — the active preset slot's value for that tap (0–160).
+- **base_time** — the base delay window, scaled by the **SHORT/FULL cycle** switch (FULL = full
+  window, SHORT = quarter) and the rear **×10 range** DIP. (On the stock firmware this also came
+  from the **tap-time DIPs**, which the community firmware never reads.)
 - **multiplier** — the front-panel multiplier (see [Time & pitch](05-time-and-pitch.md)).
 
-So the *bank* sets the pattern shape; the *cycle switch and multiplier* scale the whole pattern in
+So the *preset* sets the pattern shape; the *cycle switch and multiplier* scale the whole pattern in
 time.
 
 ## Phase-invert & mute
 
-Per-tap DIP switches shape how the taps combine at the **mixed** output:
+Per-tap **phase switches** flip a tap's polarity in the analog **mixed** sum — inverting some taps
+turns a plain multitap into a comb/allpass-like timbre and changes how taps reinforce or cancel.
+(In PITCH mode the taps are deliberately decorrelated so an inverted pair combs instead of
+cancelling — see [Time & pitch](05-time-and-pitch.md).)
 
-- **Phase-invert DIPs** (4 × 5-position) — flip a tap's polarity. Inverting some taps turns a plain
-  multitap into a comb/allpass-like timbre and changes how taps reinforce or cancel.
-- **Mute DIPs** (4 × 4-position) — drop a tap out of the mix entirely.
-
-These affect the analog **mixed** sum. The individual tap outputs still carry every tap.
+The **front DIP matrix** — the stock firmware's tap-time and mute rows — is **never read** by the
+community firmware (see [Settings](07-fidelity-tone-settings.md)); what it did on the stock is
+covered by the preset slots. To drop a tap from the mix, pull its slider down. The individual tap
+outputs still carry every tap.
 
 ## The output mixer
 
-Nine **45 mm sliders** set the level of each tap (8 taps + a master) in the analog **mixed** output.
-The mix is a real op-amp sum of the eight DAC channels — there is no digital master bus — so the
-"analog tone" coloration in the community firmware is applied **per tap** before the sum (see
+Nine **45 mm sliders** set the levels in the analog **mixed** output: slider **0** carries the
+always-on **dry** input feed (an analog path, not a tap); sliders **1–8** are taps 1–8.
+The mix is a real op-amp sum of the eight DAC channels — there is no digital master bus — so any
+digital tone coloration happens per tap or on the record path, never on a master bus (see
 [Fidelity & tone](07-fidelity-tone-settings.md)).
 
 **Two ways to use the outputs:**
@@ -60,6 +70,9 @@ The mix is a real op-amp sum of the eight DAC channels — there is no digital m
 
 ## AUTO CONTROL
 
-The firmware includes an envelope-following **AUTO CONTROL** that adjusts gain based on input/output
-level (to keep the multitap sum from clipping as feedback builds). Its exact behavior and threshold
-are calibration items confirmed on the bench.
+**AUTO CONTROL** is the automatic capture: with the red transport switch in its center (auto)
+position, the transport triggers when incoming audio exceeds the threshold set by the **sens.**
+knob. sens. is an analog attenuator on the level-detect input — raising it lets quieter material
+trigger; fully counter-clockwise disables auto triggering. The **AUTO CONTROL LED** lights while
+the signal is above the threshold — the same comparison that fires the capture — so the LED shows
+exactly what will trigger. See [Operation](04-operation.md).

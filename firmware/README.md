@@ -57,37 +57,63 @@ make engine    # cross-compile the DSP engine for STM32F429 (compile-only proof)
 make firmware  # link the flashable image -> build/fw/b288-community.hex
 ```
 
-## Flashable image — builds now; bench-gated constants remain
+## Flashable image — v1.0.1: works on hardware, feature-complete against the stock
 
-`make firmware` produces a complete, linked image (`build/fw/b288-community.hex`): clock → SDRAM →
-codec → SAI/DMA → the validated smooth-delay engine, 8 taps out the 8 DAC channels. It **builds and
-links clean**, but it is a *bring-up* — every value tagged `[BENCH]` in `src/bsp/board.h` is a
-best-effort guess and must be confirmed on the SWD/logic-analyzer session. **Do not expect audio on
-the first flash.** The full procedure (one peripheral at a time, with a pass-check for each) is
-[docs/bench-bringup.md](../docs/bench-bringup.md). Recovery is always SWD — reflash the golden stock
+`make firmware` produces the release image (`build/fw/b288-community.hex`): clock → SDRAM → codec →
+SAI/DMA → the smooth-delay engine, 8 taps out the 8 DAC channels. As of **v1.0.1** (bench sessions
+1–7, owner-verified on the unit) it is a working replacement for the stock firmware:
+
+- **Smooth delay-time modulation** — the headline chorus/flanger fix: fractional Hermite taps with a
+  10 ms multiplier glide (the 67 µs control slew that caused broadband zipper is fixed).
+- **Multiplier knob calibrated to the panel legend** (TIME mode): 7-point owner-measured curve —
+  0.4 at the CCW stop, 1.0 at noon, 1.6 at the CW stop, all marks reading true.
+- **Stock control law:** mult = knob + CV × attenuverter (center detent = CV ignored, CCW inverts),
+  live from boot in both modes.
+- **Pitch mode** (stock semantics on the crossfaded shifter): all 8 taps carry the shifted voice
+  (crossfaded replace; zero depth = clean dry), knob = pitch-down depth (−1.07 st FULL / −4.75 st
+  SHORT cycle) with an exact-unity snap at the bottom of travel; CV bipolar 1.2 V/oct through the
+  attenuverter (ratio bounded ±2 oct); ~15 ms glide; coherence-adaptive crossfade kills the splice
+  AM (tone envelope ripple 0.33/0.03 dB); exact int+frac delay reads; per-tap 0–9 ms decorrelation.
+  Feedback patching cascades the shift per pass (H949-style spirals).
+- **Panel live:** full switch scan (A/B/C presets, ×1/×2, cycle, store beg./end, transport
+  momentary), pulse input jacks (write/recirc/arm), and indicator LEDs — the input mixer LED is a
+  whole-chain CLIP indicator (~¼ s hold; stock >½-FS comparator behind `LED_INPUT_CLIP_MODE 0`),
+  the AUTO CONTROL LED lights only while audio exceeds the sens. threshold.
+- **sens. knob** (analog attenuator feeding codec ADC slot 1): sets how quiet a signal still
+  triggers the AUTO LED and auto/looper capture; full CCW disables both.
+- **Savable presets:** hold write ~2 s → the selected A/B/C slot, flash-persistent, control-pinning
+  on recall.
+- **Settings = the 4 rear DIPs only (locked):** sw1 ×10 extend, sw2 bandwidth limit, sw3/sw4
+  resolution — boot-time straps, power-cycle to apply. The front DIP matrix is never read; the
+  presets cover everything it did on the stock.
+- **Soft-knee output limiter** (transparent below 0.75 FS): external feedback patching blooms
+  tape-style instead of flat-topping. (Feedback is external patching only, by design.)
+
+Host tests: **26 suites** (`make test`). Recovery is always SWD — reflash the golden stock
 hex; SWD + the BOOT0 ROM bootloader make bricking effectively impossible.
 
-Confirmed (bench 1) and already baked in: MCU **STM32F429ZET6**, **HSE 8 MHz → 168 MHz**, codec bus
-**I2C1**, audio **SAI1** TDM (8×32-bit, 24-bit), SDRAM **IS42S16400** (timings from the -7 datasheet).
+Bench-verified and baked in: MCU **STM32F429ZET6**, **HSE 8 MHz → 168 MHz**, codec **CS42448** on
+**I2C1**, audio **SAI1** TDM (8 slots × 32-bit, 24-bit), **SDRAM = FMC bank 2**, Time-CV = SPI2
+ADC ch0.
 
-`[BENCH]` to confirm (all quarantined in `src/bsp/board.h`):
-- **SAI clock chain** (`PLLSAI_*` + `SAI_MCKDIV`) to land exactly on 96 kHz, and whether codec MCLK is
-  F429-generated or board-supplied.
-- **Codec I²C address + register sequence** (sniff the stock power-up I²C) and the RESET pin.
-- **Exact pins** (SAI AF6 set, I²C1, FMC), the **DMA stream/channel** map, and the **TDM slot→jack order**.
-- **Calibration constants:** TIME taper, SHORT/FULL cycle lengths, slider gain law, AUTO CONTROL,
-  pulse thresholds (parameterized; marked "calibrate on hardware").
+**Known hardware fault (this unit, not firmware):** codec slot 4 is hot on the TDM bus but reaches
+no slider in any phase-switch position → broken analog path on the board (check that AOUT net:
+solder joint, coupling cap, buffer op-amp section). The firmware keeps the identity mapping
+(slider N = tap N) so the panel legend stays honest; the SWD `g_dac_solo` solo tool remains in the
+build for post-repair verification.
 
-For a *guaranteed-working* hardware test today, the **binary patch** in `re/patches/` (already
-validated on the unit) hears the interpolation fix on the stock firmware.
+## Still open (not release blockers)
 
-## Not yet wired (next layers, not bugs)
-
-The control surface (SPI2 ADC for Time-CV/pots/sliders, 74HC595/4051 DIP+trimmer scan), momentary-
-switch transport gestures, the settings/calibration boot chord, and the staged rewrite DSP modules
-(pitch `pitch_tap`, analog tone, int16/int32 SDRAM layer) are designed in `DESIGN.md` but not in this
-first bring-up image. Until the control surface lands, the delay time sits at a fixed default — enough
-to validate the whole audio path end to end.
+- **"signal in" (TIME section):** proven NOT a codec channel — it reaches the multiplier through
+  the analog Time-CV net (summed with c.v. in, scaled by the attenuverter). `[BENCH]`: the exact
+  summing point is unconfirmed. Practically, signal-in envelope modulation of delay time works
+  through the CV path (keep the attenuverter up to hear it).
+- **SENS_REF** (the fixed 0.02 FS threshold behind the sens. knob): calibrate by feel.
+- **Calibration routine** (sliders/pots/36 trimmers/CV): spec in DESIGN.md, not yet implemented.
+- **Debug scaffolding retained intentionally in v1.0.1** (SWD-only, invisible in normal use):
+  `g_dbg_panel` telemetry, `g_dac_solo`, `sdram_memtest` — documented in
+  [docs/bench-runbook.md](../docs/bench-runbook.md); strip in a future release once the slider-5
+  repair is verified.
 
 ## Binary ↔ source map (keep this honest as we go)
 - `delay_line` + `transport`  ⇦ `delay_tap_service_A/B` (sub_1250 / sub_15dc)  [write/record]
@@ -105,6 +131,5 @@ make firmware   # -> firmware/build/fw/b288-community.hex
 openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
     -c "program build/fw/b288-community.hex verify reset exit"
 ```
-Follow [docs/bench-bringup.md](../docs/bench-bringup.md) to verify each peripheral and fill in the
-`[BENCH]` constants. For a guaranteed-working test today, the **binary patches** in `re/patches/`
-hear the interpolation fix on the stock firmware.
+The **binary patch** in `re/patches/` remains the drop-in interpolation fix for anyone staying on
+the stock firmware.

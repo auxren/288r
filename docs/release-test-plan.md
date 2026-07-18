@@ -105,10 +105,22 @@ tag `v0.9` — CI builds and publishes the release with the one-click flasher zi
 
 - ☐ **A1 attenuverter (⊖/⊕):** CV patched: knob **center = CV ignored**, CW = CV adds
   to delay time, CCW = CV **subtracts/inverts**. (Stock law, channel proven live.)
-- ☐ **A2 pitch mode (stock semantics):** TIME/pitch → pitch: delay pins to minimum;
-  the **multiplier knob now sets pitch-down depth** (up to ~1 st FULL / ~5 st SHORT
-  cycle); CV bends bipolar at 1.2 V/oct scaled by the attenuverter. Knob CCW + no
-  CV = transparent. Flip back to TIME: knob returns to delay-time duty.
+- ☐ **A2 pitch mode (all-tap replace — v1.0.1 semantics):** TIME/pitch → pitch:
+  delay pins to minimum and **all 8 tap outputs become the shifted voice**
+  (crossfaded replace; slider 0 stays the always-dry feed, sliders 1–8 = taps).
+  Knob = **pitch-down depth** from raw pot travel — the bottom ~2% snaps to exact
+  unity (clean bypass); depth span follows the cycle switch (full = −1.07 st max,
+  short = −4.75 st max). CV bends bipolar at 1.2 V/oct scaled by the attenuverter
+  (ratio hard-bounded to ±2 octaves — a railed CV stays musical, no garbage).
+  Sweeps glide (~15 ms portamento, no steps). Flip back to TIME: knob returns to
+  delay-time duty.
+- ☐ **A2a AM/flatness check:** sustained tone at full depth: loudness stays steady —
+  no splice-rate tremolo/pumping (coherence-adaptive crossfade; measured tone
+  ripple 0.33 dB at −1.07 st / 0.03 dB at −4.75 st). At near-zero depth against
+  the dry: no detune-beating (unity snap).
+- ☐ **A2b phase-pair check:** in pitch mode, raise a phase-inverted slider pair
+  together: the pair **combs** (hollow filtering), it does NOT cancel to silence
+  (per-tap 0–9 ms decorrelation).
 - ☐ **A3 store end (hold):** black switch at **store end**, red AUTO at center:
   play a phrase → it records one cycle → **write+ready LEDs together** (held, delay
   keeps running) → hit **recirc** any time later → the held window loops.

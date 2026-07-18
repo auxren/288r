@@ -65,9 +65,9 @@ better engine; add new features/controls/modulation only *after* the clone is na
   cycle blips at loop wrap — all working). Transport (red write/recirc momentary) working. CYCLE 3-way
   scales the window live. **Savable presets working end-to-end**: hold-write-2s saves to the selected
   C/B/A slot (LED twinkle confirms), recall applies phases + pinned multiplier (catch-band pinning).
-  Codec is actually a **CS42448** (ID 0x04). Rear DIPs: PB11=x10 extend (stock table exactly x10),
-  PB10=rear sw2. NOTE: preset persistence is still the RAM placeholder — lost at power-off until the
-  internal-flash backend lands.
+  Codec is actually a **CS42448** (ID 0x04). Rear DIPs: PB10=x10 extend (stock table exactly x10;
+  pin confirmed by live IDR capture in session 6), PB11=rear sw2 (bandwidth). NOTE: preset
+  persistence is still the RAM placeholder — lost at power-off until the internal-flash backend lands.
 - **Bench session 6 + ultracode dig (2026-07-18, overnight): FEATURE-COMPLETE against the stock.**
   An 8-agent adversarially-verified decompile dig settled the full architecture (see the
   panel-scan.md CORRECTIONS addendum): boot-once matrix scan + 595 parked at 0x777777; the parked
@@ -79,18 +79,37 @@ better engine; add new features/controls/modulation only *after* the clone is na
   (write/recirc/arm) wired; pitch branch formally merged. Preset flash persistence live (sector 3).
   A stray patched CV was the source of a whole evening of "worse" reports — the STABILITY rule now
   in force: proven core locked, inferences gated until wire-proven. `make test` = 21 suites.
-- **Still [BENCH]:** the coarse multiplier KNOB (SPI2 ch1 read — CV works, knob TBD); config-DIP sw1/sw2
-  GPIO pins (`SW_*_MAPPED=0` until traced); the 595 bit→LED/column/mux/codec-reset map (run the walk);
-  the tap-time DIP matrix + phase/mute + transport momentaries; TIME/pitch mode switch + Pitch-CV cal;
-  PA4/5/6-vs-codec-reset overlap check; settings/cal. `firmware/src/bsp/` still has `sdram_memtest`/
-  `g_dbg_*`/`adc_mult` SWD scaffolding to strip pre-release.
+- **Bench session 7 (2026-07-18, owner-in-the-loop): v1.0.1 TAGGED.** Modulation ZIPPER fixed (tap
+  slew tau was 67 µs — snapped to control ticks from any source; now a 10 ms glide, chorus/flanger CV
+  clean). Multiplier knob calibrated to the PANEL LEGEND (7-point owner-measured curve, 0.4–1.6 all
+  marks read true; the pot taper is non-linear vs the print). **sens. knob bound** (owner sweep:
+  analog attenuator feeding codec ADC slot 1; envelope vs fixed SENS_REF) → AUTO LED lights only
+  while audio exceeds the sens threshold, auto-capture keys off the same comparison; PA0 = whole-
+  chain CLIP LED (~¼ s on input rail or pre-limiter tap overrange; stock comparator behind
+  `LED_INPUT_CLIP_MODE 0`). **Pitch mode overhauled:** all-8-tap crossfaded REPLACE (zero depth =
+  clean dry; slider 0 = always-dry feed), knob = raw-travel pitch-down depth with an exact-unity
+  snap, CV ratio bounded ±2 oct, ~15 ms glide, **AM fixed** (coherence-adaptive crossfade — tone
+  ripple 0.33/0.03 dB), **exact int+frac reads** (the float path quantized deep SDRAM reads to
+  ¼ sample), per-tap 0–9 ms decorrelation (inverted slider pairs comb, don't cancel). Slot→slider
+  map owner-verified via the `g_dac_solo` SWD solo walk → **slider 5 = dead ANALOG path on this
+  board** (slot 4 hot on the bus; firmware keeps identity mapping). Settings LOCKED: only the 4
+  rear DIPs are read (front DIP matrix never — presets cover it). Soft-knee output limiter
+  (transparent <0.75 FS; a 1.15× external feedback loop settles at 0.877 FS, zero flat-tops).
+  `make test` = **26 suites**; **v1.0.1 tagged** (CI hex/bin + one-click flasher zip).
+- **Still [BENCH]/open:** the "signal in" summing point (proven NOT a codec channel — it reaches the
+  multiplier through the analog Time-CV net, scaled by the attenuverter; exact summing point
+  unconfirmed); SENS_REF (0.02 FS) feel-calibration; the calibration routine (sliders/pots/36
+  trimmers/CV — DESIGN.md spec, unimplemented). Debug
+  scaffolding (`g_dbg_panel`, `g_dac_solo`, `sdram_memtest`) intentionally RETAINED in v1.0.1
+  (SWD-only) — strip in a future release once the slider-5 repair is verified.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
 - MCU **STM32F429ZET6** (LQFP144) — confirmed from chip marking: **512 KB flash**, 192 KB SRAM
   (SP `0x20030000`) + 64 KB CCM. (`STM32F429.ld` FLASH = 512K.)
-- **Codec = Cirrus Logic CS42888** (48-TQFP, the chip by the STLINK header — the earlier "second ST
-  QFP" was a misread Cirrus logo; there is NO second MCU). **4 ADC-in / 8 DAC-out, 24-bit, TDM/I²S**,
+- **Codec = Cirrus Logic CS42448** (bench-confirmed chip ID 0x04; earlier notes read it as CS42888 —
+  48-TQFP, the chip by the STLINK header; the "second ST QFP" was a misread Cirrus logo; there is NO
+  second MCU). **4 ADC-in / 8 DAC-out as used, 24-bit, TDM/I²S**,
   control over I²C or SPI2. → the **8 taps each get their own DAC output**; the F429 drives it via
   **SAI2 multichannel TDM** (hence the firmware's A/B paths). audio_io/engine output should be
   **8-channel TDM**, not one mixed output.
@@ -146,8 +165,8 @@ re/.venv/bin/python re/scripts/apply_patch1.py   # (re)generate + verify Patch 1
 ```
 
 ## What's next
-**Resolved** (no longer open): MCU F429Z + 24/96 + 74HC595/4051 scan; codec = **CS42888**
-(4-in/8-out TDM, no second MCU); SDRAM = **IS42S16400 8 MB/16-bit** → int16/int32 buffer; **no
+**Resolved** (no longer open): MCU F429Z + 24/96 + 74HC595/4051 scan; codec = **CS42448**
+(4-in/8-out TDM as used, no second MCU); SDRAM = **IS42S16400 8 MB/16-bit** → int16/int32 buffer; **no
 EEPROM** (BOM paste error); panel switch→GPIO map traced; momentary switches SW14/16 identified.
 **Bench session 1 done (2026-07-16, SWD read-only — see `re/notes/bench-session-1.md`):** RDP open;
 unit fw == our ref (patch valid); **codec bus = I²C1** (SPI2 = control-surface ADC); audio is **SAI1**

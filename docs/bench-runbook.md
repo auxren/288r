@@ -84,6 +84,15 @@ Everything here is labelling the `[BENCH]` markers those commits left. **Keep th
 The firmware exposes a live decode over SWD — read it with gdb `p g_dbg_panel` (or
 `mdw &g_dbg_panel <n>`) while toggling controls. That struct is the labelling tool for steps 2–5.
 
+**v1.0.1 additions (retained SWD-only tooling):** `g_dbg_panel` gained `sens_q[2]` — codec
+slot-1/slot-2 envelopes ×1000 (the sens / "signal in" identification fields) — and `clip_q`, a
+chain-clip event counter (wraps). `g_dac_solo` is a writable byte that solos one TDM DAC slot, for
+slot→slider mapping and for re-verifying the dead slider-5 analog path after repair:
+`mwb <addr-of-g_dac_solo> N` with N = 0..7 solos that slot (all others muted); `mwb <addr> 0xff`
+(−1) restores normal output. **Debug symbol addresses shift every build** — take them from the
+exact image flashed (`arm-none-eabi-nm build/fw/b288-community.elf | grep -E 'g_dbg_panel|g_dac_solo'`);
+gdb with the matching ELF resolves them for you.
+
 **Even better for the shift-register chains — capture with the Saleae and self-label:** probe the
 165 (PA4/5/6) and SPI2 (PB12/13/14 + MOSI) buses, export a Logic 2 digital CSV, and run
 `python3 re/scripts/saleae_decode.py 165 cap.csv --latch 0 --clk 1 --data 2 --changes` (toggle one
