@@ -44,9 +44,12 @@ cycle at **full**; rear DIPs all OFF.
   quarter-length loop).
 
 ## 6. Level LEDs
-- ☐ **6.1** **Input mixer LED** tracks the input: dark with no signal, lights with
-  hot signal, pings with plucky material. (It's a >½-full-scale comparator — quiet
-  signals won't light it; that's stock behavior.)
+- ☐ **6.1** **Input mixer LED = CLIP indicator** (repurposed by owner request):
+  dark during clean playing; lights (~¼ s hold per hit) when the input ADC hits
+  the rail **or** any tap output would exceed full scale pre-limiter. Validate:
+  crank mixer A into a hot source → LED lights; back it off until the LED just
+  stops → that's the clean gain-staging point. (Stock >½ FS level-comparator
+  behavior is preserved behind `LED_INPUT_CLIP_MODE 0` in board.h.)
 - ☐ **6.2** **Auto-control LED** lights while signal is present (envelope >¼ FS)
   and goes dark shortly after the signal stops.
 
@@ -82,8 +85,9 @@ cycle at **full**; rear DIPs all OFF.
   behavior and may need tuning (threshold, timing), not correctness fixes.
 
 ## 10. Known limitations in v0.9 (verify they're the ONLY gaps)
-- Front tap-time DIP matrix + phase/mute DIPs: not yet read (stock preset rows B/C/D
-  fall back to the ramp; OUR savable presets replace the feature).
+- Front tap-time DIP matrix + phase/mute DIPs: **never read — DESIGN LOCKED (owner
+  decision 2026-07-18): only the 4 rear DIPs are settings; everything the front
+  DIPs did on the stock is covered by the save-chord presets.**
 - store beg./end switch: decoded, not yet acting.
 - TIME/pitch switch: decoded, function lands with the pitch voice (v1.x, branch ready).
 - 36 trimmers: scanned (values visible over SWD), not yet applied to parameters.
@@ -112,3 +116,10 @@ tag `v0.9` — CI builds and publishes the release with the one-click flasher zi
   acts exactly like the momentary; a pulse into **arm** starts a next-sound capture.
 - ☐ **A5 persistence re-check:** presets (now also capturing ×1/×2 + cycle) survive
   a power cycle; recalled switch values yield to the physical switch on first move.
+- ☐ **A6 sens knob (needs the ID sweep first):** codec ADC slots 1+2 carry
+  knob-scaled copies of the input (measured on the wire) = the **sens.** and
+  **signal in** analog paths. ONE sweep of each knob while the SWD logger runs
+  binds `SENS_IN_SLOT`; then: red AUTO at center, sens at zero → auto-trigger
+  never fires; raise sens → quieter and quieter sounds trigger the capture.
+- ☐ **A7 clip LED:** with the current patch (mixer A full into a hot source) the
+  input LED should sit lit; lower mixer A until it goes dark → delays clean up.

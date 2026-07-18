@@ -60,6 +60,29 @@
 /* Which ADC TDM slot carries the audio input signal (0..3). [BENCH] live test. */
 #define AUDIO_IN_SLOT     0u
 
+/* ---- sens. knob (AUTO CONTROL trigger threshold) ------------------------- */
+/* The sens knob is an ANALOG attenuator feeding the input signal into its own
+ * codec ADC slot: measured on the wire (2026-07-18), slots 1 AND 2 both carry
+ * knob-scaled copies of the input (corr -0.958 vs slot 0) — these are the sens
+ * and "signal in" knob paths; ONE owner knob-sweep disambiguates which is which.
+ * The firmware envelope-follows the sens slot and fires the auto-trigger when it
+ * crosses a FIXED reference — the knob sets the threshold by analog gain (stock
+ * topology; knob at zero = auto-trigger off).
+ *  -1 = slot not yet proven: auto-trigger falls back to the main-input 0.25 FS
+ *  law (the proven v0.9 behavior). Set to 1 or 2 once the sweep identifies it. */
+#define SENS_IN_SLOT      (-1)
+#define SENS_REF          0.02f   /* fixed trigger reference [calibrate on hardware] */
+#define SENS_ARM_FRAC     0.4f    /* re-arm hysteresis: env must dip below REF*this  */
+
+/* ---- input-mixer LED (PA0) mode ------------------------------------------ */
+/* 1 = whole-chain CLIP indicator (community): lights when the input ADC hits
+ *     the 24-bit rail OR any tap output would exceed full scale pre-limiter,
+ *     held ~250 ms so single-sample hits are visible.
+ * 0 = stock-exact behavior: >0.5 FS level comparator (per-sample PWM). */
+#define LED_INPUT_CLIP_MODE  1
+#define CLIP_IN_THRESH       0.9999f  /* |input| at/over this = ADC rail       */
+#define CLIP_HOLD_BLOCKS     750u     /* ~250 ms at ~3000 blocks/s             */
+
 /* ---- multiplier control source (both OFF for a clean first bring-up) ----- */
 /* The multiplier (delay-time / pitch amount) has two possible live sources:
  *   - Time-CV, which arrives on a codec ADC slot in the TDM stream (per-sample,

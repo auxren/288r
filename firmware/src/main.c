@@ -101,6 +101,15 @@ static volatile float g_time_raw01 = 0.5f;
 /* Input envelope (ISR-updated) for the presence/auto LED comparator (PA11) and
  * the looper's auto-write trigger. */
 static volatile float g_env = 0.0f;
+/* sens/"signal in" candidate channels: codec ADC slots 1+2 carry knob-scaled
+ * copies of the input (analog attenuators — see board.h SENS_IN_SLOT). Both are
+ * envelope-followed so one owner knob-sweep over SWD identifies which is sens. */
+static volatile float g_sens_env[2] = { 0.0f, 0.0f };
+
+/* chain-clip indicator (PA0 repurposed, LED_INPUT_CLIP_MODE): block count until
+ * which the LED stays lit, + an event counter for SWD verification. */
+static volatile uint32_t g_clip_until = 0;
+static volatile uint8_t  g_clip_count = 0;
 static float g_att_filt = 2047.0f;   /* c.v. attenuverter (ADC3 parked ch) */
 
 /* Audio-block clock (ISR-incremented, ~6000/s): the loop-pass "tick" rate varies
@@ -160,6 +169,8 @@ struct dbg_panel {
     uint8_t  lp_state;    /* looper state READY/WRITE/LOOP         */
     uint8_t  xp_mode;     /* transport 1=WRITE 2=RECIRC            */
     uint8_t  env_q;       /* envelope x100                          */
+    uint8_t  sens_q[2];   /* codec slot1/slot2 env x1000 (sens/"signal in" ID) */
+    uint8_t  clip_q;      /* chain-clip event counter (wraps)      */
     uint8_t  eoc;         /* eoc blink counter (nonzero = blinking) */
     float    mult;        /* smoothed multiplier [0,1]            */
     float    base;        /* current taps base_delay (samples)    */
@@ -173,8 +184,15 @@ volatile struct dbg_panel g_dbg_panel __attribute__((used));
 void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 {
     const float t = g_time_raw01;
+    int clip = 0;
     for (unsigned f = 0; f < frames; ++f) {
         float x = audio_in_to_f(in[f * TDM_SLOTS + AUDIO_IN_SLOT]);
+#if LED_INPUT_CLIP_MODE
+        /* INPUT LED (PA0) repurposed: whole-chain clip detector, stage 1 — the
+         * input ADC at the 24-bit rail (information already lost upstream of us;
+         * the fix is the mixer knob, so tell the player). */
+        { float ax0 = (x < 0.0f) ? -x : x; if (ax0 >= CLIP_IN_THRESH) clip = 1; }
+#else
         /* INPUT LED (PA0) — decompile-exact: the stock compares each input sample
          * against +0.5 FS in the tap service and drives PA0 LOW (LED ON) above it:
          *   if (r5 + 0x400000 > 0x800000) sub_fe0(0); else sub_102c(0);
@@ -182,11 +200,21 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
          * (PA0/1/7/8/11 are DSP-driven indicator outputs, NOT mux addresses — the
          * old panel-scan.md label was wrong.) */
         if (g_blocks >= g_twinkle_until) bsp_panel_strobe(x > 0.5f ? 0 : 1);
+#endif
         /* input envelope for the AUTO-CONTROL/presence LED (PA11): stock compares
          * an envelope accumulator (0x200000bc) against 0x200000 = 0.25 FS. */
         {
             float ax = (x < 0.0f) ? -x : x;
             g_env += (ax - g_env) * 0.002f;      /* ~5 ms one-pole @96k */
+        }
+        /* sens / "signal in" knob channels (codec slots 1+2): same one-pole. */
+        {
+            float s1 = audio_in_to_f(in[f * TDM_SLOTS + 1]);
+            float s2 = audio_in_to_f(in[f * TDM_SLOTS + 2]);
+            if (s1 < 0.0f) s1 = -s1;
+            if (s2 < 0.0f) s2 = -s2;
+            g_sens_env[0] += (s1 - g_sens_env[0]) * 0.002f;
+            g_sens_env[1] += (s2 - g_sens_env[1]) * 0.002f;
         }
         float chan[NUM_TAPS];
         (void)engine_process_multi(&g_engine, x, t, chan);
@@ -202,11 +230,23 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             chan[0] += (PITCH_VOICE_GAIN * wet) * y;
         }
 #endif
+#if LED_INPUT_CLIP_MODE
+        /* clip stage 2 — any tap about to exceed full scale pre-limiter (covers
+         * the pitch-voice sum and hot recirc content; the soft knee makes it
+         * inaudible-ish, which is exactly why it deserves an indicator). */
+        for (unsigned s = 0; s < (unsigned)NUM_TAPS; ++s)
+            if (chan[s] >= 1.0f || chan[s] <= -1.0f) clip = 1;
+#endif
         for (unsigned s = 0; s < TDM_SLOTS; ++s)
             out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
                                      ? audio_f_to_out(chan[s]) : 0;
     }
     g_blocks++;
+#if LED_INPUT_CLIP_MODE
+    if (clip) { g_clip_until = g_blocks + CLIP_HOLD_BLOCKS; g_clip_count++; }
+    if (g_blocks >= g_twinkle_until)
+        bsp_panel_strobe((g_blocks < g_clip_until) ? 0 : 1);
+#endif
     /* AUTO/presence LED (PA11), stock threshold: envelope > 0x200000/0x800000
      * = 0.25 FS -> LOW (LED on). Per block is plenty (stock: per main-loop). */
     if (g_blocks >= g_twinkle_until) bsp_panel_ind(4, (g_env > 0.25f) ? 0 : 1);
@@ -430,8 +470,18 @@ int main(void)
                     /* "next sound" semantics: arm on silence, trigger on the NEXT
                      * onset — so entering READY mid-signal holds READY (LED on)
                      * until the sound stops and restarts. */
+#if SENS_IN_SLOT >= 0
+                    /* sens knob = trigger threshold by analog gain (board.h):
+                     * fire when the sens channel's envelope crosses the fixed
+                     * reference, re-arm when it dips well below. Knob at zero
+                     * == auto-trigger off (stock semantics). */
+                    float sens = g_sens_env[SENS_IN_SLOT - 1];
+                    if (sens < SENS_REF * SENS_ARM_FRAC) g_lp_armed = 1;
+                    if ((g_lp_armed && sens > SENS_REF) || wr_edge || pc.automode == 2 || arm_in) {
+#else
                     if (g_env < 0.10f) g_lp_armed = 1;
                     if ((g_lp_armed && g_env > 0.25f) || wr_edge || pc.automode == 2 || arm_in) {
+#endif
                         g_lp_start = g_engine.dl.wpos;
                         engine_write(&g_engine);
                         g_lp_state = LP_WRITE;
@@ -499,6 +549,11 @@ int main(void)
             g_dbg_panel.xp_mode = (uint8_t)g_engine.xport.mode;
             { float e100 = g_env * 100.0f; g_dbg_panel.env_q = (e100 > 255.0f) ? 255 : (uint8_t)e100; }
             g_dbg_panel.eoc = g_eoc_blink;
+            for (int i = 0; i < 2; ++i) {          /* sens/"signal in" slot ID */
+                float e = g_sens_env[i] * 1000.0f;
+                g_dbg_panel.sens_q[i] = (e > 255.0f) ? 255 : (uint8_t)e;
+            }
+            g_dbg_panel.clip_q = g_clip_count;
             if (g_blocks < g_twinkle_until) {    /* saved! — random sparkle, 1 s */
                 g_twinkle_rng ^= g_twinkle_rng << 13;   /* xorshift32 */
                 g_twinkle_rng ^= g_twinkle_rng >> 17;
