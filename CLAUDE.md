@@ -102,6 +102,17 @@ better engine; add new features/controls/modulation only *after* the clone is na
   trimmers/CV — DESIGN.md spec, unimplemented). Debug
   scaffolding (`g_dbg_panel`, `g_dac_solo`, `sdram_memtest`) intentionally RETAINED in v1.0.1
   (SWD-only) — strip in a future release once the slider-5 repair is verified.
+- **v1.1-dev: up-shift anti-aliasing (built + host-proven, NOT YET FLASHED — unit was powered off):**
+  polyphase Kaiser-sinc band-limited read for ratio>1 (16 taps, 32 phases, 4 ratio bands; DSP-friend
+  learning: reading faster than write = decimation, Hermite doesn't band-limit). Measured on host:
+  **70.3 dB alias suppression vs the Hermite path** at +1 oct, passband −0.01 dB, cache purity 1.000.
+  A 2-agent adversarial verify caught a REAL blocker pre-flash: 32 uncached SDRAM loads + flash-coef
+  ART-thrash ≈ 2× the ISR idle budget (M4F has NO D-cache — SDRAM ≈10–18 cyc/load). Redesign: per-grain
+  32-sample streaming cache (grain only moves forward; ~2×ratio loads/sample amortized), active band's
+  coefficients CCM-published by the superloop (revoke-before-overwrite protocol), and DWT_CYCCNT ISR
+  load telemetry (`g_dbg_panel.isr_pk`) + `g_dbg_ratio_force` so headroom is MEASURED before release.
+  FLASH GATE: power the unit, flash, force ratio 4.0 over SWD, confirm isr_pk ≪ budget (28000cyc/block).
+  Remaining v1.1 backlog: period-adaptive grain window (bass reach below ~125 Hz), slider-5 board repair.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts

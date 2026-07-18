@@ -22,6 +22,75 @@ static inline float ps_read(const delay_line_t *d, float dist, dl_interp_t inter
     return dl_read_frac(d, di, dist - (float)di, interp);
 }
 
+#include "aa_tables.h"
+
+/* Band-limited read for UP-shifts (anti-aliasing): reading the buffer faster
+ * than it was written is decimation — content above Nyquist/ratio folds into
+ * the output, and Hermite does not band-limit. Polyphase Kaiser-sinc whose
+ * cutoff tracks the ratio band (aa_tables.h), linear phase interpolation
+ * between rows. Engaged only when ratio > ~1; down-shifts keep the exact
+ * Hermite path untouched. Reads span delays [dist-8, dist+7]: causal because
+ * dist >= base (256).
+ *
+ * ISR-budget design (adversarial-verify blocker: 32 raw SDRAM loads/sample +
+ * flash-coefficient thrash = ~2x the idle headroom): samples come from a
+ * per-grain 32-sample streaming cache (the grain's absolute read position
+ * only moves FORWARD, by `ratio`/sample, so a refill every ~16/ratio samples
+ * amortizes to ~2*ratio loads/sample); coefficients come from platform-
+ * published fast rows (CCM) when the band matches, flash otherwise. */
+static float ps_read_bl(pitchshift_t *p, const delay_line_t *d, int g,
+                        float dist, const float (*rows)[AA_TAPS])
+{
+    uint32_t di = (uint32_t)dist;
+    float    fr = dist - (float)di;
+    float pf = fr * (float)AA_PHASES;
+    int   pr = (int)pf;
+    float pw = pf - (float)pr;
+    const float *h0 = rows[pr];
+    const float *h1 = rows[pr + 1];
+    const uint32_t len = d->len;
+    uint32_t dd = di + (uint32_t)AA_CENTER;          /* deepest tap's delay   */
+    uint32_t a_deep = (dd <= d->wpos) ? d->wpos - dd
+                                      : d->wpos + len - dd;
+    uint32_t off = a_deep - p->aapos[g];             /* unsigned: jump -> huge */
+    if (off > (32u - (uint32_t)AA_TAPS)) {           /* refill (also first use)*/
+        p->aapos[g] = a_deep;
+        uint32_t a = a_deep;
+        for (int j = 0; j < 32; ++j) {
+            p->aawin[g][j] = d->buf[a];
+            if (++a >= len) a = 0;
+        }
+        off = 0;
+    }
+    const float *w = &p->aawin[g][off];
+    float acc = 0.0f;
+    for (int j = 0; j < AA_TAPS; ++j) {              /* j+1 = one sample later */
+        float c = h0[j] + pw * (h1[j] - h0[j]);
+        acc += c * w[j];
+    }
+    return acc;
+}
+
+const float (*ps_aa_flash_rows(int band))[16]
+{
+    if (band < 0) band = 0;
+    if (band >= AA_NBANDS) band = AA_NBANDS - 1;
+    return aa_tab[band];
+}
+
+void ps_set_aa_rows(pitchshift_t *p, int band, const float (*rows)[16])
+{
+    if (rows == 0 || band < 0) {                     /* revoke BEFORE overwrite */
+        p->aarows_band = -1;
+        __asm volatile ("" ::: "memory");
+        p->aarows = 0;
+        return;
+    }
+    p->aarows = rows;                                /* publish rows THEN band  */
+    __asm volatile ("" ::: "memory");
+    p->aarows_band = band;
+}
+
 void ps_init(pitchshift_t *p, float window, float base)
 {
     p->ratio  = 1.0f;
@@ -39,6 +108,14 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->pend_off = 0.0f;
     p->pend_tap = -1;
     p->next_tap = 0;
+    /* invalid marker = mid-range: buffer positions are < len (<= ~4M), so
+     * (a_deep - 0x80000000) is always >> 16 and forces the first refill —
+     * 0xFFFFFFFF would collide when a_deep <= 16 after a buffer wrap. */
+    p->aapos[0] = p->aapos[1] = 0x80000000u;
+    p->aarows = 0;
+    p->aarows_band = -1;
+    p->aaband_req = -1;
+    p->aa_bypass = 0;
 }
 
 void ps_set_ratio(pitchshift_t *p, float ratio)
@@ -194,8 +271,28 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
     const float gA = wA + (1.0f - c) * (sqrtf(wA) - wA);
     const float gB = wB + (1.0f - c) * (sqrtf(wB) - wB);
 
-    const float out = gA * ps_read(d, p->base + fracA * W + p->off[0], interp)
-                    + gB * ps_read(d, p->base + fracB * W + p->off[1], interp);
+    /* UP-shifts read through the band-limited polyphase kernel (anti-alias);
+     * down-shifts/unity keep the exact Hermite path. Band steps as the slewed
+     * ratio crosses an edge — coefficient steps are tiny and click-free.
+     * Coefficients: platform-published fast rows (CCM) when the band matches,
+     * const flash tables otherwise (correct either way, CCM is just faster). */
+    int band = -1;
+    if (!p->aa_bypass && p->ratio > 1.02f) {
+        band = 0;
+        while (band < AA_NBANDS - 1 && p->ratio > aa_band_edge[band]) band++;
+    }
+    const float dA = p->base + fracA * W + p->off[0];
+    const float dB = p->base + fracB * W + p->off[1];
+    float out;
+    if (band >= 0) {
+        p->aaband_req = band;
+        const float (*rows)[AA_TAPS] =
+            (p->aarows_band == band && p->aarows) ? p->aarows : aa_tab[band];
+        out = gA * ps_read_bl(p, d, 0, dA, rows)
+            + gB * ps_read_bl(p, d, 1, dB, rows);
+    } else {
+        out = gA * ps_read(d, dA, interp) + gB * ps_read(d, dB, interp);
+    }
 
     /* advance: delay changes by (1 - ratio) samples per output sample          */
     float ph = p->phase + (1.0f - p->ratio) / W;

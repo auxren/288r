@@ -24,6 +24,20 @@ typedef struct {
                         mid-fade AM dip on unaligned material.                   */
     volatile float pend_rho;  /* coherence for the NEXT wrap (same protocol)     */
     volatile float pend_off;  /* offset chosen by ps_service for the NEXT wrap   */
+    /* --- up-shift anti-aliasing (polyphase band-limited read) -------------- */
+    /* Per-grain streaming sample cache: 32 consecutive buffer samples at
+     * absolute positions [aapos, aapos+31]. The grain's read point advances
+     * FORWARD through the buffer at `ratio` per output sample for up-shifts,
+     * so refills amortize to ~2*ratio SDRAM loads/sample instead of 32
+     * (adversarial-verify blocker: uncached SDRAM loads blew the ISR budget). */
+    float    aawin[2][32];
+    uint32_t aapos[2];        /* absolute index of aawin[g][0]; ~0u = invalid    */
+    /* Fast coefficient rows published by the platform (e.g. CCM copy of the
+     * active band). NULL / band mismatch -> read from the const flash tables. */
+    const float (*aarows)[16];
+    int      aarows_band;     /* band aarows holds, -1 = none                    */
+    volatile int aaband_req;  /* band the ISR wants published (platform reads)   */
+    int      aa_bypass;       /* test hook: 1 = force Hermite path (no AA)       */
     volatile int   pend_tap;  /* which tap it is for (-1 = none). PROTOCOL:
                                  service writes pend_off, BARRIER, then pend_tap;
                                  the ISR reads pend_tap first and consumes both.  */
@@ -33,6 +47,12 @@ typedef struct {
 /* window: W in samples (e.g. 30 ms * fs). base >= 2; the de-glitch search reads
  * to base + W + ~1600, so keep base + W + 1600 <= len - 3. */
 void  ps_init(pitchshift_t *p, float window, float base);
+/* Publish fast coefficient rows for `band` (e.g. a CCM copy; rows layout =
+ * aa_tables.h [AA_PHASES+1][AA_TAPS]). Call with band=-1/rows=NULL to revoke
+ * BEFORE overwriting the memory, then re-publish when the copy is complete. */
+void  ps_set_aa_rows(pitchshift_t *p, int band, const float (*rows)[16]);
+/* The const flash coefficient rows for `band` (source for platform copies). */
+const float (*ps_aa_flash_rows(int band))[16];
 void  ps_set_ratio(pitchshift_t *p, float ratio);   /* clamp to a sane span      */
 void  ps_reset(pitchshift_t *p);                     /* phase = 0                 */
 

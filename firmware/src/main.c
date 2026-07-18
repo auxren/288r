@@ -13,6 +13,9 @@
  *
  * Recovery is always SWD: reflash Compiled FW/B288-REV1.0.hex.
  */
+/* no newlib headers in this freestanding toolchain — memcpy's implementation
+ * lives in bsp/freestanding.c; declare it here (__SIZE_TYPE__ = size_t). */
+void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n);
 #include "bsp/bsp.h"
 #include "bsp/board.h"
 #include "engine.h"
@@ -143,6 +146,15 @@ static pitch_voice_t g_pv __attribute__((section(".ccmram")));
 static float    g_pv_ring[1024] __attribute__((section(".ccmram")));
 static uint32_t g_pv_w = 0;
 static const uint16_t k_pv_decor[8] = { 0, 127, 251, 383, 509, 641, 769, 887 };
+/* CCM copy of the active AA coefficient band (zero-wait D-bus reads in the
+ * ISR vs ART-thrashing flash loads — adversarial-verify blocker fix). The
+ * superloop copies on band change; revoke-before-overwrite protocol in
+ * ps_set_aa_rows keeps the ISR on the flash tables during the memcpy. */
+static float g_aa_ccm[33][16] __attribute__((section(".ccmram")));
+static int   g_aa_ccm_band = -1;
+/* bench-only: force the pitch ratio over SWD (0 = off) to measure worst-case
+ * ISR load without patching a CV. Strip with the other g_dbg scaffolding. */
+volatile float g_dbg_ratio_force __attribute__((used)) = 0.0f;
 static volatile uint8_t g_pitch_mode = 0;   /* tick-written, ISR-read */
 static volatile uint8_t pc_cycle_now = 1;   /* cycle pos for pitch span   */
 #endif
@@ -186,6 +198,8 @@ struct dbg_panel {
     uint8_t  env_q;       /* envelope x100                          */
     uint8_t  sens_q[2];   /* codec slot1/slot2 env x1000 (sens/"signal in" ID) */
     uint8_t  clip_q;      /* chain-clip event counter (wraps)      */
+    uint8_t  pad_;
+    uint16_t isr_pk;      /* max audio-ISR cycles per BLOCK >> 4 (DWT CYCCNT) */
     uint8_t  eoc;         /* eoc blink counter (nonzero = blinking) */
     float    mult;        /* smoothed multiplier [0,1]            */
     float    base;        /* current taps base_delay (samples)    */
@@ -196,8 +210,16 @@ volatile struct dbg_panel g_dbg_panel __attribute__((used));
  * out). Pull the input from AUDIO_IN_SLOT, run the engine, scatter the 8 tap
  * outputs into the 8 DAC slots. audio_in_to_f / audio_f_to_out are the codec word
  * conversions from audio_io.c (host-tested, clamped). */
+/* DWT cycle counter (non-intrusive ISR load measurement — the AA verify
+ * panel demanded a MEASURED headroom number, not an estimate). */
+#define DWT_CTRL_REG   (*(volatile uint32_t *)0xE0001000u)
+#define DWT_CYCCNT_REG (*(volatile uint32_t *)0xE0001004u)
+#define DEMCR_REG      (*(volatile uint32_t *)0xE000EDFCu)
+static volatile uint16_t g_isr_pk = 0;   /* max cycles/block >> 4 */
+
 void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 {
+    const uint32_t cyc0 = DWT_CYCCNT_REG;
     const float t = g_time_raw01;
     int clip = 0;
     for (unsigned f = 0; f < frames; ++f) {
@@ -270,6 +292,11 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
                 if (s != (unsigned)g_dac_solo) out[f * TDM_SLOTS + s] = 0;
     }
     g_blocks++;
+    {
+        uint32_t dt = (DWT_CYCCNT_REG - cyc0) >> 4;
+        if (dt > 0xFFFFu) dt = 0xFFFFu;
+        if ((uint16_t)dt > g_isr_pk) g_isr_pk = (uint16_t)dt;
+    }
 #if LED_INPUT_CLIP_MODE
     if (clip) { g_clip_until = g_blocks + CLIP_HOLD_BLOCKS; g_clip_count++; }
     if (g_blocks >= g_twinkle_until)
@@ -292,6 +319,11 @@ int main(void)
     /* zero the NOLOAD CCM section before anything touches it */
     extern uint32_t _sccm, _eccm;
     for (uint32_t *p = &_sccm; p < &_eccm; ++p) *p = 0u;
+
+    /* DWT cycle counter on (ISR load telemetry) */
+    DEMCR_REG |= (1u << 24);
+    DWT_CYCCNT_REG = 0u;
+    DWT_CTRL_REG |= 1u;
 
     bsp_clock_init();
     bsp_sdram_init();
@@ -445,7 +477,17 @@ int main(void)
                 if (att > -0.05f && att < 0.05f) att = 0.0f;
                 float volts = (float)cv * PITCH_CV_VOLTS_PER_CODE * att;
                 float ratio = (1.0f - d01 * span) * fm_exp2f(volts * (1.0f/1.2f));
+                if (g_dbg_ratio_force > 0.0f) ratio = g_dbg_ratio_force;
                 pv_set_ratio(&g_pv, ratio);
+                /* publish the AA band's coefficients to CCM on change (the
+                 * ISR uses flash rows until the copy is republished) */
+                int req = g_pv.ps.aaband_req;
+                if (req >= 0 && req != g_aa_ccm_band) {
+                    ps_set_aa_rows(&g_pv.ps, -1, 0);
+                    memcpy(g_aa_ccm, ps_aa_flash_rows(req), sizeof g_aa_ccm);
+                    ps_set_aa_rows(&g_pv.ps, req, (const float (*)[16])g_aa_ccm);
+                    g_aa_ccm_band = req;
+                }
             } else
 #endif
             /* PROVEN-STABLE law: additive knob+cv (the state the owner verified).
@@ -611,6 +653,7 @@ int main(void)
                 g_dbg_panel.sens_q[i] = (e > 255.0f) ? 255 : (uint8_t)e;
             }
             g_dbg_panel.clip_q = g_clip_count;
+            g_dbg_panel.isr_pk = g_isr_pk;   /* read+reset over SWD as needed */
             if (g_blocks < g_twinkle_until) {    /* saved! — random sparkle, 1 s */
                 g_twinkle_rng ^= g_twinkle_rng << 13;   /* xorshift32 */
                 g_twinkle_rng ^= g_twinkle_rng >> 17;
