@@ -59,6 +59,15 @@ better engine; add new features/controls/modulation only *after* the clone is na
   from `firmware/PITCH_SHIFT.md`) + `pitch_voice.c` (1.2 V/oct CV map, ratio slew) + `fast_math.c`
   (no-libm single-precision sinf/cosf/exp2f, so the freestanding image links). Global voice wired into
   main, **gated (`PITCH_VOICE_ENABLE=0`)**; enabled image verified to link. `make test` = 13 suites there.
+- **Bench sessions 5–5c (2026-07-18, owner-in-the-loop): the PANEL IS ALIVE.** Complete 165 switch
+  map owner-verified live (see `panel_ctl.c` header). LEDs cracked: PA0/1/7/8/11 are DSP-driven
+  indicator/pulse outputs (input comparator @+0.5FS, envelope presence @0.25FS, write LED, end-of-
+  cycle blips at loop wrap — all working). Transport (red write/recirc momentary) working. CYCLE 3-way
+  scales the window live. **Savable presets working end-to-end**: hold-write-2s saves to the selected
+  C/B/A slot (LED twinkle confirms), recall applies phases + pinned multiplier (catch-band pinning).
+  Codec is actually a **CS42448** (ID 0x04). Rear DIPs: PB11=x10 extend (stock table exactly x10),
+  PB10=rear sw2. NOTE: preset persistence is still the RAM placeholder — lost at power-off until the
+  internal-flash backend lands.
 - **Still [BENCH]:** the coarse multiplier KNOB (SPI2 ch1 read — CV works, knob TBD); config-DIP sw1/sw2
   GPIO pins (`SW_*_MAPPED=0` until traced); the 595 bit→LED/column/mux/codec-reset map (run the walk);
   the tap-time DIP matrix + phase/mute + transport momentaries; TIME/pitch mode switch + Pitch-CV cal;
