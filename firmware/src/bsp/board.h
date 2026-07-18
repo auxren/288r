@@ -136,7 +136,8 @@
 #define PITCH_WINDOW_SAMPLES (0.060f * (float)SAMPLE_RATE_HZ)  /* 60 ms crossfade   */
 #define PITCH_BASE_SAMPLES   256.0f     /* base delay offset (~2.7 ms @96k)         */
 #define PITCH_RATIO_SLEW     0.002f     /* one-pole ratio glide/sample              */
-#define PITCH_VOICE_GAIN     0.7f       /* mix level of the pitch voice into ch0    */
+#define PITCH_VOICE_GAIN     1.0f       /* wet-leg level of the pitch crossfade on
+                                           ch0 (replace semantics — see main.c)  */
 /* Time-CV (SPI2 ch0, 12-bit, RESTS AT 0 unpatched — measured) -> volts. */
 #define PITCH_CV_CENTER      0.0f
 #define PITCH_CV_VOLTS_PER_CODE (5.0f / 4095.0f)

@@ -230,7 +230,11 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             float y = pv_process(&g_pv, &g_engine.dl, DL_INTERP_HERMITE);
             float dev = g_pv.ratio - 1.0f; if (dev < 0.0f) dev = -dev;
             float wet = dev * 50.0f; if (wet > 1.0f) wet = 1.0f;
-            chan[0] += (PITCH_VOICE_GAIN * wet) * y;
+            /* REPLACE, don't layer (stock: pitch-mode output IS the shifted
+             * signal): the dry min-delay passthrough on tap 0 masked the voice
+             * completely — owner could not hear the shift at all. Crossfade
+             * keeps ratio=1 transparent (wet=0 -> pure dry). */
+            chan[0] = (1.0f - wet) * chan[0] + (PITCH_VOICE_GAIN * wet) * y;
         }
 #endif
 #if LED_INPUT_CLIP_MODE
