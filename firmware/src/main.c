@@ -93,6 +93,7 @@ static volatile float g_env = 0.0f;
 enum { LP_READY = 0, LP_WRITE, LP_LOOP };
 static uint8_t  g_lp_state = LP_READY;
 static uint32_t g_lp_start = 0;
+static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next onset triggers */
 
 /* preset-saved feedback: while >0 the scan tick twinkles all indicator LEDs and
  * the ISR holds off its own PA0/PA11 writes. */
@@ -323,10 +324,15 @@ int main(void)
                 switch (g_lp_state) {
                 case LP_READY:
                     if (!transport_should_write(&g_engine.xport)) engine_write(&g_engine);
-                    if (g_env > 0.25f || wr_edge || pc.automode == 2) {  /* auto / punch / arm */
+                    /* "next sound" semantics: arm on silence, trigger on the NEXT
+                     * onset — so entering READY mid-signal holds READY (LED on)
+                     * until the sound stops and restarts. */
+                    if (g_env < 0.10f) g_lp_armed = 1;
+                    if ((g_lp_armed && g_env > 0.25f) || wr_edge || pc.automode == 2) {
                         g_lp_start = g_engine.dl.wpos;
                         engine_write(&g_engine);
                         g_lp_state = LP_WRITE;
+                        g_lp_armed = 0;
                     }
                     bsp_panel_ind(1, 1); bsp_panel_ind(2, 1); bsp_panel_ind(3, 0); /* READY LED (PA8) */
                     break;
@@ -358,7 +364,7 @@ int main(void)
              * boundary — blip the end-of-cycle outputs (PA7/PA8) at each wrap,
              * the stock's loop-rate pulse/LED behavior. */
             if (!transport_should_write(&g_engine.xport)) {
-                if (g_engine.dl.wpos < g_prev_wpos) g_eoc_blink = 6;
+                if (g_engine.dl.wpos < g_prev_wpos) g_eoc_blink = 2;
             }
             g_prev_wpos = g_engine.dl.wpos;
             if (g_eoc_blink) { bsp_panel_ind(3, 0); g_eoc_blink--; }
