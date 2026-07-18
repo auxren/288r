@@ -18,8 +18,12 @@ int main(void)
     /* ---- codec word conversion round-trips and clamps ---- */
     ok("int24<->float midscale", fabsf(audio_in_to_f(audio_f_to_out(0.5f)) - 0.5f) < 1e-4f);
     ok("int24<->float negative", fabsf(audio_in_to_f(audio_f_to_out(-0.25f)) + 0.25f) < 1e-4f);
-    ok("output clamps (no wrap) +", audio_f_to_out(2.0f) == audio_f_to_out(1.0f));
-    ok("output clamps (no wrap) -", audio_f_to_out(-2.0f) == audio_f_to_out(-1.0f));
+    /* over-FS goes through the soft knee now (patched-feedback limiter): the
+     * invariant is bounded-and-monotonic, never sign-wrap (see test_softknee). */
+    { int32_t w2 = (audio_f_to_out(2.0f) << 8) >> 8, w1 = (audio_f_to_out(0.9f) << 8) >> 8;
+      ok("over-FS bounded + monotonic (+)", w2 > w1 && w2 <= 8388607); }
+    { int32_t w2 = (audio_f_to_out(-2.0f) << 8) >> 8, w1 = (audio_f_to_out(-0.9f) << 8) >> 8;
+      ok("over-FS bounded + monotonic (-)", w2 < w1 && w2 >= -8388608); }
 
     /* ---- block processing: 4-in/8-out TDM ---- */
     engine_t e;

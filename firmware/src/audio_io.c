@@ -16,6 +16,20 @@ float audio_in_to_f(int32_t codec_word)
 
 int32_t audio_f_to_out(float x)
 {
+    /* SOFT-KNEE output limiter (patched-feedback quality): transparent below
+     * 0.75 FS (zero cost, bit-exact passthrough — normal audio never touches
+     * it), rational knee above it asymptotic to full scale. A patched feedback
+     * loop pushed past unity gain then blooms like tape compression instead of
+     * shattering on a hard digital clip (the clamp below remains as the final
+     * never-wrap guarantee only). Knee: y = t + e/(1 + e/(1-t)), e = |x|-t —
+     * C1-continuous at the knee, asymptote exactly 1.0. */
+    const float t = 0.75f;
+    float ax = (x < 0.0f) ? -x : x;
+    if (ax > t) {
+        float e = ax - t;
+        float y = t + e / (1.0f + e * (1.0f / (1.0f - t)));
+        x = (x < 0.0f) ? -y : y;
+    }
     if (x >  1.0f) x =  1.0f;          /* clamp: never wrap to the opposite rail */
     if (x < -1.0f) x = -1.0f;
     int32_t s = (int32_t)(x * FS24_M1);
