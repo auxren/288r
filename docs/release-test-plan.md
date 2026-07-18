@@ -116,10 +116,11 @@ tag `v0.9` — CI builds and publishes the release with the one-click flasher zi
   acts exactly like the momentary; a pulse into **arm** starts a next-sound capture.
 - ☐ **A5 persistence re-check:** presets (now also capturing ×1/×2 + cycle) survive
   a power cycle; recalled switch values yield to the physical switch on first move.
-- ☐ **A6 sens knob (needs the ID sweep first):** codec ADC slots 1+2 carry
-  knob-scaled copies of the input (measured on the wire) = the **sens.** and
-  **signal in** analog paths. ONE sweep of each knob while the SWD logger runs
-  binds `SENS_IN_SLOT`; then: red AUTO at center, sens at zero → auto-trigger
-  never fires; raise sens → quieter and quieter sounds trigger the capture.
+- ☐ **A6 sens knob (BOUND — owner sweep 2026-07-18, codec slot 1):** the auto
+  LED lights only while audio exceeds the sens threshold: sens full CCW → LED
+  dark, always; raise sens → LED tracks the signal. Red AUTO at center: sens at
+  zero → auto-trigger never fires; raise sens → quieter sounds trigger capture.
+  ("signal in" is NOT a codec slot — it reaches the multiplier via the analog
+  Time-CV net; locate it with a knob-wiggle while watching the cv raw value.)
 - ☐ **A7 clip LED:** with the current patch (mixer A full into a hot source) the
   input LED should sit lit; lower mixer A until it goes dark → delays clean up.

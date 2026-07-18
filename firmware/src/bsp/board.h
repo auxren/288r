@@ -60,17 +60,19 @@
 /* Which ADC TDM slot carries the audio input signal (0..3). [BENCH] live test. */
 #define AUDIO_IN_SLOT     0u
 
-/* ---- sens. knob (AUTO CONTROL trigger threshold) ------------------------- */
-/* The sens knob is an ANALOG attenuator feeding the input signal into its own
- * codec ADC slot: measured on the wire (2026-07-18), slots 1 AND 2 both carry
- * knob-scaled copies of the input (corr -0.958 vs slot 0) — these are the sens
- * and "signal in" knob paths; ONE owner knob-sweep disambiguates which is which.
- * The firmware envelope-follows the sens slot and fires the auto-trigger when it
- * crosses a FIXED reference — the knob sets the threshold by analog gain (stock
- * topology; knob at zero = auto-trigger off).
- *  -1 = slot not yet proven: auto-trigger falls back to the main-input 0.25 FS
- *  law (the proven v0.9 behavior). Set to 1 or 2 once the sweep identifies it. */
-#define SENS_IN_SLOT      (-1)
+/* ---- sens. knob (AUTO CONTROL trigger threshold) — PROVEN slot 1 --------- */
+/* OWNER-SWEPT 2026-07-18: with signal playing and every other control static,
+ * codec ADC slot 1 rose 0.000 -> 1.000 FS exactly as the sens. knob swept
+ * CCW -> CW (and sat at 0.000 for 162 s at full CCW while the signal-in jack
+ * was hot — so slot 1 is NOT the signal-in path). The sens knob is an ANALOG
+ * attenuator feeding the (pre-gain, inverted) input into slot 1; the auto-
+ * trigger + presence LED fire when its envelope crosses the FIXED reference —
+ * the knob sets the threshold by analog gain (knob at zero = auto-trigger off,
+ * LED dark). NOTE the "signal in" jack/knob path is NOT a codec slot (slots
+ * 2..5 stayed at floor with it patched hot) — it reaches the multiplier via
+ * the analog Time-CV net ([BENCH]: cv raw pegged 4095 with signal-in hot once,
+ * then 0 — patch-state dependent; locate with a knob-wiggle + cv watch). */
+#define SENS_IN_SLOT      1
 #define SENS_REF          0.02f   /* fixed trigger reference [calibrate on hardware] */
 #define SENS_ARM_FRAC     0.4f    /* re-arm hysteresis: env must dip below REF*this  */
 

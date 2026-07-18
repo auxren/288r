@@ -105,6 +105,9 @@ static volatile float g_env = 0.0f;
  * copies of the input (analog attenuators — see board.h SENS_IN_SLOT). Both are
  * envelope-followed so one owner knob-sweep over SWD identifies which is sens. */
 static volatile float g_sens_env[2] = { 0.0f, 0.0f };
+#if SENS_IN_SLOT >= 0 && (SENS_IN_SLOT < 1 || SENS_IN_SLOT > 2)
+#error "SENS_IN_SLOT must be 1 or 2 (indexes g_sens_env[SLOT-1])"
+#endif
 
 /* chain-clip indicator (PA0 repurposed, LED_INPUT_CLIP_MODE): block count until
  * which the LED stays lit, + an event counter for SWD verification. */
@@ -383,6 +386,14 @@ int main(void)
             uint32_t knob = (uint32_t)(cal_map01(KNOB_ADC_LO, KNOB_ADC_HI,
                                                  (uint16_t)knob_raw) * 4095.0f);
             int32_t  raw;
+            /* attenuverter filter runs in BOTH modes (adversarial-verify find:
+             * updating it only in the TIME branch left the Pitch-CV dead until
+             * TIME mode had been visited once after boot). */
+            {
+                uint16_t a3 = bsp_mult_read();
+                g_att_filt += ((float)a3 - g_att_filt) * 0.05f;
+                g_dbg_panel.trim[0] = (uint16_t)g_att_filt;
+            }
 #if PITCH_VOICE_ENABLE
             if (g_pitch_mode) {
                 /* STOCK pitch mode (decompile-verified, adversarially checked):
@@ -390,12 +401,12 @@ int main(void)
                  * knob = pitch-down depth, span -1.07 st FULL / -4.75 st SHORT;
                  * the CV adds bipolar 1.2 V/oct through the SAME attenuverter. */
                 raw = 0;                                   /* taps -> range min  */
-                float depth = (float)knob * (1.0f / 4095.0f);
-                float span  = (pc_cycle_now == 2) ? 0.24f : 0.06f;
-                float att   = (g_att_filt - 2047.0f) * (1.0f / 2047.0f);
+                float d01  = (float)knob * (1.0f / 4095.0f);  /* (not "depth": shadows outer) */
+                float span = (pc_cycle_now == 2) ? 0.24f : 0.06f;
+                float att  = (g_att_filt - 2047.0f) * (1.0f / 2047.0f);
                 if (att > -0.05f && att < 0.05f) att = 0.0f;
                 float volts = (float)cv * PITCH_CV_VOLTS_PER_CODE * att;
-                float ratio = (1.0f - depth * span) * fm_exp2f(volts * (1.0f/1.2f));
+                float ratio = (1.0f - d01 * span) * fm_exp2f(volts * (1.0f/1.2f));
                 pv_set_ratio(&g_pv, ratio);
             } else
 #endif
@@ -404,9 +415,6 @@ int main(void)
              * ADC3 channel) is gated OFF until that channel is PROVEN live —
              * we only OBSERVE it into dbg below. */
             {
-                uint16_t a3 = bsp_mult_read();
-                g_att_filt += ((float)a3 - g_att_filt) * 0.05f;
-                g_dbg_panel.trim[0] = (uint16_t)g_att_filt;   /* observe only */
 #if CTRL_ATTENUVERTER_LAW
                 float att = (g_att_filt - 2047.0f) * (1.0f / 2047.0f);  /* stock-exact scale */
                 if (att > -0.05f && att < 0.05f) att = 0.0f;
