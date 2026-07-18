@@ -21,6 +21,7 @@
 #include "panel_ctl.h"
 #include "preset_store.h"
 #include "chord.h"
+#include "storage.h"
 #include <stdint.h>
 
 /* Live panel scan (74HC165). Input-only, so acting on a mis-decoded bit can't drop
@@ -45,7 +46,7 @@
  * the selected slot. Backend is flash_preset.c — currently the RAM placeholder, so
  * saves last until power-off ([BENCH]: swap in internal-flash for reboot-proof). */
 #define PRESET_ENABLE 1
-#define PRESET_SAVE_HOLD_TICKS 200u   /* ~2 s at the ~10 ms scan cadence */
+#define PRESET_SAVE_HOLD_TICKS 80u    /* ~2 s (measured: ~40 ticks/s) */
 
 /* Front-panel LED drive over the 74HC595. GATED OFF by default: the same 24-bit
  * chain carries the DIP column-select and (likely) the 4051 mux-enable / codec
@@ -93,6 +94,18 @@ enum { LP_READY = 0, LP_WRITE, LP_LOOP };
 static uint8_t  g_lp_state = LP_READY;
 static uint32_t g_lp_start = 0;
 
+/* preset-saved feedback: while >0 the scan tick twinkles all indicator LEDs and
+ * the ISR holds off its own PA0/PA11 writes. */
+static volatile uint8_t g_twinkle = 0;
+
+/* multiplier control-pinning: preset recall pins the SAVED multiplier until the
+ * physical knob sweeps through it (storage.h pin_*) — no value jumps. */
+static ctrl_pin_t g_mult_pin;
+
+/* end-of-cycle blink: loop-wrap detector state */
+static uint32_t g_prev_wpos = 0;
+static uint8_t  g_eoc_blink = 0;
+
 /* SWD observability: live panel decode + raw control reads, for labelling the
  * [BENCH] bits at the bench (gdb `p g_dbg_panel`, or `mdw &g_dbg_panel`). Populated
  * in the superloop. Strip pre-release with the other g_dbg_* scaffolding. */
@@ -128,7 +141,7 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
          * A per-sample 1-bit envelope PWM: loud input -> more low-time -> brighter.
          * (PA0/1/7/8/11 are DSP-driven indicator outputs, NOT mux addresses — the
          * old panel-scan.md label was wrong.) */
-        bsp_panel_strobe(x > 0.5f ? 0 : 1);
+        if (!g_twinkle) bsp_panel_strobe(x > 0.5f ? 0 : 1);
         /* input envelope for the AUTO-CONTROL/presence LED (PA11): stock compares
          * an envelope accumulator (0x200000bc) against 0x200000 = 0.25 FS. */
         {
@@ -143,7 +156,7 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
     }
     /* AUTO/presence LED (PA11), stock threshold: envelope > 0x200000/0x800000
      * = 0.25 FS -> LOW (LED on). Per block is plenty (stock: per main-loop). */
-    bsp_panel_ind(4, (g_env > 0.25f) ? 0 : 1);
+    if (!g_twinkle) bsp_panel_ind(4, (g_env > 0.25f) ? 0 : 1);
 }
 
 int main(void)
@@ -224,6 +237,7 @@ int main(void)
 #endif
 
     float mult_filt = 0.5f;
+    pin_free(&g_mult_pin, 0.5f);
     for (;;) {
 #if PANEL_SCAN_ENABLE
         /* Panel + control tick (~every 64 passes, ~10 ms). The SPI2 control-ADC
@@ -239,7 +253,7 @@ int main(void)
             uint32_t raw  = knob + cv;
             if (raw > 4095u) raw = 4095u;
             mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.3f;
-            g_time_raw01 = mult_filt;
+            g_time_raw01 = pin_update(&g_mult_pin, mult_filt);
             g_dbg_panel.spi_cv = (uint16_t)cv;
             g_dbg_panel.spi_knob = (uint16_t)knob;
             g_dbg_panel.mult = mult_filt;
@@ -286,10 +300,10 @@ int main(void)
                                   { engine_write(&g_engine); }
                 if (transport_should_write(&g_engine.xport)) {
                     g_lp_state = LP_READY;
-                    bsp_panel_ind(1, 0); bsp_panel_ind(3, 1);   /* write LED    */
+                    bsp_panel_ind(1, 0); bsp_panel_ind(3, 1); bsp_panel_ind(2, 1);
                 } else {
-                    g_lp_state = LP_LOOP;
-                    bsp_panel_ind(1, 1); bsp_panel_ind(3, 0);   /* ready/loop   */
+                    g_lp_state = LP_LOOP;   /* loop: ready + PA7 indicators   */
+                    bsp_panel_ind(1, 1); bsp_panel_ind(3, 0); bsp_panel_ind(2, 0);
                 }
             } else {
                 /* LOOPER/auto mode (red switch center) */
@@ -327,8 +341,25 @@ int main(void)
                     break;
                 }
             }
-            bsp_panel_ind(2, 1);   /* PA7 held high (stock run state) */
 #endif
+            /* END-OF-CYCLE indicator: in recirc the head snaps back at the loop
+             * boundary — blip the end-of-cycle outputs (PA7/PA8) at each wrap,
+             * the stock's loop-rate pulse/LED behavior. */
+            if (!transport_should_write(&g_engine.xport)) {
+                if (g_engine.dl.wpos < g_prev_wpos) g_eoc_blink = 6;
+            }
+            g_prev_wpos = g_engine.dl.wpos;
+            if (g_eoc_blink) { bsp_panel_ind(3, 0); bsp_panel_ind(2, 0); g_eoc_blink--; }
+            else if (!transport_should_write(&g_engine.xport)) {
+                bsp_panel_ind(3, 1); bsp_panel_ind(2, 1);
+            }
+            if (g_twinkle) {                     /* saved! — twinkle everything */
+                int ph = (g_twinkle >> 2) & 1;
+                bsp_panel_ind(0, ph); bsp_panel_ind(1, !ph);
+                bsp_panel_ind(2, ph); bsp_panel_ind(3, !ph);
+                bsp_panel_ind(4, ph);
+                g_twinkle--;
+            }
             /* base window = boot base x octave (x1/x2) x cycle (3-way, live) */
             unsigned oc_key = (unsigned)pc.octave | ((unsigned)pc.cycle << 4);
             if (oc_key != prev_octave) {
@@ -350,7 +381,8 @@ int main(void)
                     /* Recall the selected slot (capture-live presets). Blank/
                      * invalid slot -> the A-ramp default. */
                     preset_scene_t sc;
-                    (void)preset_load(bsp_preset_flash_base(), pc.preset, &sc);
+                    if (preset_load(bsp_preset_flash_base(), pc.preset, &sc))
+                        pin_recall(&g_mult_pin, sc.mult);   /* knob pinned to saved */
                     for (int i = 0; i < NUM_TAPS; i++) ph[i] = sc.phase[i];
                 }
 #else
@@ -363,7 +395,7 @@ int main(void)
             /* Save chord: hold BOTH momentaries ~2 s -> snapshot the current tap
              * pattern + mult into the selected slot. Distinct from the momentary
              * WRITE/RECIRC taps, so it won't fire by accident. */
-            if (chord_update(&g_save_chord, wr_act && rc_act,
+            if (chord_update(&g_save_chord, (int)wr_act,
                              PRESET_SAVE_HOLD_TICKS)) {
                 preset_scene_t sc;
                 for (int i = 0; i < NUM_TAPS; i++) sc.phase[i] = g_engine.taps.phase[i];
@@ -375,6 +407,7 @@ int main(void)
                 unsigned n = (unsigned)preset_pack(&sc, blob);
                 (void)bsp_preset_flash_write(pc.preset, blob, n);
                 g_dbg_panel.saved_blink++;      /* SWD-visible save confirmation */
+                g_twinkle = 80;                 /* ~0.8 s LED twinkle           */
             }
 #endif
         }

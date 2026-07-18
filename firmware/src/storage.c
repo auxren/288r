@@ -89,9 +89,15 @@ float pin_update(ctrl_pin_t *p, float live)
 {
     if (!p->pinned) { p->value = live; p->last_live = live; return live; }
 
-    int crossed;
-    if (!p->have_last) { crossed = straddles(live, live, p->target); }  /* only if already at target */
-    else               { crossed = straddles(p->last_live, live, p->target); }
+    /* catch-band: values saved at a control's endpoint may be unreachable
+     * exactly (ADC never quite hits full scale) — near counts as through. */
+    float d = live - p->target;
+    if (d < 0.0f) d = -d;
+    int crossed = (d < 0.02f);
+    if (!crossed) {
+        if (!p->have_last) { crossed = straddles(live, live, p->target); }
+        else               { crossed = straddles(p->last_live, live, p->target); }
+    }
 
     p->last_live = live;
     p->have_last = 1;

@@ -73,11 +73,12 @@ float panel_octave_factor(const panel_ctl_t *p)
     return (float)p->octave;
 }
 
-/* CYCLE position -> base scale. OWNER-VERIFIED: bit9-low end = SHORT.
- * pos0 (bit10 low) = FULL 1.0; pos1 (center) = 0.5; pos2 (bit9 low) = SHORT 0.25 */
+/* CYCLE position -> base scale (functional A/B on the unit: first mapping felt
+ * backwards -> this orientation confirmed by ear): pos0 = 0.25x, center = 0.5x,
+ * pos2 = 1.0x. */
 float panel_cycle_factor(const panel_ctl_t *p)
 {
-    return (p->cycle == 0) ? 1.0f : (p->cycle == 1) ? 0.5f : 0.25f;
+    return (p->cycle == 0) ? 0.25f : (p->cycle == 1) ? 0.5f : 1.0f;
 }
 
 int panel_preset_phase(unsigned preset, float phase[NUM_TAPS])
