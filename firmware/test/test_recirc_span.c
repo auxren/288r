@@ -45,10 +45,11 @@ int main(void)
     ck("head stays inside the window",
        e.dl.wpos >= start && e.dl.wpos < end);
 
-    /* the loop must play the SAVED ramp content (writes stopped in recirc):
-       read a tap 100 back from the head — it must be a value from [start,end) */
+    /* the loop must play the SAVED ramp content: positions [500,900) were written
+       with n*0.001 = 0.5..0.9 and never overwritten (recirc stops writes; the
+       later writes landed at 1500..2600). Any in-window tap must read 0.5..0.9. */
     float v = dl_read_loop(&e.dl, 100.0f, start, end, DL_INTERP_LINEAR);
-    ck("loop reads saved-window content", v >= 0.499f * 0.001f * 999.0f * 0.0f + 0.0004f && v <= 0.0026f);
+    ck("loop reads saved-window content (0.5..0.9)", v >= 0.499f && v <= 0.901f);
 
     /* recirc_window (store-beg auto-loop): loops exactly `window` samples */
     engine_write(&e);
