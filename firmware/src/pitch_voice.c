@@ -13,11 +13,19 @@ void pv_init(pitch_voice_t *v, float window, float base, float slew)
     v->slew   = slew;
 }
 
-void pv_set_ratio(pitch_voice_t *v, float ratio) { v->target = ratio; }
+void pv_set_ratio(pitch_voice_t *v, float ratio)
+{
+    /* clamp at the ENTRY, not just inside ps: an unbounded target (seen live:
+     * railed CV x attenuverter -> ratio 16.6) poisons the wet-mix |ratio-1|
+     * math and makes the slew traverse garbage territory between updates. */
+    if (ratio < 0.25f) ratio = 0.25f;      /* ps core contract: +/-2 oct */
+    if (ratio > 4.0f)  ratio = 4.0f;
+    v->target = ratio;
+}
 
 void pv_set_cv(pitch_voice_t *v, float volts)
 {
-    v->target = fm_exp2f(volts * PV_OCT_PER_VOLT);
+    pv_set_ratio(v, fm_exp2f(volts * PV_OCT_PER_VOLT));
 }
 
 float pv_process(pitch_voice_t *v, const delay_line_t *d, dl_interp_t interp)
