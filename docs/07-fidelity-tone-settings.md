@@ -74,3 +74,11 @@ this board). The store is **versioned and checksummed** — a record with a bad 
 and defaults are used, so a corrupt write can't brick the module. On recall, **control-pinning**
 keeps the stored multiplier in effect until you physically sweep the knob through it, so a recalled
 preset never jumps when the panel doesn't match. (This mirrors the MARF 248r persistence pattern.)
+
+> **×10 mode interactions (by design, worth knowing):** with rear DIP 1 on, the octave
+> switch saturates almost immediately (×10 already sits near the 19-second buffer ceiling, so
+> ×2/×4 add little); pitch mode's three longest echoes clamp to the voice ring's 2.7 s depth
+> (the late pattern bunches up); envelope→time modulation spans 10× the range (attacks can
+> sweep seconds of delay — dramatic by design); presets recall *relative* times, so a slot
+> saved in ×1 plays 10× longer under ×10; and every glide covers 10× the distance, so all
+> moves bend pitch deeper. String mode is immune (its tuning ignores the range strap).

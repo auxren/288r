@@ -170,6 +170,13 @@ static ptaps_t g_pt;
  * (direct); the multiplier knob is damping/brightness. */
 static ks_t g_ks;
 static volatile uint8_t g_ks_mode = 0;
+/* transport/looper LED writes route through this gate so STRING MODE owns the
+ * indicator lamps (breathing READY PWM was being fought). Identifier-level
+ * substitution only — call sites keep their exact control flow. */
+static void lp_ind(unsigned idx, int level)
+{
+    if (!g_ks_mode) bsp_panel_ind(idx, level);
+}
 #if PITCH_VOICE_ENABLE
 /* CCM copy of the active AA coefficient band (zero-wait D-bus reads in the
  * ISR vs ART-thrashing flash loads — adversarial-verify blocker fix). The
@@ -702,11 +709,11 @@ int main(void)
                     g_lp_state = LP_READY;
                     /* WRITE: write LED on, recirc + ready off (PA1/PA7/PA8 map
                      * pin-forced + owner-named) */
-                    bsp_panel_ind(1, 0); bsp_panel_ind(2, 1); bsp_panel_ind(3, 1);
+                    lp_ind(1, 0); lp_ind(2, 1); lp_ind(3, 1);
                 } else {
                     g_lp_state = LP_LOOP;
                     /* RECIRC: recirc LED on; ready blips at each loop wrap */
-                    bsp_panel_ind(1, 1); bsp_panel_ind(2, 0);
+                    lp_ind(1, 1); lp_ind(2, 0);
                 }
             } else {
                 /* LOOPER/auto mode (red switch center) */
@@ -734,7 +741,7 @@ int main(void)
                         g_lp_state = LP_WRITE;
                         g_lp_armed = 0;
                     }
-                    bsp_panel_ind(1, 1); bsp_panel_ind(2, 1); bsp_panel_ind(3, 0); /* READY LED (PA8) */
+                    lp_ind(1, 1); lp_ind(2, 1); lp_ind(3, 0); /* READY LED (PA8) */
                     break;
                 case LP_WRITE: {
                     uint32_t written = (g_engine.dl.wpos >= g_lp_start)
@@ -755,7 +762,7 @@ int main(void)
                         g_lp_start = g_engine.dl.wpos;
                         engine_write(&g_engine);
                     }
-                    bsp_panel_ind(1, 0); bsp_panel_ind(2, 1); bsp_panel_ind(3, 1); /* write LED */
+                    lp_ind(1, 0); lp_ind(2, 1); lp_ind(3, 1); /* write LED */
                     break; }
                 case LP_HOLD:  /* stock mode 5: window stored, delay keeps running */
                     if (!transport_should_write(&g_engine.xport)) engine_write(&g_engine);
@@ -768,7 +775,7 @@ int main(void)
                         g_lp_state = LP_WRITE;
                     }
                     /* stored-and-waiting: write + ready LEDs together */
-                    bsp_panel_ind(1, 0); bsp_panel_ind(2, 1); bsp_panel_ind(3, 0);
+                    lp_ind(1, 0); lp_ind(2, 1); lp_ind(3, 0);
                     break;
                 default: /* LP_LOOP */
                     if (wr_edge) {                         /* punch a new take       */
@@ -776,7 +783,7 @@ int main(void)
                         engine_write(&g_engine);
                         g_lp_state = LP_WRITE;
                     }
-                    bsp_panel_ind(1, 1); bsp_panel_ind(2, 0);   /* recirc LED (looping) */
+                    lp_ind(1, 1); lp_ind(2, 0);   /* recirc LED (looping) */
                     break;
                 }
             }
@@ -788,9 +795,9 @@ int main(void)
                 if (g_engine.dl.wpos < g_prev_wpos) g_eoc_blink = 2;
             }
             g_prev_wpos = g_engine.dl.wpos;
-            if (g_eoc_blink) { bsp_panel_ind(3, 0); g_eoc_blink--; }
+            if (g_eoc_blink) { lp_ind(3, 0); g_eoc_blink--; }
             else if (!transport_should_write(&g_engine.xport) && g_lp_state == LP_LOOP) {
-                bsp_panel_ind(3, 1);
+                lp_ind(3, 1);
             }
             g_dbg_panel.lp_state = g_lp_state;
             g_dbg_panel.xp_mode = (uint8_t)g_engine.xport.mode;
