@@ -46,8 +46,9 @@ Work through this list:
 2. **Anything patched into c.v. in?** Pitch CV goes through the **attenuverter** just like TIME CV,
    so a patched signal with the attenuverter up adds to (or overrides) the knob. Unpatch it, or set
    the attenuverter to its center detent (CV ignored).
-3. **Listening on the right slider?** Slider 0 is the MASTER (a parallel sum of all eight tap channels) — it carries the
-   shifted voice — listen on sliders 1–8 (the taps).
+3. **Listening on the right slider?** Slider 0 is the MASTER (a parallel sum of all eight tap
+   channels) and sliders 1–8 are the individual taps — in pitch mode, ALL of them carry the
+   shifted voice (each tap at its own echo time). If none of them is up, there is no output.
 4. **Knob at the very bottom?** The bottom ~2 % of the knob's travel deliberately snaps to exact
    unity — a clean bypass that kills residual detune-beating. No shift there is by design.
 
