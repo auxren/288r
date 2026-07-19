@@ -68,6 +68,20 @@ digital tone coloration happens per tap or on the record path, never on a master
 - **8 tap outs** — each tap on its own jack, full level, independent of the sliders. Best for
   multichannel spatialization, feeding taps to different processors, or Buchla-style patch-programming.
 
+## The preset audio outs (A–D)
+
+The four **preset out** jacks are all-analog and always live: each carries its trimmer bank's
+fixed mix of the eight tap channels (8 tap levels + a master, per bank). They ignore the
+sliders entirely — the sliders shape the *mixed out*; the preset outs are four pre-composed
+alternatives running simultaneously. Program one bank as a tight slapback, another as a long
+wash, another as a rhythmic comb, and address them as separate sources in your patch. In pitch
+mode they carry the transposed echo pattern like everything else — so a preset out is also the
+easy way to hear the pitch voice with all sliders down.
+
+*(Practical notes: because they bypass the sliders, "audio with every slider down" on a preset
+out is correct behavior, not a fault. And when checking panel behavior, always note **which
+jack** you are monitoring — the output section has four different kinds.)*
+
 ## AUTO CONTROL
 
 **AUTO CONTROL** is the automatic capture: with the red transport switch in its center (auto)

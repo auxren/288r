@@ -85,7 +85,17 @@ which direction) the CV moves the time. At the center detent the CV is ignored e
 counter-clockwise inverts it. This works from power-on in **both** modes — in PITCH mode the same
 attenuverter scales the pitch CV.
 
-The **signal in** jack and knob in the TIME section reach the multiplier through the same analog
-CV path (summed with *c.v. in* ahead of the attenuverter's scaling), so envelope-style delay-time
-modulation from audio works — keep the attenuverter up to hear it. (The exact analog summing
-point on the board is not yet verified on the bench.)
+**Envelope → delay time (the module's signature self-modulation).** With the red AUTO CONTROL
+switch at **all sounds**, the **sens. knob sets envelope-modulation depth**: your playing
+dynamics push the delay time — attacks stretch it (with a doppler pitch dip as it glides),
+decays let it drift back. Fully CCW = off; the auto LED glows while the envelope is actively
+pushing. In the looper modes (red switch center / next sound) the sens. knob returns to its
+capture-threshold duty. *(The panel's signal-in jack was the stock's intended source for this;
+on the reference unit that jack is electrically dead, so the feature runs from the sens
+channel instead — musically equivalent, with a working depth knob.)*
+
+**Pitch quality, measured on hardware:** up-shifts are anti-aliased (a ratio-tracked filter —
+about 70 dB of alias suppression at +1 octave, so bright material stays clean), splices are
+period-aware down to roughly **30 Hz** (deep bass shifts cleanly instead of thumping at the
+grain rate), and the crossfade adapts to the material so sustained tones don't "breathe."
+
