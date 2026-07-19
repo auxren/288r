@@ -317,10 +317,25 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             }
         }
 #endif
+#if MASTER_DRY_MODE
+        /* SLIDER 0 = DRY OUT (owner norm): slot 4 reaches only the analog
+         * master sum (its own slider path is broken), so it carries a hidden
+         * compensation signal — dry minus the other seven channels — and the
+         * master collapses to ~pure dry. Sliders 1-8 are untouched. Works in
+         * both modes (pitch mode: slider 0 = the dry anchor under the
+         * transposed echoes). See board.h MASTER_DRY_MODE. */
+        {
+            float comp = x;
+            for (unsigned s2 = 0; s2 < (unsigned)NUM_TAPS; ++s2)
+                if (s2 != 4u) comp -= chan[s2];
+            chan[4] = comp;
+        }
+#endif
 #if LED_INPUT_CLIP_MODE
         /* clip stage 2 — any tap about to exceed full scale pre-limiter (covers
-         * the pitch-voice sum and hot recirc content; the soft knee makes it
-         * inaudible-ish, which is exactly why it deserves an indicator). */
+         * the pitch-voice sum, hot recirc content, and the master-dry comp
+         * channel; the soft knee makes it inaudible-ish, which is exactly why
+         * it deserves an indicator). */
         for (unsigned s = 0; s < (unsigned)NUM_TAPS; ++s)
             if (chan[s] >= 1.0f || chan[s] <= -1.0f) clip = 1;
 #endif

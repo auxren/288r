@@ -77,6 +77,20 @@
 #define ENV_TIME_DEPTH    1.0f    /* envelope->delay-time span in "all sounds" mode:
                                      full-scale sens envelope pushes the multiplier
                                      across its whole range [calibrate by feel]     */
+
+/* ---- slider 0 = DRY OUT (owner-requested norm) --------------------------- */
+/* Slider 0 is the analog MASTER: a hardwired sum of all 8 DAC channels. On
+ * this unit slot 4's individual slider path is broken (slider 5 dead), so
+ * slot 4 reaches ONLY the master sum — a hidden compensation channel. Sending
+ * dry minus the other seven taps on it collapses the master to ~pure dry.
+ * Cancellation depth = analog channel matching; degrades gracefully (echo
+ * bleed under the dry) if the comp channel reaches the soft knee.
+ * DISABLED: the observation motivating it (slider 0 following pitch) was made
+ * on a PRESET OUT (fader-independent by design) — slider 0's true identity is
+ * unverified, and slot 4 feeds the preset banks' trimmer rows, so the comp
+ * channel would pollute the preset outs. Re-evaluate after a clean mixed-out
+ * discrimination test. 0 = stock behavior. */
+#define MASTER_DRY_MODE   0
 #define SENS_ARM_FRAC     0.4f    /* re-arm hysteresis: env must dip below REF*this  */
 
 /* ---- input-mixer LED (PA0) mode ------------------------------------------ */

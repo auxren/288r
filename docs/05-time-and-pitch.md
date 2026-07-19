@@ -43,8 +43,8 @@ downward shifts, following the stock panel semantics.
   All owner-tested on hardware:
   - **The sliders are a pitched echo pattern** (stock semantics): each tap output carries the
     shifted voice **at that tap's own delay time** — the same echo spacing you set in TIME mode,
-    transposed. Cycle and octave rescale the pattern exactly as in TIME mode; slider 0 is the
-    MASTER (a parallel sum of all eight tap channels). At zero depth the output is the clean dry signal.
+    transposed. Cycle and octave rescale the pattern exactly as in TIME mode; slider 0's exact
+    routing is still being verified on hardware (master sum vs dry feed). At zero depth the output is the clean dry signal.
   - **Knob = pitch-down depth**, smooth across the whole rotation (in this mode the knob uses its
     raw travel, not the 0.4×–1.6× legend marks — those are a time scale and don't apply). The
     bottom of the travel snaps to **exact unity**, so fully counter-clockwise is a clean bypass
