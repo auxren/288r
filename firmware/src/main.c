@@ -103,7 +103,7 @@ static xport_trig_t g_xtrig;
 static chord_t g_save_chord;
 #endif
 
-extern volatile uint8_t g_spi_raw[2][3];   /* SPI2 control-ADC raw bytes (ch0,ch1) */
+extern volatile uint8_t g_spi_raw[4][3];   /* SPI2 raw: [0]=0x80 [1]=0xA0(CV) [2]=0xC0 [3]=0xE0(knob) */
 
 /* TIME control in [0,1]; written in the superloop, read in the audio ISR. */
 static volatile float g_time_raw01 = 0.5f;
@@ -115,6 +115,9 @@ static volatile float g_env = 0.0f;
  * copies of the input (analog attenuators — see board.h SENS_IN_SLOT). Both are
  * envelope-followed so one owner knob-sweep over SWD identifies which is sens. */
 static volatile float g_sens_env[2] = { 0.0f, 0.0f };
+/* red AUTO CONTROL position snapshot for the fast control tick (decoded in the
+ * slow panel tick): 1=all-sounds(delay), 0=center(looper), 2=next-sound. */
+static volatile uint8_t g_auto_now = 1;
 #if SENS_IN_SLOT >= 0 && (SENS_IN_SLOT < 1 || SENS_IN_SLOT > 2)
 #error "SENS_IN_SLOT must be 1 or 2 (indexes g_sens_env[SLOT-1])"
 #endif
@@ -128,6 +131,14 @@ static volatile uint8_t  g_clip_count = 0;
  * 0..7 = only that TDM slot carries audio (others muted). Written over SWD
  * (mwb &g_dac_solo N); strip with the rest of the g_dbg scaffolding. */
 volatile int8_t g_dac_solo __attribute__((used)) = -1;
+
+/* SWD-triggered live 4051-mux sweep with PEAK-HOLD (signal-in hunt): the boot
+ * matrix scan samples each mux column ONCE — useless against audio. Set
+ * g_dbg_muxscan=1 over SWD and the superloop sweeps all 8 columns, holding
+ * min/max of ~400 ADC3 samples each, into g_dbg_muxpk. Reparks at 0x777777
+ * (stock idle) when done. Bench scaffolding — strip with the rest. */
+volatile uint8_t  g_dbg_muxscan __attribute__((used)) = 0;
+volatile uint16_t g_dbg_muxpk[8][2] __attribute__((used));
 static float g_att_filt = 2047.0f;   /* c.v. attenuverter (ADC3 parked ch) */
 
 /* Audio-block clock (ISR-incremented, ~6000/s): the loop-pass "tick" rate varies
@@ -466,9 +477,9 @@ int main(void)
          * quickly or the delay time steps (zipper — release-test 2.1). The CV is
          * BIPOLAR around mid-scale (the panel's -/+ attenuverter): signed offset. */
         if ((scan_div & 0x3u) == 0u) {
-            bsp_spi2_probe();     /* -> g_spi_raw[0]=ch0(CV), [1]=ch1(knob) */
-            uint32_t cv   = ((g_spi_raw[0][1] & 0x0F) << 8) | g_spi_raw[0][2];
-            uint32_t knob_raw = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
+            bsp_spi2_probe();     /* all 4 MCP3204 channels; CV=idx1, knob=idx3 */
+            uint32_t cv   = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
+            uint32_t knob_raw = ((g_spi_raw[3][1] & 0x0F) << 8) | g_spi_raw[3][2];
             /* panel-legend knob curve (owner mark-by-mark cal 2026-07-18): the
              * printed 0.4/0.6/0.8/1.0/1.2/1.4/1.6 marks read exactly true.
              * (Replaces the KNOB_ADC_LO/HI span stretch — the old 620 floor no
@@ -536,10 +547,42 @@ int main(void)
             }
             if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
             mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.04f;
-            g_time_raw01 = pin_update(&g_mult_pin, mult_filt);
+            float t01 = pin_update(&g_mult_pin, mult_filt);
+            /* ENVELOPE -> DELAY-TIME (the dead signal-in jack's intended
+             * feature, via the working sens channel): in "all sounds" mode the
+             * sens knob is the analog DEPTH control — its channel's envelope
+             * adds to the multiplier. Looper modes keep sens as the capture
+             * threshold; pitch mode keeps the knob on depth duty. Applied
+             * AFTER pin_update so preset knob-catch pinning is unaffected
+             * (verify-panel lesson from the first signal-in attempt). */
+#if PITCH_VOICE_ENABLE
+            if (!g_pitch_mode && g_auto_now == 1)
+#else
+            if (g_auto_now == 1)
+#endif
+            {
+                t01 += g_sens_env[0] * ENV_TIME_DEPTH;
+                if (t01 > 1.0f) t01 = 1.0f;
+            }
+            g_time_raw01 = t01;
             g_dbg_panel.spi_cv = (uint16_t)cv;
             g_dbg_panel.spi_knob = (uint16_t)knob;
             g_dbg_panel.mult = mult_filt;
+        }
+        if (g_dbg_muxscan) {
+            g_dbg_muxscan = 0;
+            for (unsigned k = 0; k < 8u; k++) {
+                bsp_panel_out(0x111111u * k);
+                for (volatile int w = 0; w < 20000; w++) { }   /* settle */
+                uint16_t lo = 4095, hi = 0;
+                for (int n = 0; n < 400; n++) {
+                    uint16_t v = bsp_mult_read();
+                    if (v < lo) lo = v;
+                    if (v > hi) hi = v;
+                }
+                g_dbg_muxpk[k][0] = lo; g_dbg_muxpk[k][1] = hi;
+            }
+            bsp_panel_out(0x777777u);              /* repark (stock idle) */
         }
         if ((scan_div++ & 0x3Fu) == 0u) {
             panel_ctl_t pc;
@@ -555,6 +598,7 @@ int main(void)
             g_dbg_panel.preset = pc.preset;
             g_dbg_panel.octave = pc.octave;
             g_dbg_panel.bank_b = pc.automode;    /* dbg slot: red-switch position */
+            g_auto_now = pc.automode;            /* fast-tick snapshot (env->time gate) */
 #if PITCH_VOICE_ENABLE
             g_pitch_mode = pc.time_pitch;        /* bit4: 1 = pitch mode */
             pc_cycle_now = pc.cycle;

@@ -74,6 +74,9 @@
  * then 0 — patch-state dependent; locate with a knob-wiggle + cv watch). */
 #define SENS_IN_SLOT      1
 #define SENS_REF          0.02f   /* fixed trigger reference [calibrate on hardware] */
+#define ENV_TIME_DEPTH    1.0f    /* envelope->delay-time span in "all sounds" mode:
+                                     full-scale sens envelope pushes the multiplier
+                                     across its whole range [calibrate by feel]     */
 #define SENS_ARM_FRAC     0.4f    /* re-arm hysteresis: env must dip below REF*this  */
 
 /* ---- input-mixer LED (PA0) mode ------------------------------------------ */
