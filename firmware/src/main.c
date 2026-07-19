@@ -458,7 +458,15 @@ int main(void)
      * MCLK to respond on I2C. Engine already init'd, so the ISR is safe to run. */
     bsp_audio_init();
     bsp_audio_start();
-    (void)bsp_codec_init();
+    /* CONCERT-GRADE: codec init is verified+retried inside; on total failure
+     * flash all indicators rapidly ~3 s (dry still passes on the analog path,
+     * but the player must KNOW) — then continue so the panel stays alive. */
+    if (bsp_codec_init() != 0) {
+        for (int fl = 0; fl < 30; ++fl) {
+            for (unsigned li = 0; li < 5u; ++li) bsp_panel_ind(li, fl & 1);
+            for (volatile int d = 0; d < 800000; ++d) { }
+        }
+    }
 
 #if PANEL_LED_ENABLE
     bsp_panel_init();          /* [BENCH] enable only after the 595 bits are labelled */

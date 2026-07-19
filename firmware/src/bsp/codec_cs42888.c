@@ -36,6 +36,32 @@ static int wait_flag(volatile uint32_t *sr, uint32_t mask, int want_set)
     return -1;
 }
 
+/* CONCERT-GRADE RECOVERY: if a reset struck mid-I2C-transaction, the codec can
+ * hold SDA low forever and every subsequent boot fails silently (seen live:
+ * dead audio I/O until a power cycle — unacceptable on stage). Standard cure:
+ * bit-bang up to 9 SCL pulses until the slave releases SDA, then a STOP. */
+static void i2c_bus_recover(void)
+{
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN; (void)RCC->AHB1ENR;
+    /* PB8=SCL, PB9=SDA as open-drain GPIO, both released (high) */
+    GPIOB->OTYPER  |=  (1u<<8) | (1u<<9);
+    GPIOB->PUPDR    =  (GPIOB->PUPDR  & ~((3u<<16)|(3u<<18))) | (1u<<16) | (1u<<18);
+    GPIOB->BSRR     =  (1u<<8) | (1u<<9);
+    GPIOB->MODER    =  (GPIOB->MODER  & ~((3u<<16)|(3u<<18))) | (1u<<16) | (1u<<18);
+    for (volatile int d = 0; d < 2000; ++d) { }
+    for (int i = 0; i < 9 && !(GPIOB->IDR & (1u<<9)); ++i) {
+        GPIOB->BSRR = (1u<<8) << 16;                     /* SCL low  */
+        for (volatile int d = 0; d < 900; ++d) { }
+        GPIOB->BSRR = (1u<<8);                           /* SCL high */
+        for (volatile int d = 0; d < 900; ++d) { }
+    }
+    /* STOP: SDA low -> high while SCL high */
+    GPIOB->BSRR = (1u<<9) << 16;
+    for (volatile int d = 0; d < 900; ++d) { }
+    GPIOB->BSRR = (1u<<9);
+    for (volatile int d = 0; d < 900; ++d) { }
+}
+
 static void i2c1_gpio_init(void)
 {
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
@@ -171,34 +197,70 @@ static void codec_reset_release(void)
     for (volatile int d = 0; d < 300000; ++d) { }            /* settle     */
 }
 
+volatile uint32_t g_codec_status __attribute__((used)) = 0xDEADBEEFu;
+/* one verified-init attempt; returns 0 only if every key register reads back
+ * exactly as programmed (config VERIFIED, not hoped) */
+static int codec_try_init(void)
+{
+    int rc = 0;
+    rc |= cs_write(0x02u, 0x7Fu);
+    rc |= cs_write(0x03u, 0xF0u);
+    rc |= cs_write(0x04u, 0x36u);
+    rc |= cs_write(0x07u, 0xFFu);
+    rc |= cs_write(0x02u, 0x00u);
+    rc |= cs_write(0x06u, 0x10u);
+    rc |= cs_write(0x07u, 0x00u);
+    if (rc) return -1;
+    static const uint8_t chk_reg[4] = { 0x03u, 0x04u, 0x02u, 0x07u };
+    static const uint8_t chk_val[4] = { 0xF0u, 0x36u, 0x00u, 0x00u };
+    for (int i = 0; i < 4; ++i) {
+        uint8_t v = 0xFFu;
+        if (cs_read(chk_reg[i], &v) != 0 || v != chk_val[i]) return -2;
+    }
+    return 0;
+}
+
 int bsp_codec_init(void)
 {
     codec_reset_release();
+    i2c_bus_recover();
     i2c1_gpio_init();
     i2c1_periph_init();
 
     bsp_codec_scan();   /* DIAGNOSTIC: find the real codec address over SWD */
 
+    /* verified init with retry: hardware-reset the codec and reconfigure until
+     * the readback matches, up to 5 attempts. g_codec_status: attempt index on
+     * success, 0xFF on total failure (dry passes analog; LEDs flash the alarm). */
+    for (uint32_t attempt = 0; attempt < 5u; ++attempt) {
+        if (attempt) {
+            codec_reset_release();
+            i2c_bus_recover();
+            i2c1_gpio_init();
+            i2c1_periph_init();
+        }
+        if (codec_try_init() == 0) {
+            g_codec_status = attempt;
+            goto configured;
+        }
+    }
+    g_codec_status = 0xFFu;
+    return -1;
+configured:
+
     /* CS42888 TDM/slave init (values from the CS42888 datasheet + NXP fsl driver).
      * F429 SAI is master -> codec is slave (FM=11 both). Interface format 0x36 =
      * DAC_DIF=ADC_DIF=110 (TDM). [BENCH] MFREQ in reg 0x03 may need tuning to the
      * real MCLK. */
-    int rc = 0;
-    rc |= cs_write(0x02u, 0x7Fu);   /* power down all modules during config       */
-    rc |= cs_write(0x03u, 0xF0u);   /* functional mode: DAC_FM=ADC_FM=11 (slave)  */
-    rc |= cs_write(0x04u, 0x36u);   /* interface formats: TDM (both DIF = 110)    */
-    rc |= cs_write(0x07u, 0xFFu);   /* mute all DAC channels during config        */
-    rc |= cs_write(0x02u, 0x00u);   /* power up all                               */
-    rc |= cs_write(0x06u, 0x10u);   /* transition control                         */
-    rc |= cs_write(0x07u, 0x00u);   /* unmute                                     */
-    g_codec_rc = (uint32_t)rc;
-
+    g_codec_rc = 0;
     /* Read back key registers (chip ID + config) for SWD inspection. */
-    static const uint8_t addrs[10] = {0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x11,0x18};
-    for (unsigned i = 0; i < 10; ++i) {
-        uint8_t v = 0xFF;
-        if (cs_read(addrs[i], &v) == 0) g_codec_regs[i] = v;
-        else g_codec_regs[i] = 0xEE;
+    {
+        static const uint8_t addrs[10] = {0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x11,0x18};
+        for (unsigned i = 0; i < 10; ++i) {
+            uint8_t v = 0xFF;
+            if (cs_read(addrs[i], &v) == 0) g_codec_regs[i] = v;
+            else g_codec_regs[i] = 0xEE;
+        }
     }
-    return rc ? -1 : 0;
+    return 0;
 }
