@@ -41,9 +41,10 @@ downward shifts, following the stock panel semantics.
   (heard on the bench as broadband static when the pitch CV was swept hard).
 - **Community firmware:** the same controls, on a crossfaded two-tap shifter that splices cleanly.
   All owner-tested on hardware:
-  - The delay pins to the range minimum, and **all eight tap outputs carry the shifted voice** —
-    the sliders still mix them, and slider 0 remains the always-on dry input feed. At zero depth
-    the output is the clean dry signal.
+  - **The sliders are a pitched echo pattern** (stock semantics): each tap output carries the
+    shifted voice **at that tap's own delay time** — the same echo spacing you set in TIME mode,
+    transposed. Cycle and octave rescale the pattern exactly as in TIME mode; slider 0 remains
+    the always-on dry input feed. At zero depth the output is the clean dry signal.
   - **Knob = pitch-down depth**, smooth across the whole rotation (in this mode the knob uses its
     raw travel, not the 0.4×–1.6× legend marks — those are a time scale and don't apply). The
     bottom of the travel snaps to **exact unity**, so fully counter-clockwise is a clean bypass
@@ -58,12 +59,14 @@ downward shifts, following the stock panel semantics.
   - **Quality (measured):** pitch purity 0.992–1.000 from −1 semitone to +1 octave — clean on
     sustained tones and on chords. Splices are waveform-aligned and the crossfade adapts to the
     material, so there is no grain-rate pumping on tones and no wrap static.
-  - Each tap output gets the voice through its **own short micro-delay (0–9 ms)**, so
-    phase-inverted slider pairs comb-filter into new colors instead of cancelling to silence.
+  - Because every tap sits at a different echo time, the channels are naturally decorrelated —
+    phase-inverted slider pairs comb into new colors instead of cancelling, and the individual
+    outputs spread cleanly across a multichannel rig.
 
 **Trick — pitch spirals:** in pitch mode, patch a tap output back into the input. Every pass
 through the loop is shifted *again*, so each repeat steps further down (or up, with CV) — the
-classic cascading-shift spiral.
+classic cascading-shift spiral. With the echo pattern in play, each tap spirals at its own
+rhythm — set uneven tap spacings for tumbling, arpeggio-like cascades.
 
 ## Which mode should I use?
 
