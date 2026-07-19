@@ -88,7 +88,7 @@ All of the following was flashed and owner-tested in the final bench session unl
   SDRAM (regression test: purity 0.999, frequency error 0.00% at a 4.2-million-sample-deep write
   pointer). Per-tap decorrelation micro-delays were added so phase-inverted slider pairs comb
   instead of cancelling.
-- **Slot-to-slider map owner-verified** via an SWD solo walk: slider 0 is the always-dry input
+- **Slot-to-slider map owner-verified** via an SWD solo walk: slider 0 is the master sum of all eight tap channels (corrected post-release; earlier text said dry input
   feed (analog); sliders 1–8 are the taps. This walk found the dead slider 5 (see Known issues).
 - **Settings policy locked (owner decision).** Only the 4 rear DIP switches are read — sw1 ×10
   extend, sw2 bandwidth limit, sw3/sw4 resolution — as boot-time straps; power-cycle to apply.
