@@ -146,7 +146,15 @@
 #define SW_BANDWIDTH_PIN     11u        /* rear sw2 (the other f64-read rear pin)  */
 
 /* Owner-confirmed feature behavior. */
-#define DELAY_EXTEND_FACTOR  10.0f      /* sw1: x10 delay time + looper length     */
+#define DELAY_EXTEND_FACTOR  4.0f       /* sw1: "+2 octaves" of delay range. Was
+                                           x10 (the stock table) — field-proven to
+                                           exceed three subsystem envelopes (octave
+                                           switch saturated, pitch echo ring
+                                           clamped, looper cycles took 10-40 s).
+                                           x4 composes in pure octaves with the
+                                           x1/x2/x4 switch: every stack fully
+                                           delivered, buffer max (~19 s) reached
+                                           cleanly at DIP+x4. Issue #4. */
 #define BANDWIDTH_LIMIT_HZ   11025.0f   /* sw2: record-path bandwidth limit         */
 
 /* ---- global pitch voice (PITCH_SHIFT.md) — active in pitch mode (bit 4) ---- */
