@@ -99,3 +99,23 @@ about 70 dB of alias suppression at +1 octave, so bright material stays clean), 
 period-aware down to roughly **30 Hz** (deep bass shifts cleanly instead of thumping at the
 grain rate), and the crossfade adapts to the material so sustained tones don't "breathe."
 
+## String mode (Karplus-Strong)
+
+A gesture-entered third mode: **hold the red switch's *next sound* side ~2 s** — the LEDs
+twinkle and the 8 taps become **8 plucked strings** (the READY LED breathes while you're in the
+mode; the same hold exits, and your delay is untouched underneath). Whatever enters the input
+*plucks* the strings — percussive material plays them as notes; sustained material bows them.
+
+- **The tap positions are the chord** — each tap's position sets its string's interval, so the
+  A/B/C preset slots recall *chords*, and the default ramp pattern is a pure undertone series.
+- **c.v. in transposes the whole chord at 1.2 V/oct** — always, in both TIME/pitch switch
+  positions, and *directly* (the attenuverter is bypassed here: attenuation would break V/oct
+  tracking). Sequence it like an oscillator bank.
+- **The multiplier knob is damping/brightness**: clockwise = brighter, longer ring;
+  counter-clockwise = dark and thuddy.
+- Each string has its own output (its tap's jack), the sliders mix them, and the preset outs
+  give four pre-composed voicings of the chord.
+
+This is the one structure that cannot be patched externally (a string loop must close with
+zero extra latency, and the codec round trip is ~1 ms), so it is the single deliberate
+exception to the no-internal-feedback design — scoped entirely to this mode.

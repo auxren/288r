@@ -166,8 +166,8 @@ static ptaps_t g_pt;
 
 /* KARPLUS-STRONG string bank (gesture-entered mode: hold next-sound 2 s;
  * twinkle confirms; READY LED breathes while in the mode; same hold exits).
- * Rings in SRAM (~77 KB). Strings tune from the tap positions /KS_PERIOD_DIV,
- * so the multiplier knob and Time-CV sweep the whole chord. */
+ * Rings in SRAM (~77 KB). Tap PHASES are the chord; c.v. in transposes at 1.2 V/oct
+ * (direct); the multiplier knob is damping/brightness. */
 static ks_t g_ks;
 static volatile uint8_t g_ks_mode = 0;
 #if PITCH_VOICE_ENABLE
@@ -604,6 +604,23 @@ int main(void)
                 if (t01 > 1.0f) t01 = 1.0f;
             }
             g_time_raw01 = t01;
+            /* KS tuning (owner-designed): the tap PHASES are the chord's
+             * intervals; c.v. in transposes the whole chord at 1.2 V/oct —
+             * ALWAYS, both TIME/pitch positions, DIRECT (no attenuverter: any
+             * attenuation would break V/oct tracking). The multiplier knob is
+             * DAMPING/BRIGHTNESS: CW = brighter / longer ring. */
+            if (g_ks_mode) {
+                float volts = (float)cv * PITCH_CV_VOLTS_PER_CODE;
+                float trans = fm_exp2f(-volts * (1.0f / 1.2f));  /* CV up = pitch up */
+                for (int ki = 0; ki < KS_STRINGS; ki++) {
+                    float base = KS_BASE_PERIOD *
+                                 (g_engine.taps.phase[ki] / PHASE_FULLSCALE);
+                    ks_set_period(&g_ks, ki, base * trans);
+                }
+                float k01 = (float)knob_raw * (1.0f / 4094.0f);
+                if (k01 > 1.0f) k01 = 1.0f;
+                g_ks.damp = 0.05f + 0.90f * (1.0f - k01);
+            }
             g_dbg_panel.spi_cv = (uint16_t)cv;
             g_dbg_panel.spi_knob = (uint16_t)knob;
             g_dbg_panel.mult = mult_filt;
@@ -654,13 +671,6 @@ int main(void)
                     g_twinkle_until = g_blocks + 3000u;   /* ~1 s confirm */
                 }
                 ks_prev = held;
-            }
-            /* KS tuning: strings follow the tap positions (chord) through the
-             * live multiplier/CV — retargeted per tick, glided inside ks. */
-            if (g_ks_mode) {
-                for (int ki = 0; ki < KS_STRINGS; ki++)
-                    ks_set_period(&g_ks, ki,
-                                  taps_delay(&g_engine.taps, ki) * (1.0f / KS_PERIOD_DIV));
             }
 #if PITCH_VOICE_ENABLE
             g_pitch_mode = pc.time_pitch;        /* bit4: 1 = pitch mode */

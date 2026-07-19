@@ -6,11 +6,12 @@
  * extra latency inside the ISR). This is a NEW engine mode, gesture-entered;
  * the delay engine's no-internal-feedback rule is untouched in delay modes.
  *
- * Tuning: string i's period comes from tap i's current target delay scaled
- * down by KS_PERIOD_DIV — so the tap phases are the CHORD, and the multiplier
- * knob / Time-CV sweep all strings together (linear-in-period v1; a 1.2 V/oct
- * map can come later). Excitation: the module input is injected into every
- * string. Rings live in SRAM (fast, DMA-free).
+ * Tuning (owner-designed): the tap PHASES are the chord's intervals
+ * (base period = KS_BASE_PERIOD * phase/160); c.v. in transposes the whole
+ * chord at 1.2 V/oct, always and directly (no attenuverter — attenuation
+ * would break tracking). The multiplier knob maps to damping/brightness.
+ * Excitation: the module input is injected into every string. Rings live in
+ * SRAM (fast, DMA-free).
  *
  * Host-tested by test/test_ks.c.
  */
@@ -22,7 +23,7 @@
 #define KS_STRINGS     8
 #define KS_RING_LEN    2400          /* 40 Hz floor @96k                     */
 #define KS_MIN_PERIOD  64.0f         /* 1.5 kHz ceiling                      */
-#define KS_PERIOD_DIV  16.0f         /* tap delay -> string period           */
+#define KS_BASE_PERIOD 1920.0f       /* phase 160 string @ 0 V = 50 Hz @96k  */
 
 typedef struct {
     float ring[KS_STRINGS][KS_RING_LEN];
