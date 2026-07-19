@@ -431,6 +431,7 @@ int main(void)
 #endif
 #if PRESET_ENABLE
     chord_init(&g_save_chord);
+    bsp_preset_flash_migrate();  /* one-time: carry sector-3 saves to sector 7 */
     prev_preset = 0xFFu;    /* force a load of the selected slot on the first scan */
 #endif
 #endif

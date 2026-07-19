@@ -1,5 +1,11 @@
 # 2. Installation & flashing
 
+
+> **Your presets survive updates.** Saved presets (and future calibration data) live in a
+> dedicated flash sector at the top of the chip, physically separate from the firmware image.
+> Reflashing any release — by any of the supported tools — never touches it, and the build
+> system refuses to produce an image large enough to collide with it.
+
 ## Module installation
 
 The 288r is a Buchla-format (4U, 1.2 A / 15 V rail) module. Install it in a powered-down Buchla

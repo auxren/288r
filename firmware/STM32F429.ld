@@ -14,7 +14,11 @@ _Min_Stack_Size = 0x800;
 
 MEMORY
 {
-  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 512K
+  /* image capped at 384K: the TOP sector (7, 128K @ 0x08060000) is RESERVED
+     for preset/calibration persistence — presets MUST survive firmware
+     updates (owner hard requirement). Growing past this cap is a link error,
+     never a silent overlap with the store. */
+  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 384K
   RAM   (xrw) : ORIGIN = 0x20000000, LENGTH = 192K
   CCM   (xrw) : ORIGIN = 0x10000000, LENGTH = 64K
   SDRAM (xrw) : ORIGIN = 0xD0000000, LENGTH = 8192K

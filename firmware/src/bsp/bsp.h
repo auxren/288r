@@ -49,6 +49,7 @@ float    bsp_mult_read01(void);      /* 0..1 */
  * save-chord + recall UX validates on hardware, but is NOT reboot-persistent. Swap
  * for real sector erase+program (reads stay memory-mapped). */
 const uint8_t *bsp_preset_flash_base(void);                          /* store base  */
+void bsp_preset_flash_migrate(void);   /* one-time sector-3 -> sector-7 carry-over */
 int  bsp_preset_flash_write(unsigned slot, const uint8_t *blob, unsigned len);
 
 /* Bit-banged panel I/O (74HC165 switches in, 74HC595 LEDs/columns out). */
