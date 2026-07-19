@@ -112,7 +112,15 @@ better engine; add new features/controls/modulation only *after* the clone is na
   coefficients CCM-published by the superloop (revoke-before-overwrite protocol), and DWT_CYCCNT ISR
   load telemetry (`g_dbg_panel.isr_pk`) + `g_dbg_ratio_force` so headroom is MEASURED before release.
   FLASH GATE: power the unit, flash, force ratio 4.0 over SWD, confirm isr_pk ≪ budget (28000cyc/block).
-  Remaining v1.1 backlog: period-adaptive grain window (bass reach below ~125 Hz), slider-5 board repair.
+  Post-v1.0.1 landed on main (all owner-tested/soak-proven): AA polyphase up-shift filter
+  (streaming-cache redesign after the verify panel caught the naive version's ISR blowout),
+  pitch-mode overrun fix (skip discarded tap reads; 104%->58-70% ISR), TRANSPOSED MULTITAP
+  (per-tap SDRAM echo ring — sliders = pitched echo pattern, stock semantics; delay now 19.1 s
+  + 2.73 s voice ring), wet-sliver 4x thinner, PERIOD-ADAPTIVE splice search (background
+  autocorr sizes the correlator on confident bass: 30 Hz purity 0.134->1.004 host; subharmonic
+  disambiguation needed local refine — pure-sine tests missed it, live hardware caught it).
+  Direct audio capture via Big Six ch7/8 (mic permission granted) = full autonomous bench loop.
+  Remaining backlog: slider-5 board repair (owner soldering), v1.1 tag on owner's ears.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts

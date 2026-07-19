@@ -116,6 +116,9 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->aarows_band = -1;
     p->aaband_req = -1;
     p->aa_bypass = 0;
+    p->period = 0.0f;
+    p->per_conf = 0.0f;
+    p->per_tick = 0;
 }
 
 void ps_set_ratio(pitchshift_t *p, float ratio)
@@ -143,12 +146,86 @@ void ps_reset(pitchshift_t *p)
  * squares gain BIASED TOWARD QUIET WINDOWS — it dug 30 dB holes in enveloped
  * material). Guards: incoming energy >= 1% of outgoing; best NCC >= 0.5, else
  * fall back to offset 0 (= the plain crossfade). Runs in the MAIN LOOP only.
- * Range note: reads reach base + W + MAXLAG + N (~ +1600) — callers must keep
+ * Range note: reads reach base + W + EXT_ML + EXT_N (~ +6600 worst) — callers must keep
  * that inside the buffer (trivial at SDRAM sizes). Honest low-frequency reach
  * with N=768 correlation span: ~125 Hz. */
 #define PS_DEGLITCH_N       768
 #define PS_DEGLITCH_MAXLAG  1200
 #define PS_DEGLITCH_LOOKA   0.06f     /* start searching within 6% of the wrap */
+
+/* period-adaptive extension: with a confident low-frequency period estimate,
+ * the splice search widens to see ~2 periods (bass reach ~35 Hz @96k). Caps
+ * bound the superloop stall; the wrap-headroom gate below keeps the long
+ * search out of tight timing windows. */
+#define PS_PER_SCAN_EVERY   256       /* idle service calls between scans (the
+                                         scan's SDRAM reads contend with the ISR) */
+#define PS_PER_SPAN         2048      /* autocorr integration span (samples)   */
+#define PS_PER_MINLAG       240       /* 400 Hz — shorter periods don't need us */
+#define PS_PER_MAXLAG       3400      /* ~28 Hz                                */
+#define PS_EXT_N_CAP        3000
+#define PS_EXT_ML_CAP       3600
+
+/* normalized (sign-kept NCC^2) autocorrelation score at one lag */
+static float ps_lag_score(pitchshift_t *p, const delay_line_t *d,
+                          float dRef, float e0, int lag)
+{
+    (void)p;
+    float acc = 0.0f, e1 = 0.0f;
+    for (int k = 0; k < PS_PER_SPAN; k += 4) {
+        float a = ps_read(d, dRef + (float)k, DL_INTERP_LINEAR);
+        float b = ps_read(d, dRef + (float)(k + lag), DL_INTERP_LINEAR);
+        acc += a * b;
+        e1  += b * b;
+    }
+    if (e1 < 0.01f * e0) return 0.0f;
+    return acc * fabsf(acc) / (e0 * e1 + 1.0e-9f);
+}
+
+/* background source-period estimate via decimated NCC autocorrelation of the
+ * outgoing-tap region. Runs ONLY on idle service calls (superloop), never in
+ * the ISR. Coarse 8-sample lag grid — the fine splice search still refines
+ * alignment; we only need the period to SIZE the search. */
+static void ps_period_scan(pitchshift_t *p, const delay_line_t *d)
+{
+    if (++p->per_tick < PS_PER_SCAN_EVERY) return;
+    p->per_tick = 0;
+    const float dRef = p->base + 0.5f * p->window;
+    float e0 = 0.0f;
+    for (int k = 0; k < PS_PER_SPAN; k += 4) {
+        float a = ps_read(d, dRef + (float)k, DL_INTERP_LINEAR);
+        e0 += a * a;
+    }
+    if (e0 < 1.0e-6f) { p->per_conf = 0.0f; return; }
+    float best = 0.0f; int bestlag = 0;
+    for (int lag = PS_PER_MINLAG; lag < PS_PER_MAXLAG; lag += 8) {
+        float s = ps_lag_score(p, d, dRef, e0, lag);
+        if (s > best) { best = s; bestlag = lag; }
+    }
+    /* subharmonic disambiguation: a periodic signal scores ~equally at every
+     * period MULTIPLE — if ~half (or ~a third of) the winning lag scores
+     * nearly as well, the true period is the shorter one. Each candidate is
+     * refined over +/-16 samples: on real (slightly drifting/inharmonic)
+     * material the sub-period peak sits a few samples off the exact division,
+     * and sampling the exact point rejected valid halvings (seen live). */
+    while (bestlag >= 2 * PS_PER_MINLAG) {
+        int moved = 0;
+        static const int divs[2] = { 2, 3 };
+        for (int di = 0; di < 2 && !moved; di++) {
+            int c0 = bestlag / divs[di];
+            if (c0 < PS_PER_MINLAG) continue;
+            float sb = 0.0f; int lb = c0;
+            for (int lag = c0 - 16; lag <= c0 + 16; lag += 4) {
+                if (lag < PS_PER_MINLAG) continue;
+                float sc = ps_lag_score(p, d, dRef, e0, lag);
+                if (sc > sb) { sb = sc; lb = lag; }
+            }
+            if (sb >= 0.85f * best) { bestlag = lb; best = sb > best ? sb : best; moved = 1; }
+        }
+        if (!moved) break;
+    }
+    p->per_conf  = (best > 0.0f) ? sqrtf(best > 1.0f ? 1.0f : best) : 0.0f;
+    p->period    = (float)bestlag;
+}
 
 void ps_service(pitchshift_t *p, const delay_line_t *d)
 {
@@ -168,8 +245,30 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
     float dist = (dA <= dB) ? dA : dB;
     p->next_tap = tap;
     float astep = (step > 0.0f) ? step : -step;
-    if (dist > PS_DEGLITCH_LOOKA) return;          /* not imminent yet       */
+    if (dist > PS_DEGLITCH_LOOKA) {                /* not imminent yet       */
+        ps_period_scan(p, d);                      /* keep the period fresh  */
+        return;
+    }
     if (dist < 8.0f * astep) return;               /* too late — skip safely */
+
+    /* period-adaptive sizing: confident bass -> widen the search to ~2
+     * periods so the correlator can actually find a period-multiple lag.
+     * Only when the wrap allows the longer stall (headroom gate). */
+    int srchN = PS_DEGLITCH_N, srchML = PS_DEGLITCH_MAXLAG;
+    /* headroom gate: samples-to-wrap must exceed the extended search's
+     * superloop stall (~10 ms worst). The publish-staleness check already
+     * discards a search the wrap outran, so this only avoids wasted work —
+     * at extreme down-shift rates (wraps every ~10 ms) bass extension simply
+     * stays off, which those grain rates mask anyway. */
+    if (p->per_conf > 0.5f && p->period > 600.0f
+        && dist / astep > 600.0f) {
+        int n2 = (int)(2.0f * p->period);
+        int m2 = (int)(1.6f * p->period);
+        srchN  = (n2 > PS_EXT_N_CAP)  ? PS_EXT_N_CAP  : n2;
+        srchML = (m2 > PS_EXT_ML_CAP) ? PS_EXT_ML_CAP : m2;
+        if (srchML < PS_DEGLITCH_MAXLAG) srchML = PS_DEGLITCH_MAXLAG;
+        if (srchN  < PS_DEGLITCH_N)      srchN  = PS_DEGLITCH_N;
+    }
 
     /* correlate: the incoming tap enters at frac 0 for DOWN-shifts (delay base)
      * but frac 1 for UP-shifts (delay base+W; phase runs backward). */
@@ -178,16 +277,16 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
 
     /* outgoing-window energy once (lag-independent) for the guards */
     float eb = 0.0f;
-    for (int k = 0; k < PS_DEGLITCH_N; k += 2) {
+    for (int k = 0; k < srchN; k += 2) {
         float b = ps_read(d, dOut + (float)k, DL_INTERP_LINEAR);
         eb += b * b;
     }
     if (eb < 1.0e-7f) return;                      /* silence: keep offset 0 */
 
     float best = 0.0f; int bestlag = 0;
-    for (int lag = 0; lag < PS_DEGLITCH_MAXLAG; lag += 4) {   /* coarse grid */
+    for (int lag = 0; lag < srchML; lag += 4) {   /* coarse grid */
         float acc = 0.0f, ein = 0.0f;
-        for (int k = 0; k < PS_DEGLITCH_N; k += 2) {          /* decimate x2 */
+        for (int k = 0; k < srchN; k += 2) {          /* decimate x2 */
             float a = ps_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
             float b = ps_read(d, dOut + (float)k, DL_INTERP_LINEAR);
             acc += a * b;
@@ -208,9 +307,9 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
         for (int j = 0; j < 7; ++j) {
             int lag = bestlag - 3 + j;
             sc[j] = -1.0e30f;
-            if (lag < 0 || lag >= PS_DEGLITCH_MAXLAG) continue;
+            if (lag < 0 || lag >= srchML) continue;
             float acc = 0.0f, ein = 0.0f;
-            for (int k = 0; k < PS_DEGLITCH_N; k += 2) {
+            for (int k = 0; k < srchN; k += 2) {
                 float a = ps_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
                 float b = ps_read(d, dOut + (float)k, DL_INTERP_LINEAR);
                 acc += a * b;

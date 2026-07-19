@@ -38,6 +38,14 @@ typedef struct {
     int      aarows_band;     /* band aarows holds, -1 = none                    */
     volatile int aaband_req;  /* band the ISR wants published (platform reads)   */
     int      aa_bypass;       /* test hook: 1 = force Hermite path (no AA)       */
+    /* --- period-adaptive splice search (bass reach) ------------------------ */
+    /* A background autocorrelation (idle ps_service calls) estimates the
+     * source period; confident LOW material widens the splice search to cover
+     * ~2 periods, extending clean splicing from ~125 Hz down to ~35 Hz.
+     * (H949 principle: time the splice by the signal's own period.) */
+    float    period;          /* estimated source period, samples (0 = none)     */
+    float    per_conf;        /* normalized periodicity confidence 0..1          */
+    int      per_tick;        /* idle-call divider for the background scan       */
     volatile int   pend_tap;  /* which tap it is for (-1 = none). PROTOCOL:
                                  service writes pend_off, BARRIER, then pend_tap;
                                  the ISR reads pend_tap first and consumes both.  */
