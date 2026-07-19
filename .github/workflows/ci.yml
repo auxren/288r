@@ -60,7 +60,22 @@ jobs:
       - name: Publish release with .hex/.bin + flasher zip
         env:
           GH_TOKEN: ${{ github.token }}
+        # Release body = docs/release-notes-<tag>.md when present (the repo
+        # convention: New features / Fixed / Known & open issues sections),
+        # falling back to generated notes + the install line.
         run: |
+          NOTES="docs/release-notes-${GITHUB_REF_NAME}.md"
+          EXTRA="**Easiest install:** download \`288r-Flasher.zip\`, unzip, double-click the file for your OS with the ST-Link plugged in."
+          if [ -f "$NOTES" ]; then
+            { cat "$NOTES"; echo; echo "$EXTRA"; } > /tmp/relnotes.md
+            gh release create "${GITHUB_REF_NAME}" \
+              firmware/build/fw/b288-community.hex \
+              firmware/build/fw/b288-community.bin \
+              288r-Flasher.zip \
+              --title "b288 community firmware ${GITHUB_REF_NAME}" \
+              --notes-file /tmp/relnotes.md
+            exit 0
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             firmware/build/fw/b288-community.hex \
             firmware/build/fw/b288-community.bin \

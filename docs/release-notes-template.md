@@ -17,8 +17,17 @@ Cut with: `gh release create vX.Y.Z-exp --prerelease --title "..." --notes-file 
 <!-- e.g. "Stock 288r firmware + interpolated delay taps: smooth delay-time modulation
      (chorus/flanger) on both audio paths. Nothing else changed." -->
 
-### What changed vs stock
-- <!-- e.g. delay tap read is now fractional/interpolated (was integer -> stepped) -->
+### New features
+- <!-- every user-facing feature added this release, one line each -->
+
+### Fixed
+- <!-- every bug/issue resolved this release, one line each, symptom-first
+     ("pitch mode glitched under load — ISR overrun fixed") -->
+
+### Known / open issues
+- <!-- EVERYTHING currently open, restated fresh each release (do not assume the
+     reader saw earlier notes): hardware faults, unverified behaviors,
+     provisional features, deferred work -->
 
 ### Validation status
 - Tested on hardware: **yes/no** — by @<who>, board rev <…>, on <date>

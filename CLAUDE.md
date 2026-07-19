@@ -206,6 +206,10 @@ the read pointer stair-steps on the stock fw and is continuous after the patch; 
 the StdPeriph init layer (reusing MARF's `Libraries/`) and calibrate constants against the real panel.
 
 ## Conventions
+- **Release notes (owner requirement):** every release's `docs/release-notes-vX.Y.Z.md` uses
+  three clean sections — **New features / Fixed / Known & open issues** — with open issues
+  restated fresh each release. CI uses that file as the GitHub release body automatically
+  (falls back to generated notes if missing).
 - Clone-first; don't invent precise constants — parameterize and mark `calibrate on hardware`.
 - **Buffer/fidelity (decided):** SDRAM stores **int16 (vintage) / int32 (hi-fi)** — NOT float32;
   fidelity is a live front-panel switch (3 levels 12/16/20-bit in stock) that also sets the SDRAM
