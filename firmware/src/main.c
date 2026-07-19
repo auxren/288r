@@ -123,6 +123,13 @@ static volatile uint8_t g_auto_now = 1;
 #error "SENS_IN_SLOT must be 1 or 2 (indexes g_sens_env[SLOT-1])"
 #endif
 
+/* pulse-jack edge latches (write/recirc/arm): sampled at BLOCK rate in the
+ * ISR tail and latched until the panel tick consumes them — the tick alone
+ * sampled tens of ms apart and MISSED millisecond triggers (field report:
+ * 281e/251e pulses ignored, envelopes worked; issue #1). */
+static volatile uint8_t g_pulse_latch = 0;   /* bit0=write bit1=recirc bit2=arm */
+static uint8_t g_pulse_prev = 0;
+
 /* chain-clip indicator (PA0 repurposed, LED_INPUT_CLIP_MODE): block count until
  * which the LED stays lit, + an event counter for SWD verification. */
 static volatile uint32_t g_clip_until = 0;
@@ -369,6 +376,13 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
                 if (s != (unsigned)g_dac_solo) out[f * TDM_SLOTS + s] = 0;
     }
     g_blocks++;
+    {   /* pulse-jack edge latch at block rate (~3 kHz: catches 1 ms pulses) */
+        uint8_t now = (uint8_t)((bsp_pulse_in(0) ? 1u : 0u)
+                              | (bsp_pulse_in(1) ? 2u : 0u)
+                              | (bsp_pulse_in(2) ? 4u : 0u));
+        g_pulse_latch |= (uint8_t)(now & (uint8_t)~g_pulse_prev);
+        g_pulse_prev = now;
+    }
     {
         uint32_t dt = (DWT_CYCCNT_REG - cyc0) >> 4;
         if (dt > 0xFFFFu) dt = 0xFFFFu;
@@ -662,9 +676,12 @@ int main(void)
             /* Momentaries PROVEN: bits 11/12 active-low, decode gives pressed=1.
              * No idle-capture needed. */
             (void)scan_first; (void)idle_w;
-            unsigned wr_act = pc.write_trig | (unsigned)bsp_pulse_in(0);
-            unsigned rc_act = pc.recirc_trig | (unsigned)bsp_pulse_in(1);
-            unsigned arm_in = (unsigned)bsp_pulse_in(2);
+            /* consume ISR-latched pulse edges (issue #1) + live levels for
+             * gate-style use; clear-after-read */
+            uint8_t pl = g_pulse_latch; g_pulse_latch = 0;
+            unsigned wr_act = pc.write_trig | (unsigned)bsp_pulse_in(0) | ((pl >> 0) & 1u);
+            unsigned rc_act = pc.recirc_trig | (unsigned)bsp_pulse_in(1) | ((pl >> 1) & 1u);
+            unsigned arm_in = (unsigned)bsp_pulse_in(2) | ((pl >> 2) & 1u);
             g_dbg_panel.sw165 = sw;
             g_dbg_panel.preset = pc.preset;
             g_dbg_panel.octave = pc.octave;
@@ -848,6 +865,11 @@ int main(void)
 #if PRESET_ENABLE
                 if (pc.cal) {
                     for (int i = 0; i < NUM_TAPS; i++) ph[i] = 20.0f * (float)(i + 1);
+                    /* cal. = LIVE panel control by definition: release the
+                     * preset pins so the knob/switches answer immediately
+                     * (field report: knob stayed pinned into cal., issue #2) */
+                    pin_free(&g_mult_pin, mult_filt);
+                    g_sw_pin_on = 0;
                 } else {
                     /* Recall the selected slot (capture-live presets). Blank/
                      * invalid slot -> the A-ramp default. */
