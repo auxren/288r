@@ -26,6 +26,7 @@ void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n);
 #include "chord.h"
 #include "pitch_voice.h"
 #include "pitch_taps.h"
+#include "ks.h"
 #include "fast_math.h"
 #include "calibration.h"
 #include "storage.h"
@@ -161,6 +162,15 @@ static pitch_voice_t g_pv __attribute__((section(".ccmram")));
  * (transposed multitap, the stock's pitch-mode semantics). Also provides the
  * channel decorrelation the old 0-9 ms micro-delay ring existed for. */
 static ptaps_t g_pt;
+#endif
+
+/* KARPLUS-STRONG string bank (gesture-entered mode: hold next-sound 2 s;
+ * twinkle confirms; READY LED breathes while in the mode; same hold exits).
+ * Rings in SRAM (~77 KB). Strings tune from the tap positions /KS_PERIOD_DIV,
+ * so the multiplier knob and Time-CV sweep the whole chord. */
+static ks_t g_ks;
+static volatile uint8_t g_ks_mode = 0;
+#if PITCH_VOICE_ENABLE
 /* CCM copy of the active AA coefficient band (zero-wait D-bus reads in the
  * ISR vs ART-thrashing flash loads — adversarial-verify blocker fix). The
  * superloop copies on band change; revoke-before-overwrite protocol in
@@ -278,7 +288,11 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
          * control still run inside the engine. */
         g_engine.skip_tap_reads = g_pitch_mode ? 1 : 0;
 #endif
+        if (g_ks_mode) g_engine.skip_tap_reads = 1;   /* KS replaces channels */
         (void)engine_process_multi(&g_engine, x, t, chan);
+        if (g_ks_mode) {
+            ks_process(&g_ks, x, chan);
+        } else {
 #if PITCH_VOICE_ENABLE
         if (g_pitch_mode) {
             /* ALWAYS run the voice (pv_process is the only thing that slews
@@ -317,6 +331,7 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             }
         }
 #endif
+        }   /* !g_ks_mode */
 #if MASTER_DRY_MODE
         /* SLIDER 0 = DRY OUT (owner norm): slot 4 reaches only the analog
          * master sum (its own slider path is broken), so it carries a hidden
@@ -357,6 +372,13 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
     if (g_blocks >= g_twinkle_until)
         bsp_panel_strobe((g_blocks < g_clip_until) ? 0 : 1);
 #endif
+    /* KS mode indicator: READY LED breathes (~2 s cycle, PWM at block rate) */
+    if (g_ks_mode && g_blocks >= g_twinkle_until) {
+        uint32_t ph = g_blocks % 6000u;
+        uint32_t tri = (ph < 3000u) ? ph : (6000u - ph);      /* 0..3000 */
+        uint32_t duty = (tri * 255u) / 3000u;
+        bsp_panel_ind(3, (((g_blocks * 97u) & 0xFFu) < duty) ? 0 : 1);
+    }
     /* AUTO/presence LED (PA11) — owner spec: illuminate ONLY when incoming
      * audio exceeds the threshold set by the sens. knob (sens channel envelope
      * vs the fixed reference — same comparison that fires the auto-trigger).
@@ -470,6 +492,7 @@ int main(void)
     pv_init(&g_pv, PITCH_WINDOW_SAMPLES, PITCH_BASE_SAMPLES, PITCH_RATIO_SLEW);
     pt_init(&g_pt, pt_ring_buf, PT_RING_LEN);
     pt_clear(&g_pt);                       /* SDRAM: not zeroed by startup */
+    ks_init(&g_ks, 0.995f, 0.5f);          /* string bank (gesture-entered) */
 #endif
 
     float mult_filt = 0.5f;
@@ -615,6 +638,30 @@ int main(void)
             g_dbg_panel.octave = pc.octave;
             g_dbg_panel.bank_b = pc.automode;    /* dbg slot: red-switch position */
             g_auto_now = pc.automode;            /* fast-tick snapshot (env->time gate) */
+
+            /* KS gesture: HOLD next-sound (red momentary) ~2 s -> toggle the
+             * string bank; twinkle confirms; a short flick keeps its normal
+             * next-sound arm meaning. Same hold exits. */
+            {
+                static uint32_t ks_hold_t0 = 0;
+                static uint8_t  ks_prev = 0, ks_fired = 0;
+                uint8_t held = (pc.automode == 2);
+                if (held && !ks_prev) { ks_hold_t0 = g_blocks; ks_fired = 0; }
+                if (held && !ks_fired &&
+                    (g_blocks - ks_hold_t0) >= PRESET_SAVE_HOLD_BLOCKS) {
+                    g_ks_mode = !g_ks_mode;
+                    ks_fired = 1;
+                    g_twinkle_until = g_blocks + 3000u;   /* ~1 s confirm */
+                }
+                ks_prev = held;
+            }
+            /* KS tuning: strings follow the tap positions (chord) through the
+             * live multiplier/CV — retargeted per tick, glided inside ks. */
+            if (g_ks_mode) {
+                for (int ki = 0; ki < KS_STRINGS; ki++)
+                    ks_set_period(&g_ks, ki,
+                                  taps_delay(&g_engine.taps, ki) * (1.0f / KS_PERIOD_DIV));
+            }
 #if PITCH_VOICE_ENABLE
             g_pitch_mode = pc.time_pitch;        /* bit4: 1 = pitch mode */
             pc_cycle_now = pc.cycle;
