@@ -25,6 +25,7 @@ void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n);
 #include "preset_store.h"
 #include "chord.h"
 #include "pitch_voice.h"
+#include "pitch_taps.h"
 #include "fast_math.h"
 #include "calibration.h"
 #include "storage.h"
@@ -74,8 +75,14 @@ void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n);
 /* Delay memory in external SDRAM. float (~21.8 s @96 k, fills the 8 MB bank). The
  * int16/int32 SDRAM layer (2x capacity, vintage banks) is a staged rewrite module;
  * bring-up uses the validated float delay_line directly. */
-#define DELAY_LEN  (SDRAM_BYTES / sizeof(float))     /* 2,097,152 samples */
+/* SDRAM split: main delay line + the pitch voice's per-tap echo ring
+ * (stock-faithful transposed multitap — see pitch_taps.h). 1.75M + 256k
+ * samples = the full 8 MB. Ring depth 2.73 s covers every tap's pitch-mode
+ * minimum through x4 octave; only the x10-extend corner clamps. */
+#define PT_RING_LEN 262144u                          /* 2^18 samples, 1 MB   */
+#define DELAY_LEN  (SDRAM_BYTES / sizeof(float) - PT_RING_LEN)  /* 1,835,008 */
 static float delay_buf[DELAY_LEN] __attribute__((section(".sdram")));
+static float pt_ring_buf[PT_RING_LEN] __attribute__((section(".sdram")));
 
 /* Hot DSP state in CCM (0x10000000): zero-wait-state core-coupled RAM, saves
  * SRAM-bus contention with the SAI DMA. CCM is CPU-only — safe here because the
@@ -139,13 +146,10 @@ static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next on
 
 #if PITCH_VOICE_ENABLE
 static pitch_voice_t g_pv __attribute__((section(".ccmram")));
-/* per-tap decorrelation of the shared pitch voice: distinct micro-delays
- * (0..9 ms) so the 8 channels are never bit-identical — an inverted pair on
- * the output mixer combs instead of CANCELLING (owner's phase test), and
- * cross-channel AM coherence drops. Ring lives in CCM; zeroed at boot. */
-static float    g_pv_ring[1024] __attribute__((section(".ccmram")));
-static uint32_t g_pv_w = 0;
-static const uint16_t k_pv_decor[8] = { 0, 127, 251, 383, 509, 641, 769, 887 };
+/* per-tap echo ring: each channel reads the voice at ITS OWN tap delay
+ * (transposed multitap, the stock's pitch-mode semantics). Also provides the
+ * channel decorrelation the old 0-9 ms micro-delay ring existed for. */
+static ptaps_t g_pt;
 /* CCM copy of the active AA coefficient band (zero-wait D-bus reads in the
  * ISR vs ART-thrashing flash loads — adversarial-verify blocker fix). The
  * superloop copies on band change; revoke-before-overwrite protocol in
@@ -289,12 +293,17 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
                 if (d_int < 1) { d_int = 1; d_frac = 0.0f; }
                 dry = dl_read_frac(&g_engine.dl, d_int, d_frac, DL_INTERP_HERMITE);
             }
-            g_pv_ring[g_pv_w & 1023u] = y;
+            /* TRANSPOSED MULTITAP (stock semantics, owner-requested): the
+             * voice goes into its echo ring, and each channel reads it back
+             * at that tap's own delay — the TIME-mode echo pattern, pitched.
+             * Cycle/octave rescale the pattern exactly as in TIME mode. */
+            pt_write(&g_pt, y);
             for (unsigned pi = 0; pi < (unsigned)NUM_TAPS; ++pi) {
-                float yi = g_pv_ring[(g_pv_w - k_pv_decor[pi]) & 1023u];
+                uint32_t d_int; float d_frac;
+                taps_delay_frac(&g_engine.taps, pi, &d_int, &d_frac);
+                float yi = pt_read(&g_pt, d_int, d_frac);
                 chan[pi] = (1.0f - wet) * dry + (PITCH_VOICE_GAIN * wet) * yi;
             }
-            g_pv_w++;
         }
 #endif
 #if LED_INPUT_CLIP_MODE
@@ -432,6 +441,8 @@ int main(void)
 #endif
 #if PITCH_VOICE_ENABLE
     pv_init(&g_pv, PITCH_WINDOW_SAMPLES, PITCH_BASE_SAMPLES, PITCH_RATIO_SLEW);
+    pt_init(&g_pt, pt_ring_buf, PT_RING_LEN);
+    pt_clear(&g_pt);                       /* SDRAM: not zeroed by startup */
 #endif
 
     float mult_filt = 0.5f;
