@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <math.h>
 
+#ifndef M_PI            /* POSIX, not C11: glibc hides it under -std=c11 (CI) */
+#define M_PI 3.14159265358979323846
+#endif
+
 #define FS 48000.0
 static ks_t K;
 static float out[48000];
