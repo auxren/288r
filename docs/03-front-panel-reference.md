@@ -29,6 +29,7 @@ to the selected A/B/C preset slot — see [Presets](06-presets-taps-mixers.md).
 | **Rotary pots** | 7 | Input mixer / time / level controls (POT1–5 log, POT6–7 linear). The **multiplier**, **c.v. attenuverter**, and **sens.** knobs are documented in the rows below; remaining per-knob assignments are being confirmed on the unit. |
 | **multiplier** knob | 1 of the 7 | Scales all tap times. In **TIME** mode the printed panel legend reads true — **0.4** at the CCW stop, **1.0** at noon, **1.6** at the CW stop — because the firmware calibrates out the pot's non-linear taper against a mark-by-mark measured curve (the stock firmware wasted the bottom fifth of the travel). In **PITCH** mode the knob sets pitch-down depth from raw pot travel instead — see [Time & pitch](05-time-and-pitch.md). |
 | **c.v. attenuverter** | 1 of the 7 | Scales the **c.v. in** contribution to the multiplier: `mult = knob + CV × attenuverter`. The center detent is a dead zone (CV ignored); turning CCW inverts the CV. Active from power-up in both TIME and PITCH modes. |
+| **red AUTO CONTROL — hold gesture** | — | **Hold the *next sound* side ~2 s** → the LEDs twinkle and the module toggles **String mode** (Karplus-Strong; see [Time & pitch](05-time-and-pitch.md)). The READY LED **breathes** while the mode is active; the same hold exits. A short flick keeps its normal next-sound meaning. |
 | **sens.** | 1 of the 7 | An analog attenuator on the level-detect input (one of the codec's ADC channels); its job follows the red AUTO CONTROL switch. **All sounds:** depth of the **envelope → delay-time** self-modulation (fully CCW = off). **Center / next sound:** auto-capture **threshold** — fully CCW disables auto triggering (LED dark); raising it lets quieter material trigger. |
 | **Preset trimmers** | 36 (4 banks × 9) | Program the four **preset audio outs**: each bank is an all-analog mix (8 taps + master level) permanently summed to its own output jack — four simultaneous, differently-composed views of the delay, independent of the sliders and of firmware. (The MCU never reads these trimmers — verified.) See [Presets](06-presets-taps-mixers.md). |
 | **Tap-time DIPs** | 6 × 8-position | Stock: binary tap-time presets in **10 ms** steps. Not read by the community firmware (see note below). |
@@ -72,3 +73,9 @@ to the selected A/B/C preset slot — see [Presets](06-presets-taps-mixers.md).
 > switch ~2 s to store the current state to the selected A/B/C slot, persisted in internal flash
 > (see [Presets](06-presets-taps-mixers.md)). The only settings are the four rear DIP switches
 > (see [Settings](07-fidelity-tone-settings.md)).
+
+
+> **Boot alarm:** if every indicator LED flashes rapidly for ~3 seconds at power-on, the codec
+> failed to initialize after five verified attempts — audio I/O is down (dry still passes on the
+> analog path). This should never happen in normal use; if it does, power-cycle and, if it
+> repeats, treat it as a hardware fault (I²C bus / codec).

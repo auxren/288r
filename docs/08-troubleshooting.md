@@ -80,3 +80,17 @@ hear it on v1.0.1, please report it with an audio clip.
 - For reverse-engineering / bench details, see `re/notes/` in the repo.
 - When reporting a problem, note **which image** you flashed, the **switch/knob positions**, and what
   you heard — audio clips help a lot.
+
+## "I only hear dry — no delay, no pitch, nothing"
+
+1. **All indicator LEDs flashed at power-on?** That's the codec-failure alarm — audio I/O is
+   down. Power-cycle; if it repeats, it's hardware (the firmware retries and verifies five
+   times before alarming).
+2. **Is the READY LED breathing?** You're in **String mode** — the taps are strings, not
+   echoes. Hold the *next sound* side ~2 s to exit.
+3. **Delay time stuck at minimum?** A recalled preset can hold ("pin") the multiplier until
+   the physical knob sweeps through the stored value — sweep the knob to full CCW and back
+   once; it "catches" and follows your hand from there.
+4. Still dry with all of the above clear: check which jack you're monitoring (preset outs
+   ignore the sliders) and that the source truly reaches an input (the input/clip LED should
+   respond to hot signal).
