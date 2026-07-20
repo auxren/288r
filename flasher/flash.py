@@ -449,19 +449,30 @@ def flash_command(firmware, cfg, _retried=False):
     runnable = [chosen] + [t for t in templates[templates.index(chosen)+1:]
                            if _tool_available(t)[1]]
     vendor_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
+
+    # STAGE the firmware under a fixed, space-free name in a temp dir and run
+    # every tool from there. No user path ever enters a command line — quoting
+    # cannot fail because there is nothing to quote (issue #7: "flasher 3"
+    # folders from Finder's duplicate naming broke openocd's Tcl parsing).
+    import tempfile, shutil as _shcp
+    stage = tempfile.mkdtemp(prefix="weasel_")
+    staged_hex = os.path.join(stage, "firmware.hex")
+    _shcp.copyfile(firmware, staged_hex)
     say()
     say(CYAN + BOLD + "Step 2: the Weasel patches it in" + RESET)
     for i, t in enumerate(runnable):
-        cmd = t.replace("{firmware}", _quote_path(firmware))
+        cmd = t.replace("{firmware}", "firmware.hex")
         cmd = cmd.replace("{python}", _quote_path(sys.executable))
         cmd = cmd.replace("{vendor}", _quote_path(vendor_dir))
         if "{firmware_bin}" in cmd:
-            binp, lo = _hex_to_bin(firmware)
-            cmd = cmd.replace("{firmware_bin}", _quote_path(binp))
+            binp, lo = _hex_to_bin(staged_hex)
+            staged_bin = os.path.join(stage, "firmware.bin")
+            _shcp.move(binp, staged_bin)
+            cmd = cmd.replace("{firmware_bin}", "firmware.bin")
             cmd = cmd.replace("{flash_base}", "0x%08x" % lo)
-        say(DIM + "  " + cmd + RESET)
+        say(DIM + "  " + cmd + f"   (in {stage})" + RESET)
         try:
-            result = subprocess.run(cmd, shell=True)
+            result = subprocess.run(cmd, shell=True, cwd=stage)
         except Exception as e:
             say(RED + f"That command didn't want to run: {e}" + RESET)
             continue
