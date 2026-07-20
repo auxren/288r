@@ -316,7 +316,7 @@ def _quote_path(p):
     # (hello, "Downloads folder") must be quoted or the tool sees two args.
     return f'"{p}"' if IS_WIN else shlex.quote(p)
 
-def flash_command(firmware, cfg):
+def flash_command(firmware, cfg, _retried=False):
     tmpl = cfg.get("command")
     if not tmpl:
         say(RED + "This device is set to 'command' mode but no command was "
@@ -339,8 +339,42 @@ def flash_command(firmware, cfg):
                   "installed on this computer:" + RESET)
         for tool in missing:
             say(f"  {BOLD}•{RESET} {tool}")
-        say("\nInstall any ONE of them (the README in this folder says how), "
-            "then run me again. The Weasel will wait by the modular. 🎛️")
+
+        # Offer to install one right here — musicians shouldn't need to know
+        # what openocd is (issue #6). Pick the platform's package manager.
+        import shutil as _sh
+        offer = None
+        if sys.platform == "darwin" and _sh.which("brew"):
+            offer = ("openocd via Homebrew", "brew install openocd")
+        elif sys.platform.startswith("linux"):
+            if _sh.which("apt-get"):
+                offer = ("stlink-tools via apt", "sudo apt-get install -y stlink-tools")
+            elif _sh.which("dnf"):
+                offer = ("stlink via dnf", "sudo dnf install -y stlink")
+        elif sys.platform == "win32" and _sh.which("winget"):
+            offer = ("STM32CubeProgrammer via winget",
+                     "winget install -e STMicroelectronics.STM32CubeProgrammer")
+        if offer and sys.stdin.isatty() and not _retried:
+            name, cmd = offer
+            say(f"\nI can install {BOLD}{name}{RESET} for you now by running:")
+            say(f"  {DIM}{cmd}{RESET}")
+            ans = input("Install it? [Y/n] ").strip().lower()
+            if ans in ("", "y", "yes"):
+                say("Installing (this can take a few minutes)...")
+                r = subprocess.run(cmd, shell=True)
+                if r.returncode == 0:
+                    say(GREEN + "Installed! Continuing..." + RESET)
+                    return flash_command(firmware, cfg, _retried=True)
+                say(RED + "Install failed." + RESET)
+        say("\nManual install — any ONE of these, then run me again:")
+        if sys.platform == "darwin":
+            say("  macOS:   brew install openocd     (get Homebrew at https://brew.sh)")
+        elif sys.platform.startswith("linux"):
+            say("  Linux:   sudo apt install stlink-tools   (or: sudo dnf install stlink)")
+        else:
+            say("  Windows: install STM32CubeProgrammer from st.com (free, needs an email)")
+            say("           https://www.st.com/en/development-tools/stm32cubeprog.html")
+        say("The Weasel will wait by the modular. 🎛️")
         return False
 
     # Command-mode boards have pre-flight steps too (attach a programmer,

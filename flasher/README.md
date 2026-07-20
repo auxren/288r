@@ -122,3 +122,11 @@ Run directly with `python3 flash.py` while developing.
   error.
 - **One brain, three doorknobs** — all the logic and personality live in
   `flash.py`; the launchers just open the door for each OS.
+
+
+## No flashing tool installed?
+
+Run the launcher anyway — on macOS (with Homebrew), most Linuxes, and Windows (with winget)
+it will **offer to install the right tool for you** and continue automatically. Manual
+fallback: any ONE of `openocd` (brew), `stlink-tools` (apt/dnf), or STM32CubeProgrammer
+(st.com, free) works.
