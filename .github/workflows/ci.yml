@@ -65,10 +65,12 @@ jobs:
         # falling back to generated notes + the install line.
         run: |
           NOTES="docs/release-notes-${GITHUB_REF_NAME}.md"
+          PRE=""
+          case "${GITHUB_REF_NAME}" in *-*) PRE="--prerelease";; esac
           EXTRA="**Easiest install:** download \`288r-Flasher.zip\`, unzip, double-click the file for your OS with the ST-Link plugged in."
           if [ -f "$NOTES" ]; then
             { cat "$NOTES"; echo; echo "$EXTRA"; } > /tmp/relnotes.md
-            gh release create "${GITHUB_REF_NAME}" \
+            gh release create "${GITHUB_REF_NAME}" $PRE \
               firmware/build/fw/b288-community.hex \
               firmware/build/fw/b288-community.bin \
               288r-Flasher.zip \
@@ -76,7 +78,7 @@ jobs:
               --notes-file /tmp/relnotes.md
             exit 0
           fi
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "${GITHUB_REF_NAME}" $PRE \
             firmware/build/fw/b288-community.hex \
             firmware/build/fw/b288-community.bin \
             288r-Flasher.zip \
