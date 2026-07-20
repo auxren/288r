@@ -3,10 +3,11 @@
   "firmware": null,
   "method": "command",
   "board_drive_names": [],
-  "enter_bootloader_hint": "Plug the ST-Link V2 (the little USB dongle that came with the kit) into this computer, connect its ribbon to the SWD header on the module, and make sure the module is POWERED ON in the case. That's it — no buttons to hold.",
+  "enter_bootloader_hint": "Plug the ST-Link V2 (the little USB dongle that came with the kit) into this computer, connect its ribbon to the SWD header on the module, and make sure the module is POWERED ON in the case. That's it \u2014 no buttons to hold.",
   "command": [
     "openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {firmware} verify reset exit\"",
     "st-flash --format ihex write {firmware}",
-    "STM32_Programmer_CLI -c port=SWD -w {firmware} -v -rst"
+    "STM32_Programmer_CLI -c port=SWD -w {firmware} -v -rst",
+    "{python} -m pyocd flash -t stm32f429xg {firmware}"
   ]
 }

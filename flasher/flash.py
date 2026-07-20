@@ -327,13 +327,26 @@ def flash_command(firmware, cfg, _retried=False):
     # same job and different users have different ones installed). The Weasel
     # runs the first one whose tool actually exists on this machine.
     templates = tmpl if isinstance(tmpl, list) else [tmpl]
+
+    def _tool_available(t):
+        """Name the tool and check it exists. '{python} -m mod ...' templates
+        are probed by importability (works for --user pip installs whose
+        entry-point scripts aren't on PATH)."""
+        if t.startswith("{python} -m "):
+            mod = t.split()[2]
+            r = subprocess.run([sys.executable, "-c", f"import {mod}"],
+                               capture_output=True)
+            return (f"{mod} (pip)", r.returncode == 0)
+        tool = (t.split() or [""])[0]
+        return (tool, shutil.which(tool) is not None)
+
     chosen, missing = None, []
     for t in templates:
-        tool = (t.split() or [""])[0]
-        if shutil.which(tool):
+        name, ok = _tool_available(t)
+        if ok:
             chosen = t
             break
-        missing.append(tool)
+        missing.append(name)
     if chosen is None:
         say(RED + "\nNone of the tools that can flash this device are "
                   "installed on this computer:" + RESET)
@@ -354,6 +367,11 @@ def flash_command(firmware, cfg, _retried=False):
         elif sys.platform == "win32" and _sh.which("winget"):
             offer = ("STM32CubeProgrammer via winget",
                      "winget install -e STMicroelectronics.STM32CubeProgrammer")
+        if offer is None:
+            # UNIVERSAL fallback: pip is wherever this script runs, no admin,
+            # no package manager needed. pyocd drives the ST-Link directly.
+            offer = ("pyocd (a pip-installed flasher — no admin needed)",
+                     f"{_quote_path(sys.executable)} -m pip install pyocd")
         if offer and sys.stdin.isatty() and not _retried:
             name, cmd = offer
             say(f"\nI can install {BOLD}{name}{RESET} for you now by running:")
@@ -394,6 +412,7 @@ def flash_command(firmware, cfg, _retried=False):
                 return False
 
     cmd = chosen.replace("{firmware}", _quote_path(firmware))
+    cmd = cmd.replace("{python}", _quote_path(sys.executable))
     say()
     say(CYAN + BOLD + "Step 2: the Weasel patches it in" + RESET)
     say(DIM + "  " + cmd + RESET)
