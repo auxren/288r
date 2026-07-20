@@ -495,10 +495,25 @@ def celebrate(cfg):
     say(GREEN + f"Your {cfg['product_name']} is running fresh firmware. "
                 "The Easel Weasel wanders back to its synth. 🎹" + RESET)
 
-def commiserate():
+def commiserate(method="uf2"):
     say()
     say(YELLOW + BOLD + "Well, that didn't work — but nothing's broken." + RESET)
-    say("""Try this, in order:
+    if method == "command":
+        # A programmer (ST-Link/DFU/etc.) failed to talk to the board. The real
+        # reason is in the tool's own output ABOVE — don't send UF2 advice here.
+        say("""The flashing tool couldn't reach the board. Try this, in order:
+  1. The exact reason is in the tool's output just above — the line that starts
+     with "Error:" says what went wrong. That's the thing to read (and to send
+     the maintainer).
+  2. Plug the programmer straight into a USB port on the computer — not through
+     a hub or dock — and try a different USB cable.
+  3. Check the wiring to the board: ribbon/leads in the right orientation, and
+     the board's 3.3V (VREF/VTref) pin reaching the programmer so it can sense
+     target power. A powered board with no VREF connection still fails.
+  4. Make sure the board is actually powered on, and not held in reset.
+  5. Still stuck? Send the maintainer a screenshot including the "Error:" line.""")
+    else:
+        say("""Try this, in order:
   1. Unplug the device, plug it back in, run this again.
   2. Make sure you did the button-hold to enter flashing mode.
   3. Try a different USB cable (some cables are charge-only liars).
@@ -547,7 +562,7 @@ def main():
     if ok:
         celebrate(cfg)
     else:
-        commiserate()
+        commiserate(cfg.get("method", "uf2"))
 
     pause_before_exit()
     sys.exit(0 if ok else 1)
