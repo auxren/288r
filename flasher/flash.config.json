@@ -8,6 +8,7 @@
     "openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c \"program {firmware} verify reset exit\"",
     "st-flash --format ihex write {firmware}",
     "STM32_Programmer_CLI -c port=SWD -w {firmware} -v -rst",
-    "{python} -m pyocd flash -t stm32f429xg {firmware}"
+    "{python} -m pyocd flash -t stm32f429xg {firmware}",
+    "{python} {vendor}/pystlink/pystlink.py flash:erase:verify:{flash_base}:{firmware_bin}"
   ]
 }

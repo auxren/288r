@@ -316,6 +316,33 @@ def _quote_path(p):
     # (hello, "Downloads folder") must be quoted or the tool sees two args.
     return f'"{p}"' if IS_WIN else shlex.quote(p)
 
+def _hex_to_bin(hex_path):
+    """Minimal Intel-HEX -> raw bin (gaps filled 0xFF). Returns temp path."""
+    import tempfile
+    segs = {}
+    base = 0
+    for line in open(hex_path):
+        line = line.strip()
+        if not line.startswith(":"):
+            continue
+        b = bytes.fromhex(line[1:])
+        cnt, addr, typ = b[0], (b[1] << 8) | b[2], b[3]
+        data = b[4:4 + cnt]
+        if typ == 0x04:
+            base = ((data[0] << 8) | data[1]) << 16
+        elif typ == 0x00:
+            segs[base + addr] = data
+        elif typ == 0x01:
+            break
+    lo = min(segs)
+    hi = max(a + len(d) for a, d in segs.items())
+    img = bytearray(b"\xff" * (hi - lo))
+    for a, d in segs.items():
+        img[a - lo:a - lo + len(d)] = d
+    f = tempfile.NamedTemporaryFile(suffix=".bin", delete=False)
+    f.write(bytes(img)); f.close()
+    return f.name, lo
+
 def flash_command(firmware, cfg, _retried=False):
     tmpl = cfg.get("command")
     if not tmpl:
@@ -337,6 +364,11 @@ def flash_command(firmware, cfg, _retried=False):
             r = subprocess.run([sys.executable, "-c", f"import {mod}"],
                                capture_output=True)
             return (f"{mod} (pip)", r.returncode == 0)
+        if "{vendor}" in t:
+            r = subprocess.run([sys.executable, "-c", "import usb.core"],
+                               capture_output=True)
+            return ("bundled ST-Link driver (needs: pip install pyusb libusb-package)",
+                    r.returncode == 0)
         tool = (t.split() or [""])[0]
         return (tool, shutil.which(tool) is not None)
 
@@ -370,8 +402,8 @@ def flash_command(firmware, cfg, _retried=False):
         if offer is None:
             # UNIVERSAL fallback: pip is wherever this script runs, no admin,
             # no package manager needed. pyocd drives the ST-Link directly.
-            offer = ("pyocd (a pip-installed flasher — no admin needed)",
-                     f"{_quote_path(sys.executable)} -m pip install pyocd")
+            offer = ("a pip-installed flasher stack (no admin needed)",
+                     f"{_quote_path(sys.executable)} -m pip install pyocd pyusb libusb-package")
         if offer and sys.stdin.isatty() and not _retried:
             name, cmd = offer
             say(f"\nI can install {BOLD}{name}{RESET} for you now by running:")
@@ -411,18 +443,33 @@ def flash_command(firmware, cfg, _retried=False):
                     "ready. 👋" + RESET)
                 return False
 
-    cmd = chosen.replace("{firmware}", _quote_path(firmware))
-    cmd = cmd.replace("{python}", _quote_path(sys.executable))
+    # every template whose tool is present, in config order — if one RUNS but
+    # FAILS (e.g. pyocd refusing an old ST-Link's firmware), fall through to
+    # the next instead of giving up
+    runnable = [chosen] + [t for t in templates[templates.index(chosen)+1:]
+                           if _tool_available(t)[1]]
+    vendor_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor")
     say()
     say(CYAN + BOLD + "Step 2: the Weasel patches it in" + RESET)
-    say(DIM + "  " + cmd + RESET)
-    say()
-    try:
-        result = subprocess.run(cmd, shell=True)
-        return result.returncode == 0
-    except Exception as e:
-        say(RED + f"That command didn't want to run: {e}" + RESET)
-        return False
+    for i, t in enumerate(runnable):
+        cmd = t.replace("{firmware}", _quote_path(firmware))
+        cmd = cmd.replace("{python}", _quote_path(sys.executable))
+        cmd = cmd.replace("{vendor}", _quote_path(vendor_dir))
+        if "{firmware_bin}" in cmd:
+            binp, lo = _hex_to_bin(firmware)
+            cmd = cmd.replace("{firmware_bin}", _quote_path(binp))
+            cmd = cmd.replace("{flash_base}", "0x%08x" % lo)
+        say(DIM + "  " + cmd + RESET)
+        try:
+            result = subprocess.run(cmd, shell=True)
+        except Exception as e:
+            say(RED + f"That command didn't want to run: {e}" + RESET)
+            continue
+        if result.returncode == 0:
+            return True
+        if i + 1 < len(runnable):
+            say(YELLOW + "\nThat tool couldn't do it — trying the next one..." + RESET)
+    return False
 
 # --------------------------------------------------------------------------- #
 #  Celebration / commiseration
