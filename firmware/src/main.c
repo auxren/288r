@@ -491,7 +491,15 @@ int main(void)
 
 #if PANEL_SCAN_ENABLE
     bsp_panel_switches_init();          /* 165 input pins only (no 595 output) */
-    unsigned scan_div = 0, prev_octave = 1, prev_preset = 0;
+    unsigned prev_octave = 1, prev_preset = 0;
+    /* Tick cadence is BLOCK-CLOCK driven, not pass-counted: pitch mode's
+     * splice searches stretch superloop passes so far that a pass-counted
+     * tick ran only every ~0.4 s — physical momentary flicks fell BETWEEN
+     * panel reads (issue #3: 'write/recirc don't initiate the looper in
+     * pitch mode'; measured live via pulse-latch consumption lag). Blocks
+     * tick at ~3 kHz regardless of superloop load: fast tick ~1 ms, panel
+     * tick ~5 ms in EVERY mode. */
+    uint32_t last_fast = 0, last_slow = 0;
     int scan_first = 1;                 /* first pass captures momentary idle levels */
     unsigned idle_w = 0;                /* auto-polarity: pressed = level != idle    */
 #if PANEL_TRANSPORT_ENABLE
@@ -546,7 +554,9 @@ int main(void)
         /* FAST control path (every 4th pass ~1.5 kHz): the knob/CV must update
          * quickly or the delay time steps (zipper — release-test 2.1). The CV is
          * BIPOLAR around mid-scale (the panel's -/+ attenuverter): signed offset. */
-        if ((scan_div & 0x3u) == 0u) {
+        uint32_t now_blocks = g_blocks;
+        if ((uint32_t)(now_blocks - last_fast) >= 3u) {
+            last_fast = now_blocks;
             bsp_spi2_probe();     /* all 4 MCP3204 channels; CV=idx1, knob=idx3 */
             uint32_t cv   = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];
             uint32_t knob_raw = ((g_spi_raw[3][1] & 0x0F) << 8) | g_spi_raw[3][2];
@@ -671,7 +681,8 @@ int main(void)
             }
             bsp_panel_out(0x777777u);              /* repark (stock idle) */
         }
-        if ((scan_div++ & 0x3Fu) == 0u) {
+        if ((uint32_t)(now_blocks - last_slow) >= 15u) {
+            last_slow = now_blocks;
             panel_ctl_t pc;
             uint16_t sw = bsp_panel_switches_read();
             panel_decode(sw, &pc);
