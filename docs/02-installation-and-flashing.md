@@ -69,3 +69,9 @@ read-protect (RDP) to Level 2**, which is permanent — *do not* change option b
 never touches them.
 
 See [Troubleshooting](08-troubleshooting.md) for recovery if a flash goes wrong.
+
+> **No flashing tool installed? The flasher handles it.** If none of the supported tools is
+> present, the launcher offers to install one for you (Homebrew/apt/dnf/winget where
+> available, or a pip-installed stack that needs no admin rights) — and it bundles a driver
+> that supports the older ST-Link dongles that ship with 288r kits. Folders with spaces in
+> the name (hello, "flasher 3") are fine.

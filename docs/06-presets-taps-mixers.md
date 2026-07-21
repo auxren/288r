@@ -25,6 +25,12 @@ pattern is stored to the selected slot. Presets persist across power cycles. **O
 stored multiplier is **pinned**: the physical knob is ignored until you sweep it through the stored
 value, so a recalled preset never jumps to match the panel.
 
+> **What presets can and cannot recall.** Presets store the *digital* controls: time
+> multiplier, ×1/×2, cycle — and in string mode, the chord. They **cannot** store or recall
+> the sliders, input mixer knobs, or phase switches: those are pure analog controls with no
+> electronic path back into the firmware (true on every firmware, including stock). If a
+> recalled preset "keeps the current slider pattern" — that's why.
+
 ## Tap placement math
 
 Each tap reads the delay memory at:

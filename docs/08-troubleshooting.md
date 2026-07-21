@@ -94,3 +94,19 @@ hear it on v1.0.1, please report it with an audio clip.
 4. Still dry with all of the above clear: check which jack you're monitoring (preset outs
    ignore the sliders) and that the source truly reaches an input (the input/clip LED should
    respond to hot signal).
+
+## Rare sharp clicks in long-delay mode (with a clip-LED flash)
+
+A very short unprocessed "snap" every few minutes, only with DIP 1 (long range) on, each one
+flagged by the clip LED: that is a **single corrupted sample coming out of your module's
+delay RAM at deep addresses** — the clip detector is catching it, which is its job. The
+reference unit ran 5 hours in long mode with zero events, and affected units show the same
+clicks on stock firmware — so this is unit-specific marginal RAM, not firmware. If your unit
+does this, it's harmless but annoying; a firmware "despike" mitigation is available on
+request (see the issue tracker), and short-range mode avoids the affected addresses entirely.
+
+## Pulse jacks seem to need long gates?
+
+Fixed in v1.2: the write / recirc / next-sound pulse inputs are edge-latched at ~3 kHz and
+catch millisecond triggers (281e/251e-style pulses). If triggers still seem unreliable,
+confirm you're on v1.2+.

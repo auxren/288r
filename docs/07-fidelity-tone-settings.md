@@ -75,7 +75,7 @@ and defaults are used, so a corrupt write can't brick the module. On recall, **c
 keeps the stored multiplier in effect until you physically sweep the knob through it, so a recalled
 preset never jumps when the panel doesn't match. (This mirrors the MARF 248r persistence pattern.)
 
-> **LEGACY ×10 notes (DIP 1 is now ×4 — see below) (by design, worth knowing):** with rear DIP 1 on, the octave
+> **Historical ×10 notes (superseded — DIP 1 is ×4 and deterministic since v1.2) (by design, worth knowing):** with rear DIP 1 on, the octave
 > switch saturates almost immediately (×10 already sits near the 19-second buffer ceiling, so
 > ×2/×4 add little); pitch mode's three longest echoes clamp to the voice ring's 2.7 s depth
 > (the late pattern bunches up); envelope→time modulation spans 10× the range (attacks can
@@ -88,3 +88,18 @@ preset never jumps when the panel doesn't match. (This mirrors the MARF 248r per
 > late echoes clamped, looper cycles stretched to 10–40 s and felt broken). ×4 composes in
 > pure octaves with the ×1/×2/×4 switch — every combination is fully delivered, and the full
 > memory depth (~19 s) is reached cleanly at DIP + ×4.
+
+## The rear DIPs are deterministic as of v1.2 — and here's why they weren't
+
+The four rear DIPs are wired **through the scanned panel matrix**, not directly to MCU pins:
+until the panel driver parks the 74HC595 chain, the switches are electrically disconnected.
+Every firmware before v1.2 read them at boot — on a floating pin — so whether a DIP function
+engaged was literally a per-boot coin flip (a major source of "×10 is unpredictable" reports,
+and it means earlier "confirmed" resolution/bandwidth behavior deserves fresh ears). Since
+v1.2 all three functions latch a few milliseconds after the panel initializes, every boot:
+
+- **DIP 1** — delay range **+2 octaves (×4)**, verified engaging on the reference unit
+- **sw3/sw4** — resolution: off/off = 24-bit · sw3 = 12-bit · sw4 = 8-bit · both = 4-bit
+- **sw2** — ~11 kHz bandwidth limit (dark vintage record path)
+
+Power-cycling after changing a DIP is still the supported flow.
