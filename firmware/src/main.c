@@ -462,12 +462,11 @@ int main(void)
 
     /* Fidelity from config DIP SW1 sw3/sw4 (PD11/PD12): 24-bit = full precision
      * (clean), 12/8/4-bit = vintage bit-crush. Owner-confirmed; all-off = 24-bit. */
-    unsigned depth = bsp_resolution_bits();
-    g_engine.vintage_bits = (depth >= 24u) ? 0 : (int)depth;
-
-    /* config DIP sw2: 11025 Hz record-path bandwidth limit (off = full 24/96). */
-    engine_set_bandwidth(&g_engine, (float)SAMPLE_RATE_HZ,
-                         bsp_sw_bandwidth_limit() ? BANDWIDTH_LIMIT_HZ : 0.0f);
+    /* Resolution/bandwidth DIPs are MATRIX-CONNECTED like the extend strap
+     * (issue #12): boot-time reads see a disconnected pin. Safe defaults here;
+     * the real values latch in the panel tick after the first 595 park. */
+    g_engine.vintage_bits = 0;
+    engine_set_bandwidth(&g_engine, (float)SAMPLE_RATE_HZ, 0.0f);
 
     bsp_spi2_adc_init();      /* control-surface ADC (multiplier knob + CV) */
 
@@ -871,6 +870,11 @@ int main(void)
                 g_extend_latched = 1;
                 g_extend_factor = bsp_sw_delay_extend() ? DELAY_EXTEND_FACTOR : 1.0f;
                 if (g_extend_factor != 1.0f) prev_octave = 0xFFu;  /* force rescale */
+                /* issue #12: the other rear DIPs share the matrix topology */
+                unsigned depth = bsp_resolution_bits();
+                g_engine.vintage_bits = (depth >= 24u) ? 0 : (int)depth;
+                engine_set_bandwidth(&g_engine, (float)SAMPLE_RATE_HZ,
+                                     bsp_sw_bandwidth_limit() ? BANDWIDTH_LIMIT_HZ : 0.0f);
             }
             /* "cal." position forces the evenly-spaced ramp (stock-exact);
              * pre-set position recalls the selected A/B/C slot. */
