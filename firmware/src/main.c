@@ -449,6 +449,9 @@ int main(void)
     if (bsp_sw_delay_extend()) base *= DELAY_EXTEND_FACTOR;
     base = engine_clamp_base(base, DELAY_LEN, time_hi);
     const float base_boot = base;     /* pre-octave base; the scan rescales from here */
+    /* extend factor is latched POST-park in the tick (matrix-connected DIP) */
+    static float   g_extend_factor  = 1.0f;
+    static uint8_t g_extend_latched = 0;
     /* TIME MULTIPLIER range from the panel legend (1.0 at noon). The x1/x2 octave
      * switch will scale this once wired. */
     /* slew 0.001/sample = tau ~10 ms @96k (fc ~15 Hz): buries the discrete
@@ -851,11 +854,23 @@ int main(void)
             if (g_sw_pin_on) { eff.octave = g_pin_oct; eff.cycle = g_pin_cyc; }
             unsigned oc_key = (unsigned)eff.octave | ((unsigned)eff.cycle << 4);
             if (oc_key != prev_octave) {
-                float nb = engine_clamp_base(base_boot * panel_octave_factor(&eff)
+                float nb = engine_clamp_base(base_boot * g_extend_factor
+                                             * panel_octave_factor(&eff)
                                              * panel_cycle_factor(&eff),
                                              DELAY_LEN, time_hi);
                 taps_set_base_delay(&g_engine.taps, nb);
                 prev_octave = oc_key;
+            }
+            /* The rear DIPs sit BEHIND the scanned matrix: before the first
+             * 595 park they are electrically disconnected from their pins, so
+             * the boot-time strap read always saw "open" (x4 never engaged —
+             * found by SWD pull-up probing pre/post park). Latch the extend
+             * strap ONCE here, after the panel is parked, and force the base
+             * rescale through the same path the octave switch uses. */
+            if (!g_extend_latched) {
+                g_extend_latched = 1;
+                g_extend_factor = bsp_sw_delay_extend() ? DELAY_EXTEND_FACTOR : 1.0f;
+                if (g_extend_factor != 1.0f) prev_octave = 0xFFu;  /* force rescale */
             }
             /* "cal." position forces the evenly-spaced ramp (stock-exact);
              * pre-set position recalls the selected A/B/C slot. */

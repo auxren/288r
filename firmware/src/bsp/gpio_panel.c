@@ -15,6 +15,21 @@ static void in_pullup(GPIO_TypeDef *port, uint32_t n)
     port->PUPDR  = (port->PUPDR & ~(3u << (n*2))) | (1u << (n*2)); /* pull-up */
 }
 
+/* Boot-strap reads must be SELF-CONTAINED: bsp_panel_matrix_init() clears the
+ * PB10/PB11 pull-ups to match the stock's electrical idle, and boot ordering
+ * put that BEFORE the strap reads — the extend DIP was being read on a
+ * FLOATING pin (x4 never engaged; found via disassembly + live PUPDR dump).
+ * Assert the pull-up, settle, read, then restore the idle state. */
+static int read_strap(GPIO_TypeDef *port, uint32_t pin)
+{
+    uint32_t save = port->PUPDR;
+    port->PUPDR = (save & ~(3u << (pin*2))) | (1u << (pin*2));   /* pull-up */
+    for (volatile int d = 0; d < 500; ++d) { }                   /* settle  */
+    int level = (port->IDR >> pin) & 1u;
+    port->PUPDR = save;                                          /* restore */
+    return level;
+}
+
 void bsp_panel_gpio_init(void)
 {
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN | RCC_AHB1ENR_GPIODEN;
@@ -42,8 +57,8 @@ unsigned bsp_resolution_bits(void)
     /* Config DIP SW1 sw3=PD11, sw4=PD12, ACTIVE-LOW (off = high via pull-up).
      * Owner-confirmed table: both off = 24-bit, sw3 = 12, sw4 = 8, both on = 4-bit.
      * [BENCH] confirm sw3/sw4 vs PD11/PD12 order (12 vs 8 could be swapped). */
-    unsigned sw3 = (rd(SW_RES0_PORT, SW_RES0_PIN) == 0);   /* PD11, active-low */
-    unsigned sw4 = (rd(SW_RES1_PORT, SW_RES1_PIN) == 0);   /* PD12, active-low */
+    unsigned sw3 = (read_strap(SW_RES0_PORT, SW_RES0_PIN) == 0);   /* PD11, active-low */
+    unsigned sw4 = (read_strap(SW_RES1_PORT, SW_RES1_PIN) == 0);   /* PD12, active-low */
     switch (sw3 | (sw4 << 1)) {
         case 0:  return 24u;   /* both off */
         case 1:  return 12u;   /* sw3 on   */
@@ -55,10 +70,12 @@ unsigned bsp_resolution_bits(void)
 /* Config DIP sw1 (x10 delay/looper extend) and sw2 (11025 Hz bandwidth limit).
  * Pins are [BENCH]-pending: until SW_*_MAPPED is set in board.h these return 0
  * (feature off) rather than sampling an unrelated pin. Active-low when mapped. */
+
+
 int bsp_sw_delay_extend(void)
 {
 #if SW_EXTEND_MAPPED
-    return rd(SW_EXTEND_PORT, SW_EXTEND_PIN) == 0;
+    return read_strap(SW_EXTEND_PORT, SW_EXTEND_PIN) == 0;
 #else
     return 0;
 #endif
@@ -77,7 +94,7 @@ int bsp_pulse_in(unsigned which)   /* 0=write 1=recirc 2=arm */
 int bsp_sw_bandwidth_limit(void)
 {
 #if SW_BANDWIDTH_MAPPED
-    return rd(SW_BANDWIDTH_PORT, SW_BANDWIDTH_PIN) == 0;
+    return read_strap(SW_BANDWIDTH_PORT, SW_BANDWIDTH_PIN) == 0;
 #else
     return 0;
 #endif
