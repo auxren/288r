@@ -3,6 +3,10 @@
 [![CI](https://github.com/auxren/288r/actions/workflows/ci.yml/badge.svg)](https://github.com/auxren/288r/actions/workflows/ci.yml)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 
+> 🎛️ **Just want the firmware?** Grab the [latest release](https://github.com/auxren/288r/releases/latest)
+> (one-click flasher included) · 📖 **[Read the Manual](docs/README.md)** — panel reference,
+> operation, time & pitch, string mode, presets, troubleshooting.
+
 Open reverse-engineering of the released `.hex` firmware for the **Buchla-format 288r
 "Time Domain Processor"** (Roman Filippov / Black Corporation), with the goal of producing
 **community firmware updates** that fix bugs and add features the original firmware never got —
