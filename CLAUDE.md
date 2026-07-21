@@ -120,7 +120,29 @@ better engine; add new features/controls/modulation only *after* the clone is na
   autocorr sizes the correlator on confident bass: 30 Hz purity 0.134->1.004 host; subharmonic
   disambiguation needed local refine — pure-sine tests missed it, live hardware caught it).
   Direct audio capture via Big Six ch7/8 (mic permission granted) = full autonomous bench loop.
-  Remaining backlog: slider-5 board repair (owner soldering), v1.1 tag on owner's ears.
+- **v1.1.0 RELEASED (2026-07-18):** pitch line owner-approved; KARPLUS-STRONG STRING MODE (`ks.c`,
+  8 SRAM strings on the tap outs, gesture-entered via next-sound hold, chord = tap phases, CV =
+  direct 1.2 V/oct, knob = damping, breathing READY LED); envelope→time (sens-gated); clip-chain
+  LED; panel-legend knob taper (owner point-cal 0.4–1.6); presets/cal SURVIVE FW UPDATES (moved to
+  flash **sector 7 @0x08060000**, linker capped 384K so overlap = build error, auto-migration) —
+  the MARF-style hard requirement. Release-notes convention LOCKED: three sections (New/Fixed/
+  Known & open), `docs/release-notes-<tag>.md` = CI release body; commit BEFORE tag.
+- **v1.2.0 RELEASED (2026-07-21) — the field-report release** (driven by v1.1.1-rc1/rc2 testers):
+  **rear DIPs are MATRIX-CONNECTED** (electrically floating until the 595 parks → every pre-1.2
+  boot-time strap read was a coin flip); all 3 straps now latch post-park, deterministic (#12).
+  **DIP1 = ×4 "+2 octaves"** (owner-picked over ×10: composes in octaves, no pitch/looper clamp).
+  **Panel ticks are block-clock driven** (pass-counted ticks stretched to ~0.4 s under pitch-mode
+  load → momentaries/looper dead in pitch; now ~5 ms in every mode, verified 0.4 s→3 ms) (#3).
+  Pulse jacks edge-latched (~3 kHz) (#4); cal unpins on entry (#6); pitch CCW = designed dry
+  bypass (#11); #8 long-mode clicks = reporter-unit marginal SDRAM (5 h/857-window soak clean on
+  reference; despike on offer). **Flasher field-hardened** (staged path-free exec, install offers
+  + pip fallback, vendored pystlink for pre-V2J24 dongles — template MUST end `reset`; canonical
+  copy in `~/Documents/GitHub/claude_trix/tools/easel-weasel`, sync marf too). Codec init is
+  concert-grade (bus-recover + verify-retry ×5 + all-LED boot alarm; 15/15 reboot torture).
+  ISR telemetry: TIME 66%, pitch 58–83%, KS ~50%. `make test` = **30 suites**. Manual (docs/01–09)
+  updated through v1.2. Open: #5 (deeper presets — interleaved 16-tap idea), #9 (looper
+  varispeed), #10 (auto re-arm), #3 physical-flick confirmation welcome (injection-verified),
+  slider-5 board repair (owner soldering).
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
