@@ -1,11 +1,11 @@
-# 288r community firmware — v1.2.1-rc4 (pre-release for field testing)
+# 288r community firmware — v1.2.1-rc5 (pre-release for field testing)
 
 Release candidate addressing the AUTO CONTROL field reports
 ([#13](https://github.com/auxren/288r/issues/13),
 [#14](https://github.com/auxren/288r/issues/14),
 [#16](https://github.com/auxren/288r/issues/16),
 [#10](https://github.com/auxren/288r/issues/10),
-[#9](https://github.com/auxren/288r/issues/9)). Supersedes rc1–rc3. **Updating preserves your saved presets.**
+[#9](https://github.com/auxren/288r/issues/9)). Supersedes rc1–rc4. **Updating preserves your saved presets.**
 Not yet bench-verified on the reference unit — please test and report in the issue threads.
 
 ## New features
@@ -17,6 +17,12 @@ Not yet bench-verified on the reference unit — please test and report in the i
   sample clock itself, so loops repitch inherently. Recreated here with a fractional-rate
   read head; *all sounds* keeps constant-pitch respacing and pitch mode keeps its depth
   knob, so nothing else changes.
+- **store end is now signal-gated** (#10, designed by field feedback): with an
+  auto-triggered take in store end, **playing writes, stopping loops** — the capture ends
+  ~120 ms after the input falls silent and the loop is exactly your phrase (cycle length =
+  the cap). Previously store end went to a silent hold that the re-arm immediately punched
+  a new take out of — audibly "stuck in write forever." store beg. keeps the cycle-quantized
+  capture; a write-momentary take in store end keeps the classic hold-and-recall.
 - **The loop auto re-arms** (#10): a playing loop now re-triggers on the next onset — when
   the input dips to silence and a new sound crosses the sens. threshold (or a pulse hits the
   arm jack), a new capture punches over the old loop. This is the stock behavior shown in the

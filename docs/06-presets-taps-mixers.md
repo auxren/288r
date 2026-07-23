@@ -118,6 +118,23 @@ current loop can't re-trigger; the input must dip to silence first ("next sound"
 the legend says). Rhythmic playing against a short cycle gets you the classic stutter. A pulse
 at the arm jack punches a new take the same way.
 
+**store beg. vs store end — two capture policies (v1.2.1-rc5+).** The black selector decides
+how an automatic capture *ends*:
+
+- **store beg.** — cycle-quantized: the capture runs for exactly one cycle (short/medium/full)
+  from the triggering onset, then loops. The write LED is your tell: while it's on, the cycle
+  is still recording and new onsets are ignored; when it goes off, the loop is playing and the
+  next silence→onset re-triggers. Short staccato notes against a long cycle will capture
+  mostly silence — that's the quantized policy doing its job; use store end for phrases.
+- **store end** — signal-gated: **while you play, it writes; when you stop, it loops.** The
+  capture ends ~120 ms after the input falls below the sens. threshold (the hang bridges
+  staccato gaps within a phrase), and the loop is exactly your phrase, whatever its length —
+  up to one cycle, which is the cap. This is the staccato/phrase-friendly mode: each new
+  phrase replaces the loop with itself.
+
+A take started with the **write momentary** in store end keeps the classic hold-and-recall:
+records one cycle, holds it silently (write + READY LEDs together), recirc flick recalls it.
+
 **Varispeed — the multiplier is the tape motor (v1.2.1-rc4+).** While a loop plays in the
 looper positions, turning the **time multiplier** (knob or CV) changes the loop's playback
 speed *and* pitch together, like a tape machine's motor: knob down from where you captured =

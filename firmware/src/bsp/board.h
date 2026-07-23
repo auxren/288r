@@ -92,6 +92,12 @@
  * discrimination test. 0 = stock behavior. */
 #define MASTER_DRY_MODE   0
 #define SENS_ARM_FRAC     0.4f    /* re-arm hysteresis: env must dip below REF*this  */
+#define AUTO_RELEASE_TICKS 24u    /* store-end auto takes (#10): panel ticks (~5 ms)
+                                     of silence that END the take — write while the
+                                     signal plays, loop when it stops (~120 ms hang
+                                     bridges staccato gaps). Feel-calibrate.       */
+#define AUTO_RELEASE_SAMP  (AUTO_RELEASE_TICKS * 15u * 32u) /* same, in samples     */
+#define AUTO_MIN_LOOP_SAMP 4800u  /* shortest auto-captured loop (~50 ms @96k)      */
 
 /* ---- input-mixer LED (PA0) mode ------------------------------------------ */
 /* 1 = whole-chain CLIP indicator (community): lights when the input ADC hits
