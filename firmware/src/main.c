@@ -162,6 +162,7 @@ static uint8_t  g_lp_state = LP_READY;
 static uint32_t g_lp_start = 0;
 static uint32_t g_lp_end = 0;    /* store-end: head when the window completed */
 static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next onset triggers */
+static uint8_t  g_lp_prev_auto = 0xFFu; /* red-switch position at the last tick (0xFF = boot) */
 
 #if PITCH_VOICE_ENABLE
 static pitch_voice_t g_pv __attribute__((section(".ccmram")));
@@ -735,6 +736,22 @@ int main(void)
             int rc_edge = (rc_act && !g_xtrig.prev_r);
             g_xtrig.prev_w = (uint8_t)wr_act;
             g_xtrig.prev_r = (uint8_t)rc_act;
+
+            /* Red-switch MOVEMENT resets the looper state machine (#13). The
+             * stock reset gesture — toggle to "all sounds" and back — depends
+             * on it: all-sounds entry releases the loop back to continuous
+             * write, and looper entry sits READY *armed*, so a signal already
+             * above the sens threshold captures immediately instead of
+             * waiting for a fresh silence->onset. Boot latch takes no action
+             * (0xFF), and a recalled preset can't fake a movement: this reads
+             * the physical switch only. */
+            if (pc.automode != g_lp_prev_auto) {
+                if (g_lp_prev_auto != 0xFFu) {
+                    g_lp_state = LP_READY;
+                    g_lp_armed = (pc.automode != 1u);
+                }
+                g_lp_prev_auto = pc.automode;
+            }
 
             if (pc.automode == 1) {
                 /* DELAY mode: continuous write; manual punches still honored */

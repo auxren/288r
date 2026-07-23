@@ -96,3 +96,21 @@ knob. sens. is an analog attenuator on the level-detect input — raising it let
 trigger; fully counter-clockwise disables auto triggering. The **AUTO CONTROL LED** lights while
 the signal is above the threshold — the same comparison that fires the capture — so the LED shows
 exactly what will trigger. See [Operation](04-operation.md).
+
+The red switch's three positions, precisely:
+
+| Position | Behavior |
+|---|---|
+| **all sounds** | Plain delay — continuous write, no capture. The sens. knob becomes the envelope→time depth (see [Time & pitch](05-time-and-pitch.md)). |
+| **center (arm pulse in)** | The looper. Sits READY; a signal above the sens. threshold (or a pulse at the arm jack, or a write flick) starts a one-cycle capture, which then loops. |
+| **next sound (momentary side)** | A short flick manually triggers the capture right now; **holding ~2 s** toggles String mode. |
+
+**Reading the LEDs during a capture:** when a capture starts, the **READY LED goes dark for
+exactly one cycle** — that's the write pass recording your loop; its dark time *is* the loop
+length (short/medium/long cycle). When it comes back, the loop is playing, and READY blips at
+each loop wrap (the end-of-cycle pulse).
+
+**Resetting the loop from the panel:** flip the red switch to **all sounds and back to center**.
+Leaving the center position releases the loop (all sounds resumes live delay), and re-entering
+it sits READY *armed* — so if your signal is already above the sens. threshold, a new capture
+starts immediately; in silence it waits for the next onset, as the legend says.
