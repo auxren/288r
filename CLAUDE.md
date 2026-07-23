@@ -155,12 +155,17 @@ better engine; add new features/controls/modulation only *after* the clone is na
   interleaved 16-tap idea), #9 (looper varispeed — comparison questions now posted in-thread),
   #10 (auto re-arm; toggle-reset is the manual workaround), #13/#16 (rc verification),
   #15 (design), slider-5 board repair.
-- **v1.2.1-rc2 PRE-RELEASE (2026-07-22): #16 = the store beg./end selector had the SAME
-  no-transition-handling bug as #13** (only consulted at write-pass completion → flipping it
-  mid-loop did nothing; Mixcatonic's stock reset gesture store-beg->store-end needs the
-  movement itself to reset). Both switch toggles now reset the looper to READY armed;
-  supersedes rc1; not hardware-verified (bench offline). Clarifying Qs posted on #16 (which
-  build; what "ignores AUTO CONTROL inputs" means — if arm-pulse-during-loop, that's #10).
+- **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
+  rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
+  same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
+  trigger law now runs in LOOP and HOLD too** — a playing loop re-triggers on the next onset
+  (or arm pulse), giving the batchas-video 288v stutter. Evidence came from reading the MW
+  thread via the owner's Chrome (Cloudflare blocks curl/WebFetch): reporter jimfowler =
+  @twostroke-ux, was on v1.2.0 baseline; Mixcatonic surfaced the 288v video (auto control
+  cycles write/recirc continuously = stock re-arms); Mixcatonic still hunting varispeed (#9)
+  evidence — none found, so #9 leans design-option. NOT hardware-verified (bench offline) —
+  graduate to v1.2.1 on field confirmation. Store-end held window shows write+READY LEDs
+  together ("stored and waiting") — documented, was misread as stuck-in-write.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
