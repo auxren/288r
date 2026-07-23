@@ -170,6 +170,13 @@
 /* Time-CV (SPI2 ch0, 12-bit, RESTS AT 0 unpatched — measured) -> volts. */
 #define PITCH_CV_CENTER      0.0f
 #define PITCH_CV_VOLTS_PER_CODE (5.0f / 4095.0f)
+#define VARISPEED_ENABLE     1          /* #9: looper tape-motor — in the looper
+                                           positions the multiplier repitches a
+                                           playing loop (rate = mult@capture /
+                                           mult now, clamp 0.25..4). Confirmed
+                                           stock 288v behavior (batchas video
+                                           forensics). all sounds = unchanged
+                                           constant-pitch respacing.            */
 
 /* Multiplier knob usable ADC span (measured live: full-CCW reads ~644, full-CW
  * ~4094). cal_map01 stretches it to true 0..1 so the whole travel counts. The

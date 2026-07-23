@@ -1,14 +1,22 @@
-# 288r community firmware — v1.2.1-rc3 (pre-release for field testing)
+# 288r community firmware — v1.2.1-rc4 (pre-release for field testing)
 
 Release candidate addressing the AUTO CONTROL field reports
 ([#13](https://github.com/auxren/288r/issues/13),
 [#14](https://github.com/auxren/288r/issues/14),
 [#16](https://github.com/auxren/288r/issues/16),
-[#10](https://github.com/auxren/288r/issues/10)). Supersedes rc1/rc2. **Updating preserves your saved presets.**
+[#10](https://github.com/auxren/288r/issues/10),
+[#9](https://github.com/auxren/288r/issues/9)). Supersedes rc1–rc3. **Updating preserves your saved presets.**
 Not yet bench-verified on the reference unit — please test and report in the issue threads.
 
 ## New features
 
+- **Looper varispeed** (#9): while a loop plays, the **time multiplier (knob or CV) is the
+  tape motor** — playback speed and pitch move together, ±2 octaves, gliding smoothly.
+  Confirmed stock 288v behavior by audio forensics of the batchas video (the loop ramps
+  +8→+18 semitones with the hand on the multiplier): the original's delay knob moves the
+  sample clock itself, so loops repitch inherently. Recreated here with a fractional-rate
+  read head; *all sounds* keeps constant-pitch respacing and pitch mode keeps its depth
+  knob, so nothing else changes.
 - **The loop auto re-arms** (#10): a playing loop now re-triggers on the next onset — when
   the input dips to silence and a new sound crosses the sens. threshold (or a pulse hits the
   arm jack), a new capture punches over the old loop. This is the stock behavior shown in the
@@ -40,8 +48,8 @@ Not yet bench-verified on the reference unit — please test and report in the i
 
 - Envelope→time self-modulation is additive-upward, so it has no headroom at multiplier full
   CW ([#15](https://github.com/auxren/288r/issues/15)) — design discussion open in the thread.
-- Deeper presets ([#5](https://github.com/auxren/288r/issues/5)); looper varispeed
-  ([#9](https://github.com/auxren/288r/issues/9)) — still hunting stock 288v video evidence
-  of the multiplier repitching a playing loop.
+- Deeper presets ([#5](https://github.com/auxren/288r/issues/5)).
+- Varispeed ISR headroom is host-proven but not yet bench-measured under worst case
+  (rate 4.0 + all taps); telemetry is in place for the next bench session.
 - Reference-unit hardware faults (slider 5, signal-in jack) unchanged; SENS_REF and
   string-damping ranges remain calibrate-by-feel.

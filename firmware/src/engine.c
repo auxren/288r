@@ -17,6 +17,10 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->vintage_bits = 0;
     e->skip_tap_reads = 0;
     e->dith = 0x1234567u;                 /* dither PRNG seed */
+    e->varispeed = 0;
+    e->lp_mult_ref = 1.0f;
+    e->lp_phase = 0.0f;
+    e->lp_rate = 1.0f;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -59,7 +63,24 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
         }
         dl_write(&e->dl, x);
     } else {
-        dl_advance_loop(&e->dl, ls, le);
+        /* Varispeed (#9): the head advances lp_rate samples per output sample.
+         * rate = mult(at capture)/mult(now) — turn the multiplier down and the
+         * loop plays faster AND higher, tape-style, matching the stock family
+         * whose delay knob moves the sample clock itself. Rate rides the same
+         * slewed tc multiplier, so it glides zipper-free with knob and CV. */
+        float r = 1.0f;
+        if (e->varispeed) {
+            float m = (mult > 0.05f) ? mult : 0.05f;
+            r = e->lp_mult_ref / m;
+            if (r < 0.25f) r = 0.25f;
+            if (r > 4.0f)  r = 4.0f;
+        }
+        e->lp_rate = r;
+        e->lp_phase += r;
+        while (e->lp_phase >= 1.0f) {
+            dl_advance_loop(&e->dl, ls, le);
+            e->lp_phase -= 1.0f;
+        }
     }
 
     /* pitch mode at full wet: the crossfade discards the tap outputs, so skip
@@ -75,6 +96,16 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
     for (int i = 0; i < NUM_TAPS; i++) {
         uint32_t d_int; float d_frac;
         taps_delay_frac(&e->taps, i, &d_int, &d_frac);
+        if (recirc) {
+            /* the true head is wpos + lp_phase: a tap D behind the true head
+             * sits D - lp_phase behind wpos — this sub-sample term is what
+             * makes varispeed playback continuous instead of stair-stepped */
+            d_frac -= e->lp_phase;
+            if (d_frac < 0.0f) {
+                d_frac += 1.0f;
+                d_int = (d_int > 0u) ? d_int - 1u : 0u;
+            }
+        }
         if (d_int < 1) { d_int = 1; d_frac = 0.0f; }   /* keep off the write head */
         taps[i] = recirc ? dl_read_loop_frac(&e->dl, d_int, d_frac, ls, le, e->interp)
                          : dl_read_frac(&e->dl, d_int, d_frac, e->interp);
@@ -92,7 +123,12 @@ float engine_process(engine_t *e, float input, float time_raw01)
 }
 
 void engine_write(engine_t *e)  { transport_begin_write(&e->xport, e->dl.wpos); }
-void engine_recirc(engine_t *e) { transport_begin_recirc(&e->xport, e->dl.wpos); }
+void engine_recirc(engine_t *e)
+{
+    transport_begin_recirc(&e->xport, e->dl.wpos);
+    e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
+    e->lp_phase = 0.0f;
+}
 
 void engine_recirc_window(engine_t *e, uint32_t window)
 {
@@ -108,6 +144,8 @@ void engine_recirc_window(engine_t *e, uint32_t window)
      * right — reads are window-mapped — but the head never wrapped, so no
      * end-of-cycle events fired). */
     e->dl.wpos = start;
+    e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
+    e->lp_phase = 0.0f;
 }
 
 void engine_recirc_span(engine_t *e, uint32_t start, uint32_t end)
@@ -119,6 +157,8 @@ void engine_recirc_span(engine_t *e, uint32_t start, uint32_t end)
     e->xport.loop_start = start;
     e->xport.loop_end = end;
     e->dl.wpos = start;
+    e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
+    e->lp_phase = 0.0f;
 }
 
 void engine_recirc_between(engine_t *e, uint32_t start)
@@ -130,4 +170,6 @@ void engine_recirc_between(engine_t *e, uint32_t start)
     e->xport.loop_start = start;
     e->xport.loop_end = head;
     e->dl.wpos = start;
+    e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
+    e->lp_phase = 0.0f;
 }

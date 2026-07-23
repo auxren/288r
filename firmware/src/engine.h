@@ -39,6 +39,14 @@ typedef struct {
                                       pushed pitch mode into DMA overrun (the
                                       owner's "glitches"). */
     uint32_t     dith;             /* TPDF dither PRNG state (vintage modes)      */
+    int          varispeed;        /* looper tape-motor (#9): in RECIRC the head
+                                      advances at mult_ref/mult per sample, so a
+                                      playing loop repitches with the multiplier
+                                      like the stock's moving sample clock. Off
+                                      (0) = classic fixed-rate loop playback.   */
+    float        lp_mult_ref;      /* multiplier at loop capture (rate = ref/mult) */
+    float        lp_phase;         /* fractional part of the recirc head, [0,1)    */
+    float        lp_rate;          /* last applied head rate (telemetry/debug)     */
 } engine_t;
 
 /* buf/len: delay memory. base_delay: cycle length in samples (SHORT/FULL).

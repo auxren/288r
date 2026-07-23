@@ -118,6 +118,16 @@ current loop can't re-trigger; the input must dip to silence first ("next sound"
 the legend says). Rhythmic playing against a short cycle gets you the classic stutter. A pulse
 at the arm jack punches a new take the same way.
 
+**Varispeed — the multiplier is the tape motor (v1.2.1-rc4+).** While a loop plays in the
+looper positions, turning the **time multiplier** (knob or CV) changes the loop's playback
+speed *and* pitch together, like a tape machine's motor: knob down from where you captured =
+faster and higher, knob up = slower and lower, up to ±2 octaves. This is confirmed stock
+behavior — on the original hardware the delay knob literally moves the sample clock, so a
+recirculating loop repitches for free; this firmware recreates it with a fractional-rate
+read head. In *all sounds* the multiplier keeps its constant-pitch tap-respacing behavior
+(that's what makes chorus/flanger possible), and in pitch mode the knob stays the pitch
+depth — the three never fight over the knob.
+
 **Resetting the loop from the panel:** flip the red switch to **all sounds and back to center**,
 or flip the **store beg./store end** selector to its other position. Either physical movement
 resets the capture state machine: the module returns to READY *armed* — so if your signal is

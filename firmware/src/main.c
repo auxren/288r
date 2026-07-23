@@ -702,6 +702,12 @@ int main(void)
             g_dbg_panel.octave = pc.octave;
             g_dbg_panel.bank_b = pc.automode;    /* dbg slot: red-switch position */
             g_auto_now = pc.automode;            /* fast-tick snapshot (env->time gate) */
+            /* Varispeed (#9): tape-motor loop playback in the looper positions
+             * only. all sounds keeps constant-pitch respacing (the chorus/
+             * flanger behavior); pitch mode keeps the multiplier as its depth
+             * control, so the two never fight over the knob. */
+            g_engine.varispeed =
+                (VARISPEED_ENABLE && !g_pitch_mode && pc.automode != 1u) ? 1 : 0;
 
             /* KS gesture: HOLD next-sound (red momentary) ~2 s -> toggle the
              * string bank; twinkle confirms; a short flick keeps its normal
