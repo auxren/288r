@@ -787,24 +787,27 @@ int main(void)
             } else {
                 /* LOOPER/auto mode (red switch center) */
                 uint32_t cyc = (uint32_t)g_engine.taps.base_delay;
+                /* Shared auto-trigger law, "next sound" semantics: arm when the
+                 * input dips below the arm threshold, fire on the next onset —
+                 * a signal present when a state is entered can't trigger until
+                 * it stops and restarts. Used by READY (first capture) AND by
+                 * LOOP/HOLD (auto re-arm, #10). sens knob = threshold by
+                 * analog gain (board.h); knob at zero = auto-trigger off. */
+                int lp_auto_fire;
+#if SENS_IN_SLOT >= 0
+                {
+                    float sens = g_sens_env[SENS_IN_SLOT - 1];
+                    if (sens < SENS_REF * SENS_ARM_FRAC) g_lp_armed = 1;
+                    lp_auto_fire = (g_lp_armed && sens > SENS_REF) || arm_in;
+                }
+#else
+                if (g_env < 0.10f) g_lp_armed = 1;
+                lp_auto_fire = (g_lp_armed && g_env > 0.25f) || arm_in;
+#endif
                 switch (g_lp_state) {
                 case LP_READY:
                     if (!transport_should_write(&g_engine.xport)) engine_write(&g_engine);
-                    /* "next sound" semantics: arm on silence, trigger on the NEXT
-                     * onset — so entering READY mid-signal holds READY (LED on)
-                     * until the sound stops and restarts. */
-#if SENS_IN_SLOT >= 0
-                    /* sens knob = trigger threshold by analog gain (board.h):
-                     * fire when the sens channel's envelope crosses the fixed
-                     * reference, re-arm when it dips well below. Knob at zero
-                     * == auto-trigger off (stock semantics). */
-                    float sens = g_sens_env[SENS_IN_SLOT - 1];
-                    if (sens < SENS_REF * SENS_ARM_FRAC) g_lp_armed = 1;
-                    if ((g_lp_armed && sens > SENS_REF) || wr_edge || pc.automode == 2 || arm_in) {
-#else
-                    if (g_env < 0.10f) g_lp_armed = 1;
-                    if ((g_lp_armed && g_env > 0.25f) || wr_edge || pc.automode == 2 || arm_in) {
-#endif
+                    if (lp_auto_fire || wr_edge || pc.automode == 2) {
                         g_lp_start = g_engine.dl.wpos;
                         engine_write(&g_engine);
                         g_lp_state = LP_WRITE;
@@ -838,19 +841,28 @@ int main(void)
                     if (rc_edge) {                         /* recall the saved window */
                         engine_recirc_span(&g_engine, g_lp_start, g_lp_end);
                         g_lp_state = LP_LOOP;
-                    } else if (wr_edge) {                  /* new take               */
+                    } else if (wr_edge || lp_auto_fire) {  /* new take               */
                         g_lp_start = g_engine.dl.wpos;
                         engine_write(&g_engine);
                         g_lp_state = LP_WRITE;
+                        g_lp_armed = 0;
                     }
                     /* stored-and-waiting: write + ready LEDs together */
                     lp_ind(1, 0); lp_ind(2, 1); lp_ind(3, 0);
                     break;
                 default: /* LP_LOOP */
-                    if (wr_edge) {                         /* punch a new take       */
+                    /* AUTO RE-ARM (#10/#16): stock evidence — in the batchas
+                     * 288v video (via Mixcatonic) auto control cycles
+                     * write/recirc continuously with the input, so a playing
+                     * loop must re-trigger on the next onset, not hold
+                     * forever. Same silence->onset law as READY: the sound
+                     * that triggered THIS take can't retrigger until the
+                     * input dips below the arm threshold. */
+                    if (wr_edge || lp_auto_fire) {         /* punch a new take       */
                         g_lp_start = g_engine.dl.wpos;
                         engine_write(&g_engine);
                         g_lp_state = LP_WRITE;
+                        g_lp_armed = 0;
                     }
                     lp_ind(1, 1); lp_ind(2, 0);   /* recirc LED (looping) */
                     break;

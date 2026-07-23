@@ -1,14 +1,21 @@
-# 288r community firmware — v1.2.1-rc2 (pre-release for field testing)
+# 288r community firmware — v1.2.1-rc3 (pre-release for field testing)
 
 Release candidate addressing the AUTO CONTROL field reports
 ([#13](https://github.com/auxren/288r/issues/13),
 [#14](https://github.com/auxren/288r/issues/14),
-[#16](https://github.com/auxren/288r/issues/16)). Supersedes rc1 (adds the #16 fix). **Updating preserves your saved presets.**
+[#16](https://github.com/auxren/288r/issues/16),
+[#10](https://github.com/auxren/288r/issues/10)). Supersedes rc1/rc2. **Updating preserves your saved presets.**
 Not yet bench-verified on the reference unit — please test and report in the issue threads.
 
 ## New features
 
-- (none — this RC is a targeted fix release)
+- **The loop auto re-arms** (#10): a playing loop now re-triggers on the next onset — when
+  the input dips to silence and a new sound crosses the sens. threshold (or a pulse hits the
+  arm jack), a new capture punches over the old loop. This is the stock behavior shown in the
+  batchas 288v video (AUTO CONTROL cycling write/recirc with the playing — the stutter
+  effect), surfaced by Mixcatonic on the ModWiggler thread. The sound that triggered the
+  current loop can't re-trigger it; silence-then-onset is required, so a sustained drone
+  holds the loop steady.
 
 ## Fixed
 
@@ -33,8 +40,8 @@ Not yet bench-verified on the reference unit — please test and report in the i
 
 - Envelope→time self-modulation is additive-upward, so it has no headroom at multiplier full
   CW ([#15](https://github.com/auxren/288r/issues/15)) — design discussion open in the thread.
-- Deeper presets ([#5](https://github.com/auxren/288r/issues/5)), looper varispeed
-  ([#9](https://github.com/auxren/288r/issues/9)), auto re-arm behavior
-  ([#10](https://github.com/auxren/288r/issues/10)).
+- Deeper presets ([#5](https://github.com/auxren/288r/issues/5)); looper varispeed
+  ([#9](https://github.com/auxren/288r/issues/9)) — still hunting stock 288v video evidence
+  of the multiplier repitching a playing loop.
 - Reference-unit hardware faults (slider 5, signal-in jack) unchanged; SENS_REF and
   string-damping ranges remain calibrate-by-feel.

@@ -110,6 +110,14 @@ exactly one cycle** — that's the write pass recording your loop; its dark time
 length (short/medium/long cycle). When it comes back, the loop is playing, and READY blips at
 each loop wrap (the end-of-cycle pulse).
 
+**The loop re-arms itself.** A playing loop is not the end of the story: when the input falls
+silent and a *new* sound arrives above the sens. threshold, the module automatically punches a
+new capture over the old loop — the behavior the 288v shows in the batchas video, where AUTO
+CONTROL cycles write and recirc continuously with the playing. The sound that triggered the
+current loop can't re-trigger; the input must dip to silence first ("next sound", exactly as
+the legend says). Rhythmic playing against a short cycle gets you the classic stutter. A pulse
+at the arm jack punches a new take the same way.
+
 **Resetting the loop from the panel:** flip the red switch to **all sounds and back to center**,
 or flip the **store beg./store end** selector to its other position. Either physical movement
 resets the capture state machine: the module returns to READY *armed* — so if your signal is
@@ -117,4 +125,5 @@ already above the sens. threshold, a new capture starts immediately; in silence 
 the next onset, as the legend says. (A write flick punches a new take at any time, too.) Note
 the store selector's *position* still chooses the policy for the **next** capture: *store beg.*
 loops automatically at the cycle boundary; *store end* holds the finished window silently until
-a recirc flick recalls it.
+a recirc flick recalls it — while holding, the **write and READY LEDs light together**
+("stored and waiting"), which is easy to misread as being stuck in write.
