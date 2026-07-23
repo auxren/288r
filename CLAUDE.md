@@ -140,9 +140,20 @@ better engine; add new features/controls/modulation only *after* the clone is na
   copy in `~/Documents/GitHub/claude_trix/tools/easel-weasel`, sync marf too). Codec init is
   concert-grade (bus-recover + verify-retry ×5 + all-LED boot alarm; 15/15 reboot torture).
   ISR telemetry: TIME 66%, pitch 58–83%, KS ~50%. `make test` = **30 suites**. Manual (docs/01–09)
-  updated through v1.2. Open: #5 (deeper presets — interleaved 16-tap idea), #9 (looper
-  varispeed), #10 (auto re-arm), #3 physical-flick confirmation welcome (injection-verified),
-  slider-5 board repair (owner soldering).
+  updated through v1.2. #3 closed after owner's physical-flick confirmation.
+- **v1.2.1-rc1 PRE-RELEASE (2026-07-22, tester-driven — AUTO CONTROL reports #13/#14/#15):**
+  red-switch MOVEMENT now resets the looper state machine (#13 — LP state silently survived
+  toggles, so the stock "all sounds and back" reset gesture re-entered LP_LOOP and auto-trigger
+  could never re-fire; entering a looper position sits READY *armed* = present signal captures
+  immediately). NOT yet hardware-verified (bench offline) — field-test RC; graduate to v1.2.1
+  on reporter confirmation. #14 closed by-design+docs (READY LED dark for exactly one write
+  pass = loop length; ch.6 got a capture-LED walkthrough + red-switch 3-position table).
+  #15 open as design discussion: env→time is additive-upward so it clamps dead at multiplier
+  full CW — questions posted (bipolar depth? disable strap? does reporter's analog signal-in
+  jack work on stock?). Red-switch decode reference: automode 1=all sounds(bit7),
+  2=next-sound momentary side(bit8), 0=center/arm-pulse-in. Open: #5 (deeper presets —
+  interleaved 16-tap idea), #9 (looper varispeed), #10 (auto re-arm; toggle-reset is the
+  manual workaround), #13 (rc1 verification), #15 (design), slider-5 board repair.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
