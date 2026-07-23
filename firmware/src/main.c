@@ -163,6 +163,7 @@ static uint32_t g_lp_start = 0;
 static uint32_t g_lp_end = 0;    /* store-end: head when the window completed */
 static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next onset triggers */
 static uint8_t  g_lp_prev_auto = 0xFFu; /* red-switch position at the last tick (0xFF = boot) */
+static uint8_t  g_lp_prev_store = 0xFFu; /* store beg./end position at the last tick (0xFF = boot) */
 
 #if PITCH_VOICE_ENABLE
 static pitch_voice_t g_pv __attribute__((section(".ccmram")));
@@ -751,6 +752,19 @@ int main(void)
                     g_lp_armed = (pc.automode != 1u);
                 }
                 g_lp_prev_auto = pc.automode;
+            }
+            /* The store beg./end selector is the same story (#16): it used to
+             * be consulted only at the instant a write pass completed, so
+             * flipping it mid-loop did nothing — Mixcatonic's documented stock
+             * reset gesture (store beg. -> store end) needs the movement
+             * itself to reset. Same policy as the red switch: physical
+             * movement -> READY, armed unless we're in plain delay. */
+            if (pc.store_end_mode != g_lp_prev_store) {
+                if (g_lp_prev_store != 0xFFu) {
+                    g_lp_state = LP_READY;
+                    g_lp_armed = (pc.automode != 1u);
+                }
+                g_lp_prev_store = pc.store_end_mode;
             }
 
             if (pc.automode == 1) {

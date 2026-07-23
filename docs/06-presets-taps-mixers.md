@@ -110,7 +110,11 @@ exactly one cycle** — that's the write pass recording your loop; its dark time
 length (short/medium/long cycle). When it comes back, the loop is playing, and READY blips at
 each loop wrap (the end-of-cycle pulse).
 
-**Resetting the loop from the panel:** flip the red switch to **all sounds and back to center**.
-Leaving the center position releases the loop (all sounds resumes live delay), and re-entering
-it sits READY *armed* — so if your signal is already above the sens. threshold, a new capture
-starts immediately; in silence it waits for the next onset, as the legend says.
+**Resetting the loop from the panel:** flip the red switch to **all sounds and back to center**,
+or flip the **store beg./store end** selector to its other position. Either physical movement
+resets the capture state machine: the module returns to READY *armed* — so if your signal is
+already above the sens. threshold, a new capture starts immediately; in silence it waits for
+the next onset, as the legend says. (A write flick punches a new take at any time, too.) Note
+the store selector's *position* still chooses the policy for the **next** capture: *store beg.*
+loops automatically at the cycle boundary; *store end* holds the finished window silently until
+a recirc flick recalls it.
