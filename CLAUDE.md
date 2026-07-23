@@ -173,7 +173,17 @@ better engine; add new features/controls/modulation only *after* the clone is na
   VARISPEED_ENABLE in board.h. test_varispeed.c = 31st suite (freq x2 @ half mult, unity at
   capture, off = no repitch, clamp rails; gotchas: tc taper is LINEAR raw=(m-.4)/1.2, and
   record MORE than the window before engine_recirc_window or the loop tail is silence).
-  BENCH GATE before v1.2.1 graduates: rate-4.0 ISR headroom (isr_pk) + rc1-4 field tests.
+  BENCH GATE before v1.2.1 graduates: rate-4.0 ISR headroom (isr_pk) + rc field tests.
+- **v1.2.1-rc5 PRE-RELEASE (2026-07-23): SIGNAL-GATED STORE END (#10, field-designed by
+  @twostroke-ux).** rc3 regression found: auto store-end takes cycled WRITE->HOLD->WRITE
+  forever (HOLD is silent + re-arm punches out of it) = "nothing other than write". Now:
+  auto takes in store end punch out after AUTO_RELEASE_TICKS (~120 ms) of silence (hang
+  trimmed from the window, AUTO_MIN_LOOP floor), cap -> loop the cycle; manual (momentary)
+  takes keep owner-tested hold-and-recall. g_lp_take_auto tracks origin. store beg. =
+  cycle-quantized (unchanged; docs explain the write-LED tell for staccato). Varispeed
+  field-confirmed ×1 by RECLee (#9); ×4 = the ISR bench check. The looper state machine
+  is now 5 states x 4 policies deep in main.c — EXTRACT TO looper.c + host suite before
+  v1.2.1 (top engineering priority, owner-acked).
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
