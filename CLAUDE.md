@@ -166,6 +166,14 @@ better engine; add new features/controls/modulation only *after* the clone is na
   sens. knob to gate auto-capture (independently validates sens-threshold + rc3 auto re-arm).
   Implement for next RC unless community objects. Video/frames/tracker: job tmp dir
   (pitchtrack.py; frames/f147 = the money shot).
+- **v1.2.1-rc4 PRE-RELEASE (2026-07-23): VARISPEED SHIPPED (#9).** engine.c recirc branch:
+  head advances lp_rate = lp_mult_ref/mult per sample (clamp 0.25..4), lp_phase fractional
+  part folded into the tap-read d_int/d_frac (continuous, not stair-stepped); lp_mult_ref
+  captured in all 4 engine_recirc_* entries. Gated: looper positions only, !pitch_mode,
+  VARISPEED_ENABLE in board.h. test_varispeed.c = 31st suite (freq x2 @ half mult, unity at
+  capture, off = no repitch, clamp rails; gotchas: tc taper is LINEAR raw=(m-.4)/1.2, and
+  record MORE than the window before engine_recirc_window or the loop tail is silence).
+  BENCH GATE before v1.2.1 graduates: rate-4.0 ISR headroom (isr_pk) + rc1-4 field tests.
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
