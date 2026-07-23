@@ -155,6 +155,17 @@ better engine; add new features/controls/modulation only *after* the clone is na
   interleaved 16-tap idea), #9 (looper varispeed — comparison questions now posted in-thread),
   #10 (auto re-arm; toggle-reset is the manual workaround), #13/#16 (rc verification),
   #15 (design), slider-5 board repair.
+- **#9 VARISPEED CONFIRMED on the 288v (2026-07-23, video forensics):** downloaded the batchas
+  288v video "[04]" (RECLee's #9 evidence; yt-dlp, owner-approved) and pitch-tracked the audio
+  (autocorr, 4096/2048 @48k): last ~8 s = continuous +8→+18 st ramp on a recirculating loop
+  WITH the hand visibly on the 3rd multiplier knob (recirc LED lit). Mechanism: stock retunes
+  the PLL (whole sample clock moves) → a recirc loop repitches for free; our fixed-96k engine
+  (the smooth-modulation fix) needs explicit varispeed. Proposed in #9: looper positions =
+  tape-motor resampled loop playback (pitch-mode fractional-read tech; bench ISR check before
+  ship); all-sounds keeps constant-pitch respacing. Bonus finding: at 1:50 the hand rides the
+  sens. knob to gate auto-capture (independently validates sens-threshold + rc3 auto re-arm).
+  Implement for next RC unless community objects. Video/frames/tracker: job tmp dir
+  (pitchtrack.py; frames/f147 = the money shot).
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
