@@ -152,8 +152,15 @@ better engine; add new features/controls/modulation only *after* the clone is na
   full CW — questions posted (bipolar depth? disable strap? does reporter's analog signal-in
   jack work on stock?). Red-switch decode reference: automode 1=all sounds(bit7),
   2=next-sound momentary side(bit8), 0=center/arm-pulse-in. Open: #5 (deeper presets —
-  interleaved 16-tap idea), #9 (looper varispeed), #10 (auto re-arm; toggle-reset is the
-  manual workaround), #13 (rc1 verification), #15 (design), slider-5 board repair.
+  interleaved 16-tap idea), #9 (looper varispeed — comparison questions now posted in-thread),
+  #10 (auto re-arm; toggle-reset is the manual workaround), #13/#16 (rc verification),
+  #15 (design), slider-5 board repair.
+- **v1.2.1-rc2 PRE-RELEASE (2026-07-22): #16 = the store beg./end selector had the SAME
+  no-transition-handling bug as #13** (only consulted at write-pass completion → flipping it
+  mid-loop did nothing; Mixcatonic's stock reset gesture store-beg->store-end needs the
+  movement itself to reset). Both switch toggles now reset the looper to READY armed;
+  supersedes rc1; not hardware-verified (bench offline). Clarifying Qs posted on #16 (which
+  build; what "ignores AUTO CONTROL inputs" means — if arm-pulse-during-loop, that's #10).
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
