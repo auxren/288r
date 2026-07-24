@@ -38,6 +38,7 @@ int  bsp_pulse_in(unsigned which);  /* pulse jacks: 0=write(PG10) 1=recirc(PG11)
 void     bsp_spi2_adc_init(void);
 uint16_t bsp_pot_read(unsigned ch);  /* raw 12-bit, MCP320x-style [BENCH map] */
 void     bsp_spi2_probe(void);       /* diagnostic: raw bytes -> g_spi_raw[2][3] */
+void     bsp_spi2_resync(void);      /* 1 Hz self-heal: re-frame SPI2 + MCP3204   */
 
 /* TIME MULTIPLIER via internal ADC3 ch6 (PF8). */
 void     bsp_mult_init(void);
