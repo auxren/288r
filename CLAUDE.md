@@ -218,6 +218,22 @@ better engine; add new features/controls/modulation only *after* the clone is na
   sine into delay_buf (0xd0100000) + lp_mult_ref for rate; offsets via __builtin_offsetof
   arm compile (dl.wpos@8, xport.mode@0xd0, ls@0xd8, le@0xdc, tc.mult@0xc0, varispeed@0x148,
   ref@0x14c, phase@0x150, rate@0x154; g_lp.state@+0x18).
+- **v1.2.1 RELEASED (2026-07-24) — the AUTO CONTROL release:** varispeed, signal-gated
+  store end, auto re-arm, both toggle resets, wrap-click fix (splice+guards, owner
+  ear-confirmed), looper extraction. Same-day field reports (owner, live): pitch mode ×
+  looper glitched (#19) + pitch controls felt seconds-slow in ×4 (#20).
+- **v1.2.2-rc1 PRE-RELEASE (2026-07-24, same-day fix cycle): PITCH VOICE IS LOOP-AWARE
+  (#19) + echo pattern exempt from ×4 (#20).** All ps reads window-map via
+  dl_read_loop_frac in RECIRC (ps_set_loop_window per block in the ISR prologue); AA
+  bypassed while looping (streaming cache can't cross the seam); pt-ring echo + dry-anchor
+  delays scale 1/extend (loop capture length still composes with ×4); varispeed gated off
+  in KS mode (audit). VERIFIED: clip counter 0 vs 100+/s baseline at every ratio 0.5-3.9,
+  BOTH window orientations, ISR 74-80%. ADVERSARIAL REVIEW CAUGHT A REAL PRE-FLASH BUG:
+  wrapped windows (end<start = MAJORITY of long captures; start=head+len-window) were
+  rejected by the setter — silently disabling the fix exactly where it matters; span law
+  now mirrors dl_read_loop_frac. test_pitch_loop.c (34 suites) covers both orientations +
+  a validity check (unmapped path must glitch). Remote recipe: force ratio via
+  g_dbg_ratio_force, watch clip_q + isr_pk — full objective A/B without audio.
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
