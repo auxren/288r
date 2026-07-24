@@ -67,6 +67,23 @@ uint16_t bsp_pot_read(unsigned ch)
  * the cmd[6:5]=channel decode those are ch1/ch3 — 0x80 and 0xC0 (ch0/ch2)
  * were never probed and are candidates for the "signal in" path. */
 volatile uint8_t g_spi_raw[4][3];
+/* SELF-HEALING re-sync (owner report: the control surface can wedge into a
+ * corrupted-readings state that only a reboot cleared — knob quantized to a
+ * few coarse levels / dead, recurring). Full peripheral + CS re-frame: SPE
+ * off/on resets the SPI shift/RX pipeline, the CS pulse re-frames the
+ * MCP3204's conversion state machine, the drain clears RXNE/OVR. Called once
+ * a second from the panel tick — costs ~2 us, turns any wedged state into a
+ * sub-second self-recovery instead of a power cycle. */
+void bsp_spi2_resync(void)
+{
+    while (SPI2->SR & SPI_SR_BSY) { }
+    SPI2->CR1 &= ~SPI_CR1_SPE;           /* reset shift/RX pipeline */
+    (void)SPI2->DR; (void)SPI2->SR;      /* clear RXNE + OVR        */
+    GPIOB->BSRR = (1u << CS_PIN);        /* CS high: ADC frame reset */
+    for (volatile int d = 0; d < 200; d++) { }
+    SPI2->CR1 |= SPI_CR1_SPE;
+}
+
 void bsp_spi2_probe(void)
 {
     static const uint8_t cmds[4] = { 0x80u, 0xA0u, 0xC0u, 0xE0u };

@@ -731,6 +731,10 @@ int main(void)
         }
         if ((uint32_t)(now_blocks - last_slow) >= 15u) {
             last_slow = now_blocks;
+            /* control-ADC self-heal (~1 Hz): the surface could wedge into a
+             * corrupted state only a reboot cleared — re-frame it instead. */
+            static uint32_t resync_div = 0;
+            if (++resync_div >= 200u) { resync_div = 0; bsp_spi2_resync(); }
             panel_ctl_t pc;
             uint16_t sw = bsp_panel_switches_read();
             panel_decode(sw, &pc);
