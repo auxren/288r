@@ -27,6 +27,7 @@ void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n);
 #include "pitch_voice.h"
 #include "pitch_taps.h"
 #include "ks.h"
+#include "looper.h"
 #include "fast_math.h"
 #include "calibration.h"
 #include "storage.h"
@@ -153,19 +154,10 @@ static float g_att_filt = 2047.0f;   /* c.v. attenuverter (ADC3 parked ch) */
  * with superloop load, so anything timed (save-hold, blinks) counts blocks. */
 static volatile uint32_t g_blocks = 0;
 
-/* Looper auto-state (community-documented stock behavior): the red AUTO CONTROL
- * switch (165 bit 4) selects DELAY ("all sounds": continuous write, out of
- * "ready") vs LOOPER (center: sit READY; signal presence auto-starts a WRITE of
- * one cycle, then auto-RECIRCs it; the momentary punches manually). */
-enum { LP_READY = 0, LP_WRITE, LP_HOLD, LP_LOOP };
-static uint8_t  g_lp_state = LP_READY;
-static uint32_t g_lp_start = 0;
-static uint32_t g_lp_end = 0;    /* store-end: head when the window completed */
-static uint8_t  g_lp_armed = 0;   /* looper: env must dip low before the next onset triggers */
-static uint8_t  g_lp_prev_auto = 0xFFu; /* red-switch position at the last tick (0xFF = boot) */
-static uint8_t  g_lp_prev_store = 0xFFu; /* store beg./end position at the last tick (0xFF = boot) */
-static uint8_t  g_lp_take_auto = 0;  /* 1 = current take was signal/pulse-started (auto policy) */
-static uint16_t g_lp_sil_ticks = 0;  /* consecutive panel ticks below the arm threshold        */
+/* Looper auto-state machine (looper.c — host-tested by test/test_looper.c).
+ * State, policies, and switch-movement resets all live in the module; main
+ * maps its LED intents to pins and feeds it edges + the sens envelope. */
+static looper_t g_lp;
 
 #if PITCH_VOICE_ENABLE
 static pitch_voice_t g_pv __attribute__((section(".ccmram")));
@@ -508,6 +500,20 @@ int main(void)
     unsigned idle_w = 0;                /* auto-polarity: pressed = level != idle    */
 #if PANEL_TRANSPORT_ENABLE
     transport_trig_init(&g_xtrig);
+    {
+        looper_cfg_t lcfg = {
+#if SENS_IN_SLOT >= 0
+            .sens_ref = SENS_REF, .arm_frac = SENS_ARM_FRAC,
+#else
+            .sens_ref = 0.25f, .arm_frac = 0.4f,   /* g_env fallback thresholds */
+#endif
+            .release_ticks = AUTO_RELEASE_TICKS,
+            .release_samp  = AUTO_RELEASE_SAMP,
+            .min_loop_samp = AUTO_MIN_LOOP_SAMP,
+            .delay_len     = DELAY_LEN,
+        };
+        looper_init(&g_lp, &lcfg);
+    }
 #endif
 #if PRESET_ENABLE
     chord_init(&g_save_chord);
@@ -746,163 +752,21 @@ int main(void)
             g_xtrig.prev_w = (uint8_t)wr_act;
             g_xtrig.prev_r = (uint8_t)rc_act;
 
-            /* Red-switch MOVEMENT resets the looper state machine (#13). The
-             * stock reset gesture — toggle to "all sounds" and back — depends
-             * on it: all-sounds entry releases the loop back to continuous
-             * write, and looper entry sits READY *armed*, so a signal already
-             * above the sens threshold captures immediately instead of
-             * waiting for a fresh silence->onset. Boot latch takes no action
-             * (0xFF), and a recalled preset can't fake a movement: this reads
-             * the physical switch only. */
-            if (pc.automode != g_lp_prev_auto) {
-                if (g_lp_prev_auto != 0xFFu) {
-                    g_lp_state = LP_READY;
-                    g_lp_armed = (pc.automode != 1u);
-                }
-                g_lp_prev_auto = pc.automode;
-            }
-            /* The store beg./end selector is the same story (#16): it used to
-             * be consulted only at the instant a write pass completed, so
-             * flipping it mid-loop did nothing — Mixcatonic's documented stock
-             * reset gesture (store beg. -> store end) needs the movement
-             * itself to reset. Same policy as the red switch: physical
-             * movement -> READY, armed unless we're in plain delay. */
-            if (pc.store_end_mode != g_lp_prev_store) {
-                if (g_lp_prev_store != 0xFFu) {
-                    g_lp_state = LP_READY;
-                    g_lp_armed = (pc.automode != 1u);
-                }
-                g_lp_prev_store = pc.store_end_mode;
-            }
-
-            if (pc.automode == 1) {
-                /* DELAY mode: continuous write; manual punches still honored */
-                if (rc_edge)      { engine_recirc_window(&g_engine,
-                                        (uint32_t)g_engine.taps.base_delay); }
-                else if (wr_edge || (g_lp_state != LP_LOOP &&
-                                     !transport_should_write(&g_engine.xport)))
-                                  { engine_write(&g_engine); }
-                if (transport_should_write(&g_engine.xport)) {
-                    g_lp_state = LP_READY;
-                    /* WRITE: write LED on, recirc + ready off (PA1/PA7/PA8 map
-                     * pin-forced + owner-named) */
-                    lp_ind(1, 0); lp_ind(2, 1); lp_ind(3, 1);
-                } else {
-                    g_lp_state = LP_LOOP;
-                    /* RECIRC: recirc LED on; ready blips at each loop wrap */
-                    lp_ind(1, 1); lp_ind(2, 0);
-                }
-            } else {
-                /* LOOPER/auto mode (red switch center) */
-                uint32_t cyc = (uint32_t)g_engine.taps.base_delay;
-                /* Shared auto-trigger law, "next sound" semantics: arm when the
-                 * input dips below the arm threshold, fire on the next onset —
-                 * a signal present when a state is entered can't trigger until
-                 * it stops and restarts. Used by READY (first capture) AND by
-                 * LOOP/HOLD (auto re-arm, #10). sens knob = threshold by
-                 * analog gain (board.h); knob at zero = auto-trigger off. */
-                int lp_auto_fire, lp_silent;
+            /* the sens-channel envelope drives the auto-trigger law; without a
+             * proven sens slot, the input envelope + stock thresholds stand in
+             * (matching cfg in looper_init) */
 #if SENS_IN_SLOT >= 0
-                {
-                    float sens = g_sens_env[SENS_IN_SLOT - 1];
-                    lp_silent = (sens < SENS_REF * SENS_ARM_FRAC);
-                    lp_auto_fire = (g_lp_armed && sens > SENS_REF) || arm_in;
-                }
+            float lp_sens = g_sens_env[SENS_IN_SLOT - 1];
 #else
-                lp_silent = (g_env < 0.10f);
-                lp_auto_fire = (g_lp_armed && g_env > 0.25f) || arm_in;
+            float lp_sens = g_env;
 #endif
-                if (lp_silent) {
-                    g_lp_armed = 1;
-                    if (g_lp_sil_ticks < 0xFFFFu) g_lp_sil_ticks++;
-                } else {
-                    g_lp_sil_ticks = 0;
-                }
-                switch (g_lp_state) {
-                case LP_READY:
-                    if (!transport_should_write(&g_engine.xport)) engine_write(&g_engine);
-                    if (lp_auto_fire || wr_edge || pc.automode == 2) {
-                        g_lp_start = g_engine.dl.wpos;
-                        engine_write(&g_engine);
-                        g_lp_state = LP_WRITE;
-                        g_lp_armed = 0;
-                        g_lp_take_auto = (uint8_t)(!wr_edge && pc.automode != 2);
-                    }
-                    lp_ind(1, 1); lp_ind(2, 1); lp_ind(3, 0); /* READY LED (PA8) */
-                    break;
-                case LP_WRITE: {
-                    uint32_t written = (g_engine.dl.wpos >= g_lp_start)
-                                     ? g_engine.dl.wpos - g_lp_start
-                                     : g_engine.dl.wpos + DELAY_LEN - g_lp_start;
-                    if (rc_edge) {                         /* manual punch-out      */
-                        engine_recirc_between(&g_engine, g_lp_start);
-                        g_lp_state = LP_LOOP;
-                    } else if (pc.store_end_mode && g_lp_take_auto &&
-                               g_lp_sil_ticks >= AUTO_RELEASE_TICKS &&
-                               written > AUTO_RELEASE_SAMP + AUTO_MIN_LOOP_SAMP) {
-                        /* store end + auto take (#10, field-designed): the signal
-                         * ended, so the take is the phrase — loop it, minus the
-                         * release hang. "Signal present = writing, silence =
-                         * looping": loop length follows the playing, where
-                         * store beg. quantizes it to the cycle. */
-                        uint32_t end = (g_engine.dl.wpos + DELAY_LEN
-                                        - AUTO_RELEASE_SAMP) % DELAY_LEN;
-                        engine_recirc_span(&g_engine, g_lp_start, end);
-                        g_lp_state = LP_LOOP;
-                    } else if (written >= cyc) {
-                        if (!pc.store_end_mode || g_lp_take_auto) {
-                            /* 'store beg.' (and capped auto store-end takes):
-                             * loop the cycle. Auto store-end previously went to
-                             * silent HOLD here, where the re-arm immediately
-                             * punched a new take — audible result: write
-                             * forever, never a loop (field report #10). */
-                            engine_recirc_window(&g_engine, cyc);
-                            g_lp_state = LP_LOOP;
-                        } else {                           /* manual 'store end': hold */
-                            g_lp_end = g_engine.dl.wpos;
-                            g_lp_state = LP_HOLD;          /* delay keeps running    */
-                        }
-                    } else if (wr_edge) {                  /* restart the take       */
-                        g_lp_start = g_engine.dl.wpos;
-                        engine_write(&g_engine);
-                        g_lp_take_auto = 0;
-                    }
-                    lp_ind(1, 0); lp_ind(2, 1); lp_ind(3, 1); /* write LED */
-                    break; }
-                case LP_HOLD:  /* stock mode 5: window stored, delay keeps running */
-                    if (!transport_should_write(&g_engine.xport)) engine_write(&g_engine);
-                    if (rc_edge) {                         /* recall the saved window */
-                        engine_recirc_span(&g_engine, g_lp_start, g_lp_end);
-                        g_lp_state = LP_LOOP;
-                    } else if (wr_edge || lp_auto_fire) {  /* new take               */
-                        g_lp_start = g_engine.dl.wpos;
-                        engine_write(&g_engine);
-                        g_lp_state = LP_WRITE;
-                        g_lp_armed = 0;
-                        g_lp_take_auto = (uint8_t)!wr_edge;
-                    }
-                    /* stored-and-waiting: write + ready LEDs together */
-                    lp_ind(1, 0); lp_ind(2, 1); lp_ind(3, 0);
-                    break;
-                default: /* LP_LOOP */
-                    /* AUTO RE-ARM (#10/#16): stock evidence — in the batchas
-                     * 288v video (via Mixcatonic) auto control cycles
-                     * write/recirc continuously with the input, so a playing
-                     * loop must re-trigger on the next onset, not hold
-                     * forever. Same silence->onset law as READY: the sound
-                     * that triggered THIS take can't retrigger until the
-                     * input dips below the arm threshold. */
-                    if (wr_edge || lp_auto_fire) {         /* punch a new take       */
-                        g_lp_start = g_engine.dl.wpos;
-                        engine_write(&g_engine);
-                        g_lp_state = LP_WRITE;
-                        g_lp_armed = 0;
-                        g_lp_take_auto = (uint8_t)!wr_edge;
-                    }
-                    lp_ind(1, 1); lp_ind(2, 0);   /* recirc LED (looping) */
-                    break;
-                }
-            }
+            looper_tick(&g_lp, &g_engine, pc.automode, pc.store_end_mode,
+                        wr_edge, rc_edge, (int)arm_in, lp_sens);
+            /* LED intents -> pins (active-low); READY is EOC-owned in loop
+             * playback (led_ready < 0) */
+            lp_ind(1, g_lp.led_write  ? 0 : 1);
+            lp_ind(2, g_lp.led_recirc ? 0 : 1);
+            if (g_lp.led_ready >= 0) lp_ind(3, g_lp.led_ready ? 0 : 1);
 #endif
             /* END-OF-CYCLE indicator: in recirc the head snaps back at the loop
              * boundary — blip the end-of-cycle outputs (PA7/PA8) at each wrap,
@@ -912,10 +776,10 @@ int main(void)
             }
             g_prev_wpos = g_engine.dl.wpos;
             if (g_eoc_blink) { lp_ind(3, 0); g_eoc_blink--; }
-            else if (!transport_should_write(&g_engine.xport) && g_lp_state == LP_LOOP) {
+            else if (!transport_should_write(&g_engine.xport) && g_lp.state == LP_LOOP) {
                 lp_ind(3, 1);
             }
-            g_dbg_panel.lp_state = g_lp_state;
+            g_dbg_panel.lp_state = g_lp.state;
             g_dbg_panel.xp_mode = (uint8_t)g_engine.xport.mode;
             { float e100 = g_env * 100.0f; g_dbg_panel.env_q = (e100 > 255.0f) ? 255 : (uint8_t)e100; }
             g_dbg_panel.eoc = g_eoc_blink;
