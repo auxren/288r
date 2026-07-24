@@ -183,7 +183,11 @@ better engine; add new features/controls/modulation only *after* the clone is na
   cycle-quantized (unchanged; docs explain the write-LED tell for staccato). Varispeed
   field-confirmed ×1 by RECLee (#9); ×4 = the ISR bench check. The looper state machine
   is now 5 states x 4 policies deep in main.c — EXTRACT TO looper.c + host suite before
-  v1.2.1 (top engineering priority, owner-acked).
+  v1.2.1 (top engineering priority, owner-acked). DONE 2026-07-23: src/looper.{h,c} =
+  1:1 extraction (BSP-free, cfg injected, LED intents w/ tri-state READY — EOC stays in
+  main), test_looper.c = the 32nd suite (full transition matrix). Semantic notes the
+  suite encodes: fire-tick lamps still show the PRIOR state's set (faithful); a
+  switch-movement reset with signal present captures on the SAME tick.
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
