@@ -196,6 +196,28 @@ better engine; add new features/controls/modulation only *after* the clone is na
   playback only = internal overshoot = OUR bug, fix immediately; never = soft-knee on
   0.75..1.0 peaks). Leading hypothesis: input ADC overload on hot modular transients.
   Awaiting the LED verdict before any code change.
+- **BENCH SESSION 8 (2026-07-24, owner partially present then remote): varispeed gate PASSED,
+  seam fix landed, and an OPEN CLOCK MYSTERY.** (1) ISR gate: genuine rate-4.0 varispeed =
+  70% of budget (isr_pk 2464/3500), 20 s soak flat — the earlier 61% read was pitch-mode-loop
+  by accident (TIME/pitch switch was in pitch; symptom triad "knob does nothing + clicks +
+  not smooth" = pitch mode's depth knob + splicing; ALWAYS check that switch first). (2) Wrap
+  click: dl_loop_splice (capture-time tail->lead-in crossfade) + 4 GUARD SAMPLES past
+  loop_end (the interp stencil reads whole-buffer neighbours; fractional rates walk through
+  the seam zone every wrap). Host regression proves guards specifically (fails without).
+  34 suites. Owner's "still clicks" listen predates the guard flash — re-verify by ear.
+  (3) g_dbg_eoc_mute (SWD) isolates EOC-pulse electrical bleed — inconclusive so far.
+  (4) CAPTURE CHAIN UNRELIABLE: Big Six/ffmpeg avfoundation injects ~20/s drift-splice
+  events + mislabels rate (abs frequencies wrong, ratios OK) — remote listening needs a
+  clean capture path before trusting click analysis. (5) **OPEN MYSTERY [BENCH]: head
+  advance measured ~192k samples/s at BOTH rate 1 and rate 4 while the block clock reads
+  exactly 96k frames/s and lp_rate=4.0** — mutually contradictory via SWD-sampled wpos
+  (wrap-unwrap ambiguity suspected); need a bench measurement of the true frame clock +
+  advance factor (reference tone through the dry path, or scope MCLK). The vendor's
+  "196KHz" spec may not have been a typo — verify before more absolute-frequency DSP.
+  Remote SWD looper driving recipe: poke xport window/mode + g_lp.state + load_image
+  sine into delay_buf (0xd0100000) + lp_mult_ref for rate; offsets via __builtin_offsetof
+  arm compile (dl.wpos@8, xport.mode@0xd0, ls@0xd8, le@0xdc, tc.mult@0xc0, varispeed@0x148,
+  ref@0x14c, phase@0x150, rate@0x154; g_lp.state@+0x18).
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
