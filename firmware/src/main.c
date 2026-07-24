@@ -120,6 +120,8 @@ static volatile float g_sens_env[2] = { 0.0f, 0.0f };
 /* red AUTO CONTROL position snapshot for the fast control tick (decoded in the
  * slow panel tick): 1=all-sounds(delay), 0=center(looper), 2=next-sound. */
 static volatile uint8_t g_auto_now = 1;
+/* #20: pitch-mode echo/dry delay scale = 1/extend (tick-written, ISR-read) */
+static volatile float g_pt_scale = 1.0f;
 #if SENS_IN_SLOT >= 0 && (SENS_IN_SLOT < 1 || SENS_IN_SLOT > 2)
 #error "SENS_IN_SLOT must be 1 or 2 (indexes g_sens_env[SLOT-1])"
 #endif
@@ -262,6 +264,18 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
     const uint32_t cyc0 = DWT_CYCCNT_REG;
     const float t = g_time_raw01;
     int clip = 0;
+#if PITCH_VOICE_ENABLE
+    /* looper window sync for the pitch voice (#19): reads must window-map in
+     * RECIRC or the grains fetch garbage at every wrap (bench: ~100 overrange
+     * events/s, silent input). Once per block is plenty — captures/releases
+     * happen at panel-tick rate. */
+    const int recirc_now = !transport_should_write(&g_engine.xport);
+    if (recirc_now)
+        ps_set_loop_window(&g_pv.ps, g_engine.xport.loop_start,
+                           g_engine.xport.loop_end, g_engine.dl.len);
+    else
+        ps_set_loop_window(&g_pv.ps, 0u, 0u, g_engine.dl.len);
+#endif
     for (unsigned f = 0; f < frames; ++f) {
         float x = audio_in_to_f(in[f * TDM_SLOTS + AUDIO_IN_SLOT]);
 #if LED_INPUT_CLIP_MODE
@@ -330,8 +344,17 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             if (wet < 0.999f) {
                 uint32_t d_int; float d_frac;
                 taps_delay_frac(&g_engine.taps, 0, &d_int, &d_frac);
+                if (g_pt_scale != 1.0f) {          /* #20: dry anchor too */
+                    float dly = ((float)d_int + d_frac) * g_pt_scale;
+                    d_int = (uint32_t)dly; d_frac = dly - (float)d_int;
+                }
                 if (d_int < 1) { d_int = 1; d_frac = 0.0f; }
-                dry = dl_read_frac(&g_engine.dl, d_int, d_frac, DL_INTERP_HERMITE);
+                dry = recirc_now
+                    ? dl_read_loop_frac(&g_engine.dl, d_int, d_frac,
+                                        g_engine.xport.loop_start,
+                                        g_engine.xport.loop_end,
+                                        DL_INTERP_HERMITE)
+                    : dl_read_frac(&g_engine.dl, d_int, d_frac, DL_INTERP_HERMITE);
             }
             /* TRANSPOSED MULTITAP (stock semantics, owner-requested): the
              * voice goes into its echo ring, and each channel reads it back
@@ -341,6 +364,14 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             for (unsigned pi = 0; pi < (unsigned)NUM_TAPS; ++pi) {
                 uint32_t d_int; float d_frac;
                 taps_delay_frac(&g_engine.taps, pi, &d_int, &d_frac);
+                /* #20: the echo pattern does NOT stretch with the x4 extend —
+                 * stock pitch mode had no extend, and scaling the pinned
+                 * minimum made every control change take seconds to be heard
+                 * (owner report). The looper window keeps the full length. */
+                if (g_pt_scale != 1.0f) {
+                    float dly = ((float)d_int + d_frac) * g_pt_scale;
+                    d_int = (uint32_t)dly; d_frac = dly - (float)d_int;
+                }
                 float yi = pt_read(&g_pt, d_int, d_frac);
                 chan[pi] = (1.0f - wet) * dry + (PITCH_VOICE_GAIN * wet) * yi;
             }
@@ -720,7 +751,8 @@ int main(void)
              * flanger behavior); pitch mode keeps the multiplier as its depth
              * control, so the two never fight over the knob. */
             g_engine.varispeed =
-                (VARISPEED_ENABLE && !g_pitch_mode && pc.automode != 1u) ? 1 : 0;
+                (VARISPEED_ENABLE && !g_pitch_mode && !g_ks_mode &&
+                 pc.automode != 1u) ? 1 : 0;
 
             /* KS gesture: HOLD next-sound (red momentary) ~2 s -> toggle the
              * string bank; twinkle confirms; a short flick keeps its normal
@@ -828,6 +860,7 @@ int main(void)
             if (!g_extend_latched) {
                 g_extend_latched = 1;
                 g_extend_factor = bsp_sw_delay_extend() ? DELAY_EXTEND_FACTOR : 1.0f;
+                g_pt_scale = 1.0f / g_extend_factor;   /* #20 */
                 if (g_extend_factor != 1.0f) prev_octave = 0xFFu;  /* force rescale */
                 /* issue #12: the other rear DIPs share the matrix topology */
                 unsigned depth = bsp_resolution_bits();

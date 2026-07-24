@@ -38,6 +38,11 @@ typedef struct {
     int      aarows_band;     /* band aarows holds, -1 = none                    */
     volatile int aaband_req;  /* band the ISR wants published (platform reads)   */
     int      aa_bypass;       /* test hook: 1 = force Hermite path (no AA)       */
+    /* --- looper awareness (#19) -------------------------------------------
+     * When the engine RECIRCs, the write head snaps back at the loop boundary
+     * — every read must window-map or the grains fetch garbage (bench: ~100+
+     * full-scale overrange events/s with silent input). span==0 = live path. */
+    uint32_t lp_start, lp_end, lp_span;
     /* --- period-adaptive splice search (bass reach) ------------------------ */
     /* A background autocorrelation (idle ps_service calls) estimates the
      * source period; confident LOW material widens the splice search to cover
@@ -63,6 +68,13 @@ void  ps_set_aa_rows(pitchshift_t *p, int band, const float (*rows)[16]);
 const float (*ps_aa_flash_rows(int band))[16];
 void  ps_set_ratio(pitchshift_t *p, float ratio);   /* clamp to a sane span      */
 void  ps_reset(pitchshift_t *p);                     /* phase = 0                 */
+
+/* Looper window (#19): call at RECIRC entry/exit. span 0 (start==end) = live
+ * path. While a window is set, reads window-map through dl_read_loop_frac and
+ * the AA path is bypassed (its streaming cache reads raw sequential addresses
+ * and cannot cross the seam) — loop playback uses the exact Hermite reads. */
+void  ps_set_loop_window(pitchshift_t *p, uint32_t start, uint32_t end,
+                         uint32_t len);
 
 /* One output sample. `d` is the (externally written) delay line. */
 float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp);

@@ -16,8 +16,17 @@ float sqrtf(float);
  * buffer — periodic phase jitter on this voice's continuously-ramping taps,
  * and it re-quantizes the sub-sample splice offsets the correlator refines.
  * The distance itself is < ~16k samples, so this split is exact to ~2^-10. */
-static inline float ps_read(const delay_line_t *d, float dist, dl_interp_t interp)
+static inline float ps_read(const pitchshift_t *p, const delay_line_t *d,
+                            float dist, dl_interp_t interp)
 {
+    if (p->lp_span) {
+        /* looper (#19): window-map the read — dl_read_loop_frac wraps the
+         * distance inside [lp_start, lp_end) whose seam content is spliced +
+         * guard-sampled at capture, so grains cross the wrap continuously. */
+        uint32_t di = (uint32_t)dist;
+        return dl_read_loop_frac(d, di, dist - (float)di,
+                                 p->lp_start, p->lp_end, interp);
+    }
     uint32_t di = (uint32_t)dist;
     return dl_read_frac(d, di, dist - (float)di, interp);
 }
@@ -116,9 +125,26 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->aarows_band = -1;
     p->aaband_req = -1;
     p->aa_bypass = 0;
+    p->lp_start = 0u;
+    p->lp_end = 0u;
+    p->lp_span = 0u;
     p->period = 0.0f;
     p->per_conf = 0.0f;
     p->per_tick = 0;
+}
+
+void ps_set_loop_window(pitchshift_t *p, uint32_t start, uint32_t end,
+                        uint32_t len)
+{
+    /* end < start is a WRAPPED window (the majority of long-window captures:
+     * engine_recirc_window computes start = head + len - window) — same span
+     * law as dl_read_loop_frac. Review catch: treating it as degenerate
+     * silently disabled the whole mapping for wrapped captures. */
+    uint32_t span = (end >= start) ? end - start : len - (start - end);
+    if (span < 8u || span >= len) { p->lp_span = 0u; return; }
+    p->lp_start = start;
+    p->lp_end = end;
+    p->lp_span = span;
 }
 
 void ps_set_ratio(pitchshift_t *p, float ratio)
@@ -172,8 +198,8 @@ static float ps_lag_score(pitchshift_t *p, const delay_line_t *d,
     (void)p;
     float acc = 0.0f, e1 = 0.0f;
     for (int k = 0; k < PS_PER_SPAN; k += 4) {
-        float a = ps_read(d, dRef + (float)k, DL_INTERP_LINEAR);
-        float b = ps_read(d, dRef + (float)(k + lag), DL_INTERP_LINEAR);
+        float a = ps_read(p, d, dRef + (float)k, DL_INTERP_LINEAR);
+        float b = ps_read(p, d, dRef + (float)(k + lag), DL_INTERP_LINEAR);
         acc += a * b;
         e1  += b * b;
     }
@@ -192,7 +218,7 @@ static void ps_period_scan(pitchshift_t *p, const delay_line_t *d)
     const float dRef = p->base + 0.5f * p->window;
     float e0 = 0.0f;
     for (int k = 0; k < PS_PER_SPAN; k += 4) {
-        float a = ps_read(d, dRef + (float)k, DL_INTERP_LINEAR);
+        float a = ps_read(p, d, dRef + (float)k, DL_INTERP_LINEAR);
         e0 += a * a;
     }
     if (e0 < 1.0e-6f) { p->per_conf = 0.0f; return; }
@@ -278,7 +304,7 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
     /* outgoing-window energy once (lag-independent) for the guards */
     float eb = 0.0f;
     for (int k = 0; k < srchN; k += 2) {
-        float b = ps_read(d, dOut + (float)k, DL_INTERP_LINEAR);
+        float b = ps_read(p, d, dOut + (float)k, DL_INTERP_LINEAR);
         eb += b * b;
     }
     if (eb < 1.0e-7f) return;                      /* silence: keep offset 0 */
@@ -287,8 +313,8 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
     for (int lag = 0; lag < srchML; lag += 4) {   /* coarse grid */
         float acc = 0.0f, ein = 0.0f;
         for (int k = 0; k < srchN; k += 2) {          /* decimate x2 */
-            float a = ps_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
-            float b = ps_read(d, dOut + (float)k, DL_INTERP_LINEAR);
+            float a = ps_read(p, d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
+            float b = ps_read(p, d, dOut + (float)k, DL_INTERP_LINEAR);
             acc += a * b;
             ein += a * a;
         }
@@ -310,8 +336,8 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
             if (lag < 0 || lag >= srchML) continue;
             float acc = 0.0f, ein = 0.0f;
             for (int k = 0; k < srchN; k += 2) {
-                float a = ps_read(d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
-                float b = ps_read(d, dOut + (float)k, DL_INTERP_LINEAR);
+                float a = ps_read(p, d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
+                float b = ps_read(p, d, dOut + (float)k, DL_INTERP_LINEAR);
                 acc += a * b;
                 ein += a * a;
             }
@@ -351,7 +377,7 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
        collapse to a single centered tap so unity is a clean delayed bypass.    */
     if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS) {
         p->pend_tap = -1;                    /* discard stale splice offsets */
-        return ps_read(d, p->base + 0.5f * W, interp);
+        return ps_read(p, d, p->base + 0.5f * W, interp);
     }
 
     const float fracA = p->phase;
@@ -376,7 +402,7 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
      * Coefficients: platform-published fast rows (CCM) when the band matches,
      * const flash tables otherwise (correct either way, CCM is just faster). */
     int band = -1;
-    if (!p->aa_bypass && p->ratio > 1.02f) {
+    if (!p->aa_bypass && !p->lp_span && p->ratio > 1.02f) {
         band = 0;
         while (band < AA_NBANDS - 1 && p->ratio > aa_band_edge[band]) band++;
     }
@@ -390,7 +416,7 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
         out = gA * ps_read_bl(p, d, 0, dA, rows)
             + gB * ps_read_bl(p, d, 1, dB, rows);
     } else {
-        out = gA * ps_read(d, dA, interp) + gB * ps_read(d, dB, interp);
+        out = gA * ps_read(p, d, dA, interp) + gB * ps_read(p, d, dB, interp);
     }
 
     /* advance: delay changes by (1 - ratio) samples per output sample          */

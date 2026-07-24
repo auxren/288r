@@ -119,3 +119,17 @@ mode; the same hold exits, and your delay is untouched underneath). Whatever ent
 This is the one structure that cannot be patched externally (a string loop must close with
 zero extra latency, and the codec round trip is ~1 ms), so it is the single deliberate
 exception to the no-internal-feedback design — scoped entirely to this mode.
+
+## Pitch mode and the looper (v1.2.2+)
+
+Pitch mode now composes with the looper: capture a loop and the pitched output keeps
+working across the loop seam (earlier firmware glitched on every pass — if you saw the
+input-mixer LED flashing over a silent input while a pitch loop played, that was it).
+The up-shift anti-alias filter rests while a loop plays (loop playback uses the exact
+interpolation path); it re-engages on the live signal automatically.
+
+**Why pitch-mode knob/CV changes take a moment to hear:** in pitch mode the sliders are
+*echoes* of the pitched voice — each channel replays it at that tap's own delay, so a
+control change is heard as it propagates through the echo pattern. As of v1.2.2 the echo
+pattern no longer stretches with the rear ×4 switch (loop length still does), which keeps
+the response tight even in long-range mode.
