@@ -126,6 +126,7 @@ void engine_write(engine_t *e)  { transport_begin_write(&e->xport, e->dl.wpos); 
 void engine_recirc(engine_t *e)
 {
     transport_begin_recirc(&e->xport, e->dl.wpos);
+    dl_loop_splice(&e->dl, e->xport.loop_start, e->xport.loop_end, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
 }
@@ -144,6 +145,7 @@ void engine_recirc_window(engine_t *e, uint32_t window)
      * right — reads are window-mapped — but the head never wrapped, so no
      * end-of-cycle events fired). */
     e->dl.wpos = start;
+    dl_loop_splice(&e->dl, start, e->xport.loop_end, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
 }
@@ -157,6 +159,7 @@ void engine_recirc_span(engine_t *e, uint32_t start, uint32_t end)
     e->xport.loop_start = start;
     e->xport.loop_end = end;
     e->dl.wpos = start;
+    dl_loop_splice(&e->dl, start, end, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
 }
@@ -170,6 +173,7 @@ void engine_recirc_between(engine_t *e, uint32_t start)
     e->xport.loop_start = start;
     e->xport.loop_end = head;
     e->dl.wpos = start;
+    dl_loop_splice(&e->dl, start, head, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
 }

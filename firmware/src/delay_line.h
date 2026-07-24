@@ -77,6 +77,17 @@ float dl_read_loop_frac(const delay_line_t *d, uint32_t d_int, float d_frac,
  * head++ ; if it passes loop_end it snaps back to loop_start. */
 void dl_advance_loop(delay_line_t *d, uint32_t loop_start, uint32_t loop_end);
 
+/* One-time loop-seam splice for a captured window [start,end): rewrite the
+ * last `fade` samples so the tail crossfades into the content that leads INTO
+ * loop_start — buf[end-fade+i] blends toward buf[start-fade+i] (mod len), so
+ * when the read head wraps it lands on start with matching context. Kills the
+ * per-pass wrap click (bench + field #9: every tap clicks as its read crosses
+ * the seam). Pre-start content is the older recording (or silence on a fresh
+ * buffer, which fades out benignly). Call ONCE at capture, from superloop
+ * context; the reader starts at `start` so the tail isn't reached before the
+ * splice completes. */
+void dl_loop_splice(delay_line_t *d, uint32_t start, uint32_t end, uint32_t fade);
+
 /* Optional "vintage" quantizer for the write path: reduce to `bits` (e.g. 12) with
  * triangular dither. Apply to the sample before dl_write() when in vintage mode.
  * `dither` is a value in [-1,1] (e.g. from a cheap PRNG); pass 0 for none. */

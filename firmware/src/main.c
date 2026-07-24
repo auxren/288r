@@ -136,6 +136,11 @@ static uint8_t g_pulse_prev = 0;
 static volatile uint32_t g_clip_until = 0;
 static volatile uint8_t  g_clip_count = 0;
 
+/* SWD: mute the end-of-cycle blip/pulse drive (bench: isolating whether the
+ * wrap click is ELECTRICAL bleed from the EOC pulse/LED switching, not DSP).
+ * Poke 1 over SWD; strip with the rest of the scaffolding. */
+volatile uint8_t g_dbg_eoc_mute __attribute__((used)) = 0;
+
 /* SWD-driven DAC-slot solo for slot->slider mapping at the bench: -1 = normal,
  * 0..7 = only that TDM slot carries audio (others muted). Written over SWD
  * (mwb &g_dac_solo N); strip with the rest of the g_dbg scaffolding. */
@@ -775,7 +780,8 @@ int main(void)
                 if (g_engine.dl.wpos < g_prev_wpos) g_eoc_blink = 2;
             }
             g_prev_wpos = g_engine.dl.wpos;
-            if (g_eoc_blink) { lp_ind(3, 0); g_eoc_blink--; }
+            if (g_dbg_eoc_mute) { g_eoc_blink = 0; }
+            else if (g_eoc_blink) { lp_ind(3, 0); g_eoc_blink--; }
             else if (!transport_should_write(&g_engine.xport) && g_lp.state == LP_LOOP) {
                 lp_ind(3, 1);
             }

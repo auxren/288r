@@ -180,7 +180,28 @@ float dl_read_loop_frac(const delay_line_t *d, uint32_t d_int, float d_frac,
 
     uint32_t a0 = loop_start + r0;           /* absolute buffer index        */
     if (a0 >= len) a0 -= len;
-    /* neighbours fetch whole-buffer adjacent samples, matching dl_read_loop's
-     * seam behaviour (faithful-clone question — see notes) */
+    /* neighbours fetch whole-buffer adjacent samples; dl_loop_splice writes
+     * guard samples past loop_end so the stencil stays continuous at the seam */
     return read_frac_at_index(d->buf, len, a0, d_frac, interp);
+}
+
+void dl_loop_splice(delay_line_t *d, uint32_t start, uint32_t end, uint32_t fade)
+{
+    uint32_t win = (end >= start) ? end - start : end + d->len - start;
+    if (fade == 0u || win <= 2u * fade) return;   /* degenerate window: skip */
+    float inv = 1.0f / (float)fade;
+    for (uint32_t i = 0; i < fade; i++) {
+        float w = (float)(i + 1u) * inv;          /* ..end-1 reaches w=1      */
+        uint32_t tail = (end   + d->len - fade + i) % d->len;
+        uint32_t lead = (start + d->len - fade + i) % d->len;
+        d->buf[tail] = (1.0f - w) * d->buf[tail] + w * d->buf[lead];
+    }
+    /* GUARD SAMPLES: the interpolation stencil reads whole-buffer neighbours
+     * (see dl_read_loop_frac), so a read landing within 2 samples of the seam
+     * fetches buf[end]/buf[end+1] — stale post-window content. Integer-rate
+     * playback could skip that zone forever; varispeed's fractional phase
+     * walks through it EVERY wrap (bench: click per pass survived the fade).
+     * Mirror the head content past the seam so the stencil sees continuity. */
+    for (uint32_t i = 0; i < 4u; i++)
+        d->buf[(end + i) % d->len] = d->buf[(start + i) % d->len];
 }

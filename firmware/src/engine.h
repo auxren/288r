@@ -20,6 +20,10 @@
 #include "mixer.h"
 #include "bwlimit.h"
 
+/* Loop-seam crossfade length in samples (~10 ms @96 k): applied once at every
+ * loop capture (see dl_loop_splice). */
+#define LOOP_SPLICE_FADE 960u
+
 typedef struct {
     delay_line_t dl;
     taps_t       taps;
