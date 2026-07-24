@@ -1,8 +1,9 @@
-# 288r community firmware — v1.2.2-rc1 (pre-release for field testing)
+# 288r community firmware — v1.2.2-rc2 (pre-release for field testing)
 
 Release candidate for the pitch-mode reports on v1.2.1
 ([#19](https://github.com/auxren/288r/issues/19),
-[#20](https://github.com/auxren/288r/issues/20)). **Updating preserves your saved
+[#20](https://github.com/auxren/288r/issues/20),
+[#15](https://github.com/auxren/288r/issues/15)). Supersedes rc1. **Updating preserves your saved
 presets.** Bench-verified on the reference unit (objective clip-counter and ISR-load
 telemetry); field ears welcome. 34 host regression suites.
 
@@ -23,10 +24,15 @@ telemetry); field ears welcome. 34 host regression suites.
   scaling the pinned minimum made every knob/CV change take seconds to be heard). Loop
   *capture length* still composes with ×4 as before.
 - String mode no longer engages the looper tape motor (varispeed) behind the scenes.
+- **Envelope→time self-modulation is disabled** (#15): at full depth with a hot sens
+  channel and the ×4 range it could garble the delay outright (reproduced on the reference
+  unit — continuous multi-thousand-sample delay jitter). It returns as a properly bipolar,
+  smoothed, range-independent design. The sens. knob keeps its looper threshold role; the
+  analog signal-in self-modulation path is hardware and unaffected.
 
 ## Known / open issues
 
-- Deeper presets ([#5](https://github.com/auxren/288r/issues/5)); env→time headroom at
-  full CW ([#15](https://github.com/auxren/288r/issues/15)); input-stage clipping on hot
-  percussive sources is gain staging — watch the clip LED while recording (#9 discussion).
+- Deeper presets ([#5](https://github.com/auxren/288r/issues/5)); the env→time redesign
+  ([#15](https://github.com/auxren/288r/issues/15)); input-stage clipping on hot percussive
+  sources is gain staging — watch the clip LED while recording (#9 discussion).
 - Reference-unit hardware faults (slider 5) unchanged; SWD scaffolding retained.
