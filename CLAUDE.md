@@ -234,6 +234,15 @@ better engine; add new features/controls/modulation only *after* the clone is na
   now mirrors dl_read_loop_frac. test_pitch_loop.c (34 suites) covers both orientations +
   a validity check (unmapped path must glitch). Remote recipe: force ratio via
   g_dbg_ratio_force, watch clip_q + isr_pk — full objective A/B without audio.
+- **"NASTY CRACKLY MODE" diagnosed live over SWD (2026-07-24 evening) → v1.2.2-rc2:** the
+  env→time self-mod (sens knob, all-sounds) at full depth with the sens channel carrying
+  ~0.3 FS of attenuated input + the ×4 base = continuous ±28k-sample delay jitter = garble.
+  Diagnosis chain: mode flags all clean → tc.mult wobbling vs static knob/CV → g_sens_env
+  float 0.30-0.33 wobbling with the playing. OWNER CALL: feature DEFAULT OFF
+  (ENV_TIME_ENABLE 0) until the #15 bipolar redesign (slow ~80ms envelope, capped depth,
+  extend-exempt). Docs updated (ch3/ch5); #15 informed. Diagnostic lesson: "wobbling
+  tc.mult with static inputs" = check every additive control source, the dbg sens display
+  caps at 255 and HIDES saturation dynamics — read the float.
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
