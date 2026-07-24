@@ -142,3 +142,14 @@ decode. (`--selftest` validates the decoders offline.)
 ## F. Report back
 Update `panel_ctl.c` (bit map/polarity), `board.h` (pins + cal), `led.c` (LED_BIT + must-hold),
 `re/notes/panel-scan.md`, and `CLAUDE.md`. Then strip the `g_dbg_*` scaffolding before any release.
+
+## If the controls act dead, pegged, or garbled
+
+Before touching firmware: **check the ST-Link cable and its mechanical stress on the
+board.** Bench-proven failure chain (2026-07-24): the programmer's cable leaning on the
+board flexed the control-ADC's connection — symptoms progressed from bit-shifted SPI
+frames (knob bleeding into the CV channel, phantom static CV offsets, controls with ~20%
+range) to a fully mute MISO (all channels zero, knob/CV totally inert, multiplier clamped
+at range minimum). The firmware faithfully reports whatever the dying input feeds it.
+Diagnostic order: g_spi_raw bytes over SWD (clean frames / shifted garbage / all-zero),
+then SPI2 CR1/SR (firmware side), then reseat connectors and remove cable stress.

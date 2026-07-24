@@ -243,6 +243,13 @@ better engine; add new features/controls/modulation only *after* the clone is na
   extend-exempt). Docs updated (ch3/ch5); #15 informed. Diagnostic lesson: "wobbling
   tc.mult with static inputs" = check every additive control source, the dbg sens display
   caps at 255 and HIDES saturation dynamics — read the float.
+- **"Knob dead" postmortem (2026-07-24 late): THE ST-LINK CABLE WAS STRESSING THE BOARD** —
+  flexed the control-ADC (MCP3204) connection: bit-shifted SPI frames (knob→CV channel
+  bleed, ~20% control range, phantom CV offsets) then fully mute MISO after a power cycle.
+  Removing the cable stress fixed everything. Firmware verified clean end-to-end during
+  the diagnosis (SPI2 CR1/SR healthy, control law, pin logic all correct). LAB RULE
+  corollary: when the MODULE acts possessed, check what the cable is LEANING ON. Runbook
+  updated. Earlier "SPI desync from SWD halt" theory was wrong — it was mechanical.
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
