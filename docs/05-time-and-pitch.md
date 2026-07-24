@@ -85,8 +85,13 @@ which direction) the CV moves the time. At the center detent the CV is ignored e
 counter-clockwise inverts it. This works from power-on in **both** modes — in PITCH mode the same
 attenuverter scales the pitch CV.
 
-**Envelope → delay time (the module's signature self-modulation).** With the red AUTO CONTROL
-switch at **all sounds**, the **sens. knob sets envelope-modulation depth**: your playing
+**Envelope → delay time — disabled as of v1.2.2.** The digital self-modulation (sens. knob as
+envelope→time depth in *all sounds*) is switched off pending a redesign: at full depth, with a
+hot sens channel and the ×4 range, it modulated the delay violently enough to garble the audio
+(reference unit + field report [#15](https://github.com/auxren/288r/issues/15)). It returns as
+a bipolar, smoothed, range-independent control once that design lands. Note the *analog*
+self-modulation path — the **signal in** jack through the attenuverter — is hardware and
+unaffected. Original behavior, for reference: your playing
 dynamics push the delay time — attacks stretch it (with a doppler pitch dip as it glides),
 decays let it drift back. Fully CCW = off; the auto LED glows while the envelope is actively
 pushing. In the looper modes (red switch center / next sound) the sens. knob returns to its

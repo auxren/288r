@@ -687,8 +687,10 @@ int main(void)
             if (g_auto_now == 1)
 #endif
             {
+#if ENV_TIME_ENABLE
                 t01 += g_sens_env[0] * ENV_TIME_DEPTH;
                 if (t01 > 1.0f) t01 = 1.0f;
+#endif
             }
             g_time_raw01 = t01;
             /* KS tuning (owner-designed): the tap PHASES are the chord's

@@ -74,6 +74,15 @@
  * then 0 — patch-state dependent; locate with a knob-wiggle + cv watch). */
 #define SENS_IN_SLOT      1
 #define SENS_REF          0.02f   /* fixed trigger reference [calibrate on hardware] */
+#define ENV_TIME_ENABLE   0       /* env->time self-mod DEFAULT OFF (owner call,
+                                     2026-07-24): at full depth with a hot sens
+                                     channel and a x4 base it garbled the delay
+                                     ("nasty crackly", reference unit) — and the
+                                     field already questioned the tuning (#15).
+                                     Re-enable with the #15 bipolar redesign:
+                                     slow envelope (~80 ms), capped depth,
+                                     extend-exempt. sens keeps its looper
+                                     threshold role regardless.               */
 #define ENV_TIME_DEPTH    1.0f    /* envelope->delay-time span in "all sounds" mode:
                                      full-scale sens envelope pushes the multiplier
                                      across its whole range [calibrate by feel]     */
