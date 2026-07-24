@@ -188,6 +188,14 @@ better engine; add new features/controls/modulation only *after* the clone is na
   main), test_looper.c = the 32nd suite (full transition matrix). Semantic notes the
   suite encodes: fire-tick lamps still show the PRIOR state's set (faithful); a
   switch-movement reset with signal present captures on the SAME tick.
+- **#9 field update (2026-07-24): ×4 varispeed CONFIRMED no-glitch by RECLee** (field half of
+  the ISR gate; bench isr_pk read = formality). NEW report: percussive clipping in loops, not
+  in the original, ×1 and ×4 alike. Video audio analyzed (owner-approved download): hard
+  flat-tops confirmed real. Camera can't localize the stage → posted the clip-LED
+  discrimination procedure (stage1 flash at record = ADC rail/gain staging; stage2 at
+  playback only = internal overshoot = OUR bug, fix immediately; never = soft-knee on
+  0.75..1.0 peaks). Leading hypothesis: input ADC overload on hot modular transients.
+  Awaiting the LED verdict before any code change.
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
