@@ -26,7 +26,7 @@ GitHub Actions CI, numbered `docs/`, and MARF-style checksummed persistence.
 |---|---|
 | Reverse engineering | **Done.** Target STM32F429, delay engine fully traced. |
 | Interpolation patch (stock fw) | **Done, statically verified.** Smooth TIME modulation. Experimental image in `Compiled FW/`. |
-| Community firmware | **Released — v1.0.1, runs on hardware.** Feature-complete against the stock (delay, looper, presets, pitch mode) plus the fixes; `firmware/src/` + `firmware/test/`, 30 host suites green. |
+| Community firmware | **Released — v1.0.1, runs on hardware.** Feature-complete against the stock (delay, looper, presets, pitch mode) plus the fixes; `firmware/src/` + `firmware/test/`, 34 host suites green. |
 | Hardware layer & release | **Done.** Bare-metal BSP in `firmware/src/bsp/`; `make firmware` links the flashable image; tagging a release makes CI build the `.hex`/`.bin` and a one-click flasher zip. |
 
 The definitive architecture is in `firmware/DESIGN.md`; the bench findings are in
@@ -35,7 +35,7 @@ The definitive architecture is in `firmware/DESIGN.md`; the bench findings are i
 ## Building & testing
 
 ```bash
-cd firmware && make test     # host unit tests (30 suites, all pass)
+cd firmware && make test     # host unit tests (34 suites, all pass)
 cd firmware && make engine   # cross-compile the DSP engine for STM32F429
 cd firmware && make firmware # link the flashable image -> build/fw/b288-community.hex
 ```
