@@ -358,7 +358,13 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
              * at that tap's own delay — the TIME-mode echo pattern, pitched.
              * Cycle/octave rescale the pattern exactly as in TIME mode. */
             pt_write(&g_pt, y);
-            for (unsigned pi = 0; pi < (unsigned)NUM_TAPS; ++pi) {
+            /* SLIDER 1 = the DIRECT pitched voice (owner request 2026-07-25):
+             * zero echo delay, so knob/CV changes are heard instantly (~15 ms
+             * glide) instead of one echo-time later. Sliders 2-8 remain the
+             * transposed echo pattern; slider 0 stays dry. Also saves one
+             * SDRAM ring read. */
+            chan[0] = (1.0f - wet) * dry + (PITCH_VOICE_GAIN * wet) * y;
+            for (unsigned pi = 1; pi < (unsigned)NUM_TAPS; ++pi) {
                 uint32_t d_int; float d_frac;
                 taps_delay_frac(&g_engine.taps, pi, &d_int, &d_frac);
                 /* #20: the echo pattern does NOT stretch with the x4 extend —
