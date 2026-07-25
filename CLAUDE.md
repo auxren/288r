@@ -282,6 +282,19 @@ better engine; add new features/controls/modulation only *after* the clone is na
   response; sliders 2-8 = echo pattern; saves an SDRAM read); #23 detune-spread filed+
   parked. LESSON: coordinating live panel actions over chat fails ~4/5 times — use LONG
   passive background monitors + owner-paced recordings, align by content afterwards.
+- **THE "QUANTIZED KNOB" WAS CONTROL-TICK STARVATION, NOT THE POT (2026-07-25, owner's
+  mode-dependence observation cracked it):** the one-shot splice search burned 60-110M
+  cycles (bass-extended sizes) freezing the superloop 0.5-3.6 s during pitch activity —
+  knob readings froze then leapt (the "3-4 loose points" since v1.0.1). Proven with new
+  tick_gap telemetry + a synthetic ratio-force ramp (no hands needed). Fixed: chunked
+  resumable search+scan (PS_SRCH_CHUNK 4000 — do NOT shrink, see code comment: 1500 let
+  frozen search geometry go stale at ratio ~4, purity collapse; ratio context stamp
+  guards resume), adaptive decimation for bass windows (8x cheaper, quality identical:
+  30 Hz purity 1.004, AA 1.000), sweep gate (no searches while ratio slews). Measured
+  3634 ms -> 101 ms peak gaps. POT EXONERATED (upper-track diagnosis retracted — the
+  "smooth lower half" was the sweep's slow start before searches kicked in). ALSO fixed
+  same session: stale-flash trap struck AGAIN (make failed, openocd flashed old hex,
+  'Verified OK' — CHECK BUILD EXIT BEFORE FLASH); fabsf isn't freestanding (fm_fabsf).
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
