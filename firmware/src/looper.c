@@ -30,7 +30,8 @@ static void begin_take(looper_t *lp, engine_t *e, uint8_t take_auto)
 
 void looper_tick(looper_t *lp, engine_t *e,
                  unsigned automode, unsigned store_end,
-                 int wr_edge, int rc_edge, int arm_in, float sens)
+                 int wr_edge, int rc_edge, int arm_in,
+                 float sens, float input_env)
 {
     /* Physical switch MOVEMENT resets the state machine (#13/#16): all-sounds
      * entry releases any loop back to continuous write; looper entry sits
@@ -77,8 +78,15 @@ void looper_tick(looper_t *lp, engine_t *e,
      * by LOOP/HOLD (auto re-arm, #10). The arm-jack pulse fires regardless.
      * sens knob = threshold by analog gain; knob at zero = auto-trigger off. */
     uint32_t cyc = (uint32_t)e->taps.base_delay;
-    int lp_silent = (sens < lp->cfg.sens_ref * lp->cfg.arm_frac);
-    int lp_auto_fire = (lp->armed && sens > lp->cfg.sens_ref) || arm_in;
+    /* Silence/onset law, sens CORROBORATED by the true input (#10/#21): the
+     * sens pickup hears the module's own output, so loops/echoes held it high
+     * forever — the LED lied during recirc and store-end never saw silence.
+     * input_env (input A's codec slot) stays clean during playback: silence
+     * on it IS silence; an onset needs both channels to agree. */
+    int lp_silent = (sens < lp->cfg.sens_ref * lp->cfg.arm_frac) ||
+                    (input_env < lp->cfg.input_eps);
+    int lp_auto_fire = (lp->armed && sens > lp->cfg.sens_ref &&
+                        input_env >= lp->cfg.input_eps) || arm_in;
     if (lp_silent) {
         lp->armed = 1;
         if (lp->sil_ticks < 0xFFFFu) lp->sil_ticks++;
@@ -106,19 +114,26 @@ void looper_tick(looper_t *lp, engine_t *e,
                    lp->sil_ticks >= lp->cfg.release_ticks &&
                    written > lp->cfg.release_samp + lp->cfg.min_loop_samp) {
             /* store end + auto take (#10, field-designed): the signal ended,
-             * so the take is the phrase — loop it, minus the release hang.
-             * "Signal present = writing, silence = looping"; store beg.
-             * quantizes the length to the cycle instead. */
+             * so the take is the phrase — loop it, minus the release hang,
+             * bounded to one cycle (the rolling-write window can exceed it).
+             * "Signal present = writing, silence = looping". */
             uint32_t end = (e->dl.wpos + lp->cfg.delay_len
                             - lp->cfg.release_samp) % lp->cfg.delay_len;
-            engine_recirc_span(e, lp->start, end);
+            uint32_t take = written - lp->cfg.release_samp;
+            if (take > cyc) take = cyc;
+            uint32_t start2 = (end + lp->cfg.delay_len - take)
+                              % lp->cfg.delay_len;
+            engine_recirc_span(e, start2, end);
             lp->state = LP_LOOP;
         } else if (written >= cyc) {
-            if (!store_end || lp->take_auto) {
-                /* store beg. (and capped auto store-end takes): loop the
-                 * cycle. Auto store-end used to go to silent HOLD here, where
-                 * the re-arm immediately punched a new take — audible result:
-                 * write forever, never a loop (field report #10). */
+            if (store_end && lp->take_auto) {
+                /* store end + auto (#10, field-designed v2): NO cap — the
+                 * envelope is the master: keep WRITING as long as the signal
+                 * plays (rolling window); the silence punch-out above loops
+                 * the LAST phrase, bounded to one cycle. (v1 capped here,
+                 * which read as "still cycle-quantized" in the field.) */
+            } else if (!store_end) {
+                /* store beg.: cycle-quantized capture -> loop */
                 engine_recirc_window(e, cyc);
                 lp->state = LP_LOOP;
             } else {                               /* manual store end: hold   */

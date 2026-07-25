@@ -29,13 +29,21 @@ static float buf[LEN];
 static engine_t E;
 static looper_t L;
 
-/* advance one panel tick: N engine samples, then the state machine */
-static void tick(unsigned automode, unsigned store_end,
-                 int wr, int rc, int arm, float sens)
+/* advance one panel tick: N engine samples, then the state machine.
+ * tick() feeds the same level to sens and the input envelope (honest
+ * channels); tick2() splits them for the sens-blindness scenarios (#10/#21:
+ * the sens pickup hears the module's own output). */
+static void tick2(unsigned automode, unsigned store_end,
+                  int wr, int rc, int arm, float sens, float env)
 {
     float chan[NUM_TAPS];
     for (unsigned i = 0; i < TICK; i++) engine_process_multi(&E, 0.1f, 0.5f, chan);
-    looper_tick(&L, &E, automode, store_end, wr, rc, arm, sens);
+    looper_tick(&L, &E, automode, store_end, wr, rc, arm, sens, env);
+}
+static void tick(unsigned automode, unsigned store_end,
+                 int wr, int rc, int arm, float sens)
+{
+    tick2(automode, store_end, wr, rc, arm, sens, sens);
 }
 static void ticks(int n, unsigned am, unsigned se, float sens)
 {
@@ -47,7 +55,8 @@ static void fresh(void)
     engine_init(&E, buf, LEN, CYC, 0.4f, 1.6f, 0.02f);
     looper_cfg_t cfg = { .sens_ref = REF, .arm_frac = 0.4f,
                          .release_ticks = 4, .release_samp = 4 * TICK,
-                         .min_loop_samp = TICK, .delay_len = LEN };
+                         .min_loop_samp = TICK, .delay_len = LEN,
+                         .input_eps = 0.005f };
     looper_init(&L, &cfg);
     tick(0, 0, 0, 0, 0, HI);   /* boot latch (no reset action); signal present
                                   so nothing arms before a scenario wants it */
@@ -116,12 +125,34 @@ int main(void)
         ck("release hang trimmed from loop", win == 3u * TICK);
     }
 
-    /* ---- store end, auto take capped at the cycle: LOOP, never HOLD ---- */
+    /* ---- store end, auto take: NO cap — envelope is the master (#10 v2) --- */
     fresh();
     ticks(2, 0, 1, LO);
     tick(0, 1, 0, 0, 0, HI);
-    ticks(12, 0, 1, HI);       /* sustained past the cap */
-    ck("store end auto cap -> LOOP (not HOLD)", L.state == LP_LOOP);
+    ticks(16, 0, 1, HI);       /* sustained well past the cycle cap */
+    ck("store end auto: signal present = keep WRITING", L.state == LP_WRITE);
+    ticks(4, 0, 1, LO);        /* silence: loop the LAST phrase, cycle-bounded */
+    ck("store end auto: silence -> LOOP", L.state == LP_LOOP);
+    {
+        uint32_t win = (E.xport.loop_end + LEN - E.xport.loop_start) % LEN;
+        ck("rolling window bounded to one cycle", win == (uint32_t)CYC);
+    }
+
+    /* ---- sens blindness (#10/#21): module output holds sens HIGH ---------- */
+    fresh();
+    ticks(2, 0, 0, LO); tick(0, 0, 0, 0, 0, HI); ticks(12, 0, 0, HI); /* LOOP */
+    /* loop plays; input A goes silent but the sens pickup still hears the
+     * loop: sens HIGH + env 0 must count as SILENCE (arm for re-trigger) */
+    for (int i = 0; i < 3; i++) tick2(0, 0, 0, 0, 0, HI, 0.0f);
+    ck("sens-blind silence still arms", L.armed == 1 && L.state == LP_LOOP);
+    tick2(0, 0, 0, 0, 0, HI, HI);   /* real input returns: onset */
+    ck("re-arm fires despite sens never dipping",
+       L.state == LP_WRITE && L.take_auto == 1);
+    /* and a sens-only onset (env still silent) must NOT fire */
+    fresh();
+    ticks(2, 0, 0, LO);
+    tick2(0, 0, 0, 0, 0, HI, 0.0f);
+    ck("sens alone (echo bleed) cannot trigger", L.state == LP_READY);
 
     /* ---- store end, manual take: hold-and-recall ---- */
     fresh();

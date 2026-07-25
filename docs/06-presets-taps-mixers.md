@@ -126,11 +126,11 @@ how an automatic capture *ends*:
   is still recording and new onsets are ignored; when it goes off, the loop is playing and the
   next silence→onset re-triggers. Short staccato notes against a long cycle will capture
   mostly silence — that's the quantized policy doing its job; use store end for phrases.
-- **store end** — signal-gated: **while you play, it writes; when you stop, it loops.** The
-  capture ends ~120 ms after the input falls below the sens. threshold (the hang bridges
-  staccato gaps within a phrase), and the loop is exactly your phrase, whatever its length —
-  up to one cycle, which is the cap. This is the staccato/phrase-friendly mode: each new
-  phrase replaces the loop with itself.
+- **store end** — signal-gated: **while you play, it writes; when you stop, it loops** — the
+  envelope follower is the master transport. Writing continues as long as signal is present
+  (indefinitely — no cycle quantization), and ~120 ms after the input falls silent the *last*
+  phrase loops, bounded to one cycle length. The staccato/phrase mode: each new phrase
+  replaces the loop with itself.
 
 A take started with the **write momentary** in store end keeps the classic hold-and-recall:
 records one cycle, holds it silently (write + READY LEDs together), recirc flick recalls it.
@@ -154,3 +154,9 @@ the store selector's *position* still chooses the policy for the **next** captur
 loops automatically at the cycle boundary; *store end* holds the finished window silently until
 a recirc flick recalls it — while holding, the **write and READY LEDs light together**
 ("stored and waiting"), which is easy to misread as being stuck in write.
+
+> **Silence detection during playback (v1.2.2+).** The sens. channel's analog pickup also
+> hears the module's own output, so during loop playback or heavy echoes it stays high even
+> with nothing at input A. The firmware therefore corroborates every silence/onset decision
+> (and the presence LED) with input A's own level — the LED and the auto transport now follow
+> what you're actually playing, not what the module is playing back.

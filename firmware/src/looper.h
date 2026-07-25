@@ -36,6 +36,10 @@ typedef struct {
     uint32_t release_samp;  /* the same hang in samples (trimmed off the loop)  */
     uint32_t min_loop_samp; /* shortest auto-captured loop                      */
     uint32_t delay_len;     /* delay buffer length (head arithmetic)            */
+    float    input_eps;     /* true-input floor: below this the input is silent
+                               REGARDLESS of sens (the sens pickup hears the
+                               module's own output — loops/echoes kept it high
+                               and blinded all silence detection; #10/#21)     */
 } looper_cfg_t;
 
 typedef struct {
@@ -60,8 +64,12 @@ void looper_init(looper_t *lp, const looper_cfg_t *cfg);
 /* One panel tick. wr_edge/rc_edge: momentary rising edges; arm_in: arm-jack
  * pulse (fires a capture regardless of the arm state); sens: the sens-channel
  * envelope this tick. */
+/* sens: the sens-channel envelope (threshold by analog knob gain — but it
+ * also hears the module output). input_env: input A's own envelope (clean).
+ * Both must agree for "signal"; input_env alone decides "silence". */
 void looper_tick(looper_t *lp, engine_t *e,
                  unsigned automode, unsigned store_end,
-                 int wr_edge, int rc_edge, int arm_in, float sens);
+                 int wr_edge, int rc_edge, int arm_in,
+                 float sens, float input_env);
 
 #endif /* LOOPER_H */
