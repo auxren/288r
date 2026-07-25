@@ -239,6 +239,10 @@ struct dbg_panel {
     uint8_t  clip_q;      /* chain-clip event counter (wraps)      */
     uint8_t  pad_;
     uint16_t isr_pk;      /* max audio-ISR cycles per BLOCK >> 4 (DWT CYCCNT) */
+    uint16_t tick_gap;    /* max BLOCKS between fast control ticks since last
+                             SWD reset (3 blocks nominal; thousands = the
+                             superloop starving the control path — suspected
+                             ps_service search pile-up during pitch sweeps)   */
     uint8_t  eoc;         /* eoc blink counter (nonzero = blinking) */
     float    mult;        /* smoothed multiplier [0,1]            */
     float    base;        /* current taps base_delay (samples)    */
@@ -595,7 +599,12 @@ int main(void)
          * Cheap check per pass; the actual search (~250k MACs) runs only when a
          * tap wrap is imminent (every ~0.5 s in pitch mode) — superloop-only,
          * never in the ISR. Measured: purity 0.98..1.00 vs 0.77..0.98 plain. */
-        if (g_pitch_mode) ps_service(&g_pv.ps, &g_engine.dl);
+        /* SWEEP GATE (2026-07-25): no splice searches while the ratio is
+         * actively moving — the motion masks splices anyway, and searches
+         * were starving the control tick (the "quantized knob"). */
+        if (g_pitch_mode &&
+            fm_fabsf(g_pv.ps.ratio - g_pv.target) < 0.003f)
+            ps_service(&g_pv.ps, &g_engine.dl);
 #endif
 #if PANEL_SCAN_ENABLE
         /* Panel + control tick (~every 64 passes, ~10 ms). The SPI2 control-ADC
@@ -609,6 +618,11 @@ int main(void)
          * BIPOLAR around mid-scale (the panel's -/+ attenuverter): signed offset. */
         uint32_t now_blocks = g_blocks;
         if ((uint32_t)(now_blocks - last_fast) >= 3u) {
+            {   /* control-tick starvation telemetry */
+                uint32_t gap = now_blocks - last_fast;
+                if (gap > g_dbg_panel.tick_gap)
+                    g_dbg_panel.tick_gap = (uint16_t)((gap > 0xFFFFu) ? 0xFFFFu : gap);
+            }
             last_fast = now_blocks;
             bsp_spi2_probe();     /* all 4 MCP3204 channels; CV=idx1, knob=idx3 */
             uint32_t cv   = ((g_spi_raw[1][1] & 0x0F) << 8) | g_spi_raw[1][2];

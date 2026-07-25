@@ -43,6 +43,17 @@ typedef struct {
      * — every read must window-map or the grains fetch garbage (bench: ~100+
      * full-scale overrange events/s with silent input). span==0 = live path. */
     uint32_t lp_start, lp_end, lp_span;
+    /* --- time-sliced splice search + period scan (2026-07-25) --------------
+     * One-shot searches burned 60-110M cycles at bass-extended sizes and
+     * froze the superloop 0.5-3.6 s (measured: g_dbg_panel.tick_gap) — the
+     * "quantized knob in pitch mode". Both jobs now run in bounded chunks,
+     * resumable across service calls. */
+    int   srch_active, srch_tap, srch_lag, srch_N, srch_ML;
+    int   srch_kstep, srch_lstep, srch_bestlag;
+    float srch_dIn, srch_dOut, srch_eb, srch_best;
+    float srch_ratio;      /* context stamp: abort resume if ratio moved */
+    int   scan_active, scan_lag, scan_bestlag;
+    float scan_e0, scan_best;
     /* --- period-adaptive splice search (bass reach) ------------------------ */
     /* A background autocorrelation (idle ps_service calls) estimates the
      * source period; confident LOW material widens the splice search to cover

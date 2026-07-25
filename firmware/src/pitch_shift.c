@@ -128,6 +128,12 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->lp_start = 0u;
     p->lp_end = 0u;
     p->lp_span = 0u;
+    p->srch_active = 0; p->srch_tap = 0; p->srch_lag = 0;
+    p->srch_N = 0; p->srch_ML = 0; p->srch_kstep = 2; p->srch_lstep = 4;
+    p->srch_bestlag = 0; p->srch_dIn = 0.0f; p->srch_dOut = 0.0f;
+    p->srch_eb = 0.0f; p->srch_best = 0.0f; p->srch_ratio = 1.0f;
+    p->scan_active = 0; p->scan_lag = 0; p->scan_bestlag = 0;
+    p->scan_e0 = 0.0f; p->scan_best = 0.0f;
     p->period = 0.0f;
     p->per_conf = 0.0f;
     p->per_tick = 0;
@@ -213,26 +219,33 @@ static float ps_lag_score(pitchshift_t *p, const delay_line_t *d,
  * alignment; we only need the period to SIZE the search. */
 static void ps_period_scan(pitchshift_t *p, const delay_line_t *d)
 {
-    if (++p->per_tick < PS_PER_SCAN_EVERY) return;
-    p->per_tick = 0;
     const float dRef = p->base + 0.5f * p->window;
-    float e0 = 0.0f;
-    for (int k = 0; k < PS_PER_SPAN; k += 4) {
-        float a = ps_read(p, d, dRef + (float)k, DL_INTERP_LINEAR);
-        e0 += a * a;
+    if (!p->scan_active) {
+        if (++p->per_tick < PS_PER_SCAN_EVERY) return;
+        p->per_tick = 0;
+        float e0 = 0.0f;
+        for (int k = 0; k < PS_PER_SPAN; k += 4) {
+            float a = ps_read(p, d, dRef + (float)k, DL_INTERP_LINEAR);
+            e0 += a * a;
+        }
+        if (e0 < 1.0e-6f) { p->per_conf = 0.0f; return; }
+        p->scan_active = 1; p->scan_lag = PS_PER_MINLAG;
+        p->scan_e0 = e0; p->scan_best = 0.0f; p->scan_bestlag = 0;
+        return;                                    /* chunks on later calls */
     }
-    if (e0 < 1.0e-6f) { p->per_conf = 0.0f; return; }
-    float best = 0.0f; int bestlag = 0;
-    for (int lag = PS_PER_MINLAG; lag < PS_PER_MAXLAG; lag += 8) {
-        float s = ps_lag_score(p, d, dRef, e0, lag);
-        if (s > best) { best = s; bestlag = lag; }
+    /* one chunk: ~40 lags (~1.5 ms) per call */
+    int done = 0;
+    while (p->scan_lag < PS_PER_MAXLAG && done < 40) {
+        float sc = ps_lag_score(p, d, dRef, p->scan_e0, p->scan_lag);
+        if (sc > p->scan_best) { p->scan_best = sc; p->scan_bestlag = p->scan_lag; }
+        p->scan_lag += 8; done++;
     }
-    /* subharmonic disambiguation: a periodic signal scores ~equally at every
-     * period MULTIPLE — if ~half (or ~a third of) the winning lag scores
-     * nearly as well, the true period is the shorter one. Each candidate is
-     * refined over +/-16 samples: on real (slightly drifting/inharmonic)
-     * material the sub-period peak sits a few samples off the exact division,
-     * and sampling the exact point rejected valid halvings (seen live). */
+    if (p->scan_lag < PS_PER_MAXLAG) return;
+    p->scan_active = 0;
+    float best = p->scan_best; int bestlag = p->scan_bestlag;
+    float e0 = p->scan_e0;
+    if (bestlag == 0) { p->per_conf = 0.0f; return; }
+    /* subharmonic disambiguation (one-shot; ~9k reads): see comment below */
     while (bestlag >= 2 * PS_PER_MINLAG) {
         int moved = 0;
         static const int divs[2] = { 2, 3 };
@@ -253,10 +266,22 @@ static void ps_period_scan(pitchshift_t *p, const delay_line_t *d)
     p->period    = (float)bestlag;
 }
 
+#define PS_SRCH_CHUNK 4000     /* coarse iterations (2 SDRAM reads each) per
+                                  service call ~= 2 ms superloop stall — the
+                                  control tick stays live during searches.
+                                  DO NOT SHRINK without re-running test_aa:
+                                  1500 made searches span enough samples at
+                                  ratio ~4 that the frozen dOut/off geometry
+                                  went stale -> phase-random splices (purity
+                                  collapse 1.0 -> 0.0). */
+
 void ps_service(pitchshift_t *p, const delay_line_t *d)
 {
     if (p->pend_tap >= 0) return;                 /* already prepared        */
-    if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS) return;  /* bypass: no wraps  */
+    if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS) {  /* bypass: no wraps        */
+        p->srch_active = 0; p->scan_active = 0;
+        return;
+    }
     float step = (1.0f - p->ratio) / p->window;
 
     /* derive which tap wraps next FROM PHASE + DIRECTION every call (the
@@ -271,21 +296,90 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
     float dist = (dA <= dB) ? dA : dB;
     p->next_tap = tap;
     float astep = (step > 0.0f) ? step : -step;
+
+    if (p->srch_active) {
+        /* resume the running search — abort if the wrap geometry moved on OR
+         * the ratio changed since the search started (a resumable search can
+         * straddle a ratio change and would publish an offset for STALE
+         * geometry — reads past the head, garbage; caught by test_aa). */
+        if (tap != p->srch_tap || dist < 8.0f * astep ||
+            fabsf(p->ratio - p->srch_ratio) > 0.005f) {
+            p->srch_active = 0; return;
+        }
+        int iters = 0;
+        while (p->srch_lag < p->srch_ML && iters < PS_SRCH_CHUNK) {
+            float acc = 0.0f, ein = 0.0f;
+            for (int k = 0; k < p->srch_N; k += p->srch_kstep) {
+                float a = ps_read(p, d, p->srch_dIn + (float)(p->srch_lag + k),
+                                  DL_INTERP_LINEAR);
+                float b = ps_read(p, d, p->srch_dOut + (float)k, DL_INTERP_LINEAR);
+                acc += a * b; ein += a * a; iters++;
+            }
+            if (ein >= 0.01f * p->srch_eb) {
+                float score = acc * fabsf(acc) / (ein + 1.0e-9f);
+                if (score > p->srch_best) {
+                    p->srch_best = score; p->srch_bestlag = p->srch_lag;
+                }
+            }
+            p->srch_lag += p->srch_lstep;
+        }
+        if (p->srch_lag < p->srch_ML) return;      /* more chunks to come    */
+        p->srch_active = 0;
+
+        /* ---- finish: threshold, fine refine, publish ---- */
+        float best = p->srch_best, eb = p->srch_eb;
+        int bestlag = p->srch_bestlag;
+        int srchN = p->srch_N, srchML = p->srch_ML;
+        const float dIn = p->srch_dIn, dOut = p->srch_dOut;
+        if (best < 0.25f * eb) { bestlag = 0; }
+        float bestoff = (float)bestlag;
+        if (best >= 0.25f * eb) {
+            int fk = (srchN > 1500) ? 4 : 2;       /* fine pass, bounded     */
+            float sc[7]; int flag = bestlag; float fbest = -1.0e30f;
+            for (int j = 0; j < 7; ++j) {
+                int lag = bestlag - 3 + j;
+                sc[j] = -1.0e30f;
+                if (lag < 0 || lag >= srchML) continue;
+                float acc = 0.0f, ein = 0.0f;
+                for (int k = 0; k < srchN; k += fk) {
+                    float a = ps_read(p, d, dIn + (float)(lag + k), DL_INTERP_LINEAR);
+                    float b = ps_read(p, d, dOut + (float)k, DL_INTERP_LINEAR);
+                    acc += a * b; ein += a * a;
+                }
+                if (ein < 0.01f * eb * (2.0f / (float)fk)) continue;
+                sc[j] = acc * fabsf(acc) / (ein + 1.0e-9f);
+                if (sc[j] > fbest) { fbest = sc[j]; flag = lag; }
+            }
+            int j0 = flag - (bestlag - 3);
+            bestoff = (float)flag;
+            if (j0 >= 1 && j0 <= 5 && sc[j0-1] > -1.0e29f && sc[j0+1] > -1.0e29f) {
+                float den = sc[j0-1] - 2.0f * sc[j0] + sc[j0+1];
+                if (den < -1.0e-12f) {
+                    float dlt = 0.5f * (sc[j0-1] - sc[j0+1]) / den;
+                    if (dlt > -1.0f && dlt < 1.0f) bestoff += dlt;
+                }
+            }
+            if (bestoff < 0.0f) bestoff = 0.0f;
+        }
+        if (p->next_tap != tap || p->pend_tap >= 0) return;
+        float ncc2 = best / eb;
+        if (ncc2 < 0.0f) ncc2 = 0.0f;
+        if (ncc2 > 1.0f) ncc2 = 1.0f;
+        p->pend_rho = sqrtf(ncc2);
+        p->pend_off = bestoff;
+        __asm volatile ("" ::: "memory");          /* order: rho/off BEFORE tap */
+        p->pend_tap = tap;
+        return;
+    }
+
     if (dist > PS_DEGLITCH_LOOKA) {                /* not imminent yet       */
         ps_period_scan(p, d);                      /* keep the period fresh  */
         return;
     }
     if (dist < 8.0f * astep) return;               /* too late — skip safely */
 
-    /* period-adaptive sizing: confident bass -> widen the search to ~2
-     * periods so the correlator can actually find a period-multiple lag.
-     * Only when the wrap allows the longer stall (headroom gate). */
+    /* ---- size + START a new search (chunks run on later calls) ---------- */
     int srchN = PS_DEGLITCH_N, srchML = PS_DEGLITCH_MAXLAG;
-    /* headroom gate: samples-to-wrap must exceed the extended search's
-     * superloop stall (~10 ms worst). The publish-staleness check already
-     * discards a search the wrap outran, so this only avoids wasted work —
-     * at extreme down-shift rates (wraps every ~10 ms) bass extension simply
-     * stays off, which those grain rates mask anyway. */
     if (p->per_conf > 0.5f && p->period > 600.0f
         && dist / astep > 600.0f) {
         int n2 = (int)(2.0f * p->period);
@@ -295,78 +389,28 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
         if (srchML < PS_DEGLITCH_MAXLAG) srchML = PS_DEGLITCH_MAXLAG;
         if (srchN  < PS_DEGLITCH_N)      srchN  = PS_DEGLITCH_N;
     }
+    /* adaptive decimation: long (bass) windows are oversampled at 96 k — a
+     * coarser correlation grid loses nothing below ~3 kHz and the fine pass
+     * recovers exact alignment. Cuts the big searches ~8x. */
+    int kstep = (srchN > 2400) ? 8 : (srchN > 1200) ? 4 : 2;
+    int lstep = (srchML > 1200) ? 8 : 4;
 
-    /* correlate: the incoming tap enters at frac 0 for DOWN-shifts (delay base)
-     * but frac 1 for UP-shifts (delay base+W; phase runs backward). */
     const float dIn  = (step > 0.0f) ? p->base : p->base + p->window;
     const float dOut = p->base + 0.5f * p->window + p->off[tap ^ 1];
 
-    /* outgoing-window energy once (lag-independent) for the guards */
     float eb = 0.0f;
-    for (int k = 0; k < srchN; k += 2) {
+    for (int k = 0; k < srchN; k += kstep) {
         float b = ps_read(p, d, dOut + (float)k, DL_INTERP_LINEAR);
         eb += b * b;
     }
     if (eb < 1.0e-7f) return;                      /* silence: keep offset 0 */
 
-    float best = 0.0f; int bestlag = 0;
-    for (int lag = 0; lag < srchML; lag += 4) {   /* coarse grid */
-        float acc = 0.0f, ein = 0.0f;
-        for (int k = 0; k < srchN; k += 2) {          /* decimate x2 */
-            float a = ps_read(p, d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
-            float b = ps_read(p, d, dOut + (float)k, DL_INTERP_LINEAR);
-            acc += a * b;
-            ein += a * a;
-        }
-        if (ein < 0.01f * eb) continue;            /* too quiet to trust     */
-        float score = acc * fabsf(acc) / (ein + 1.0e-9f);   /* sign-kept NCC^2 * eb */
-        if (score > best) { best = score; bestlag = lag; }
-    }
-    /* accept only a real match: NCC^2 >= 0.25  <=>  score >= 0.25 * eb */
-    if (best < 0.25f * eb) { bestlag = 0; }
-    float bestoff = (float)bestlag;
-    if (best >= 0.25f * eb) {
-        /* fine search +/-3 around the coarse winner, keeping neighbours for a
-         * parabolic sub-sample refinement (the interpolated dl_read makes a
-         * FRACTIONAL splice offset directly usable) */
-        float sc[7]; int flag = bestlag; float fbest = -1.0e30f;
-        for (int j = 0; j < 7; ++j) {
-            int lag = bestlag - 3 + j;
-            sc[j] = -1.0e30f;
-            if (lag < 0 || lag >= srchML) continue;
-            float acc = 0.0f, ein = 0.0f;
-            for (int k = 0; k < srchN; k += 2) {
-                float a = ps_read(p, d, dIn + (float)lag + (float)k, DL_INTERP_LINEAR);
-                float b = ps_read(p, d, dOut + (float)k, DL_INTERP_LINEAR);
-                acc += a * b;
-                ein += a * a;
-            }
-            if (ein < 0.01f * eb) continue;
-            sc[j] = acc * fabsf(acc) / (ein + 1.0e-9f);
-            if (sc[j] > fbest) { fbest = sc[j]; flag = lag; }
-        }
-        int j0 = flag - (bestlag - 3);
-        bestoff = (float)flag;
-        if (j0 >= 1 && j0 <= 5 && sc[j0-1] > -1.0e29f && sc[j0+1] > -1.0e29f) {
-            float den = sc[j0-1] - 2.0f * sc[j0] + sc[j0+1];
-            if (den < -1.0e-12f) {                 /* concave peak            */
-                float dlt = 0.5f * (sc[j0-1] - sc[j0+1]) / den;
-                if (dlt > -1.0f && dlt < 1.0f) bestoff += dlt;   /* sub-sample */
-            }
-        }
-        if (bestoff < 0.0f) bestoff = 0.0f;
-    }
-    /* publish only if the wrap geometry is still the one we searched for
-     * (the ISR may have consumed a wrap mid-search at large ratios) */
-    if (p->next_tap != tap || p->pend_tap >= 0) return;
-    /* coherence of the chosen splice (NCC in 0..1): best = NCC^2 * eb */
-    float ncc2 = best / eb;
-    if (ncc2 < 0.0f) ncc2 = 0.0f;
-    if (ncc2 > 1.0f) ncc2 = 1.0f;
-    p->pend_rho = sqrtf(ncc2);
-    p->pend_off = bestoff;
-    __asm volatile ("" ::: "memory");              /* order: rho/off BEFORE tap */
-    p->pend_tap = tap;
+    p->srch_active = 1; p->srch_tap = tap; p->srch_lag = 0;
+    p->srch_N = srchN; p->srch_ML = srchML;
+    p->srch_kstep = kstep; p->srch_lstep = lstep;
+    p->srch_dIn = dIn; p->srch_dOut = dOut;
+    p->srch_eb = eb; p->srch_best = 0.0f; p->srch_bestlag = 0;
+    p->srch_ratio = p->ratio;
 }
 
 float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
