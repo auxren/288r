@@ -267,6 +267,21 @@ better engine; add new features/controls/modulation only *after* the clone is na
   CV in (attenuverter + 10 ms de-zipper) = the modulation input; signal-in jack = the
   analog self-mod path (dead on 2+ units — production-run question open); sens knob = the
   looper capture threshold, nothing else. Attenuverter dead-zone width = cal-pass item.
+- **MULTIPLIER POT DIAGNOSED (2026-07-25): worn/dirty track in the UPPER HALF of travel.**
+  Definitive dual-trace method: owner's slow-sweep audio (slider-1-only direct voice)
+  aligned second-by-second against a background SWD log of knob_raw/target/ratio. Lower
+  half: pot smooth, audio glides 6-9 cents/step, ratio glued to target within a cent =
+  the ENTIRE electronic chain exonerated. Upper half (codes ~2200-4094): pot flat 2-3.5 s
+  then LEAPS 600-800 codes between samples; every audio "snap" (±40-60 cents) aligns with
+  a leap. This retroactively explains "3-4 loose points" + "snaps to positions". Fix =
+  hardware (exercise/DeoxIT/replace — repair list with slider 5). Optional firmware
+  bandaid (not implemented): max-rate glide turning leaps into ~100 ms bends. ALSO that
+  session: PITCH_RATIO_SLEW 0.0007→0.0028 (tau ~4 ms; the 15 ms glide read as knob lag —
+  owner audio measured ~150 ms full-span portamento; old "steppy at 5 ms" was under the
+  slow pass-counted tick cadence, invalid now); slider 1 = DIRECT pitched voice (instant
+  response; sliders 2-8 = echo pattern; saves an SDRAM read); #23 detune-spread filed+
+  parked. LESSON: coordinating live panel actions over chat fails ~4/5 times — use LONG
+  passive background monitors + owner-paced recordings, align by content afterwards.
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
