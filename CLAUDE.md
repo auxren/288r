@@ -262,6 +262,11 @@ better engine; add new features/controls/modulation only *after* the clone is na
   wedged knob states needing reboot — flash pending ST-Link reconnect), env→time OFF.
   jimfowler design votes: modulation = CV/FM only (matches the disable); signal-in dead on
   HIS unit too → possibly dead on the whole production run (analog path — asked the field).
+- **env→time REMOVED ENTIRELY (2026-07-25, owner decision, #15 CLOSED):** code, defines
+  (ENV_TIME_*, g_auto_now), and all manual references gone. Final modulation architecture:
+  CV in (attenuverter + 10 ms de-zipper) = the modulation input; signal-in jack = the
+  analog self-mod path (dead on 2+ units — production-run question open); sens knob = the
+  looper capture threshold, nothing else. Attenuverter dead-zone width = cal-pass item.
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
