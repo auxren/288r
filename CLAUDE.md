@@ -250,6 +250,18 @@ better engine; add new features/controls/modulation only *after* the clone is na
   the diagnosis (SPI2 CR1/SR healthy, control law, pin logic all correct). LAB RULE
   corollary: when the MODULE acts possessed, check what the cable is LEANING ON. Runbook
   updated. Earlier "SPI desync from SWD halt" theory was wrong — it was mechanical.
+- **v1.2.2-rc3 PRE-RELEASE (2026-07-25): THE SENS CHANNEL HEARS THE MODULE'S OWN OUTPUT**
+  — the unifying root cause behind field #21 (presence LED stuck on during recirc) AND #10
+  (store-end silence punch-out never fired: the delay's own echoes held sens high through
+  every rest) AND our reference unit's saturated sens with silent input. Fix: every
+  silence/onset decision + the presence LED corroborated by input A's own envelope (g_env,
+  proven clean during playback); looper_tick gains input_env + cfg.input_eps (LP_INPUT_EPS
+  0.01 [cal]). Plus field-designed v2 of store-end auto: NO cycle cap — envelope is the
+  master (rolling write while signal present; silence loops the LAST phrase bounded to one
+  cycle). 37 looper checks. Also in the rc: 1 Hz SPI2+MCP3204 self-heal re-frame (owner:
+  wedged knob states needing reboot — flash pending ST-Link reconnect), env→time OFF.
+  jimfowler design votes: modulation = CV/FM only (matches the disable); signal-in dead on
+  HIS unit too → possibly dead on the whole production run (analog path — asked the field).
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
