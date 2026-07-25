@@ -85,19 +85,13 @@ which direction) the CV moves the time. At the center detent the CV is ignored e
 counter-clockwise inverts it. This works from power-on in **both** modes — in PITCH mode the same
 attenuverter scales the pitch CV.
 
-**Envelope → delay time — disabled as of v1.2.2.** The digital self-modulation (sens. knob as
-envelope→time depth in *all sounds*) is switched off pending a redesign: at full depth, with a
-hot sens channel and the ×4 range, it modulated the delay violently enough to garble the audio
-(reference unit + field report [#15](https://github.com/auxren/288r/issues/15)). It returns as
-a bipolar, smoothed, range-independent control once that design lands. Note the *analog*
-self-modulation path — the **signal in** jack through the attenuverter — is hardware and
-unaffected. Original behavior, for reference: your playing
-dynamics push the delay time — attacks stretch it (with a doppler pitch dip as it glides),
-decays let it drift back. Fully CCW = off; the auto LED glows while the envelope is actively
-pushing. In the looper modes (red switch center / next sound) the sens. knob returns to its
-capture-threshold duty. *(The panel's signal-in jack was the stock's intended source for this;
-on the reference unit that jack is electrically dead, so the feature runs from the sens
-channel instead — musically equivalent, with a working depth knob.)*
+**Modulating delay time.** Delay-time modulation lives on the **c.v. in** jack (through the
+attenuverter, with a ~10 ms de-zipper glide) — patch LFOs, envelopes, or audio-rate sources
+there for chorus, flanging, and warble. The panel's **signal in** jack is the hardware's own
+self-modulation path (all-analog: jack → attenuverter → the time-CV net); note it has been
+found dead on multiple units from the original run. An earlier digital envelope→time feature
+on the sens. knob was removed in v1.2.2 (see issue #15): modulation belongs on the dedicated
+CV inputs, and the sens. knob's job is the looper capture threshold.
 
 **Pitch quality, measured on hardware:** up-shifts are anti-aliased (a ratio-tracked filter —
 about 70 dB of alias suppression at +1 octave, so bright material stays clean), splices are

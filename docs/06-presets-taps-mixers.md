@@ -101,7 +101,7 @@ The red switch's three positions, precisely:
 
 | Position | Behavior |
 |---|---|
-| **all sounds** | Plain delay — continuous write, no capture. The sens. knob becomes the envelope→time depth (see [Time & pitch](05-time-and-pitch.md)). |
+| **all sounds** | Plain delay — continuous write, no capture. The sens. knob has no function in this position. |
 | **center (arm pulse in)** | The looper. Sits READY; a signal above the sens. threshold (or a pulse at the arm jack, or a write flick) starts a one-cycle capture, which then loops. |
 | **next sound (momentary side)** | A short flick manually triggers the capture right now; **holding ~2 s** toggles String mode. |
 

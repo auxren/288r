@@ -117,9 +117,6 @@ static volatile float g_env = 0.0f;
  * copies of the input (analog attenuators — see board.h SENS_IN_SLOT). Both are
  * envelope-followed so one owner knob-sweep over SWD identifies which is sens. */
 static volatile float g_sens_env[2] = { 0.0f, 0.0f };
-/* red AUTO CONTROL position snapshot for the fast control tick (decoded in the
- * slow panel tick): 1=all-sounds(delay), 0=center(looper), 2=next-sound. */
-static volatile uint8_t g_auto_now = 1;
 /* #20: pitch-mode echo/dry delay scale = 1/extend (tick-written, ISR-read) */
 static volatile float g_pt_scale = 1.0f;
 #if SENS_IN_SLOT >= 0 && (SENS_IN_SLOT < 1 || SENS_IN_SLOT > 2)
@@ -678,24 +675,11 @@ int main(void)
             if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
             mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.04f;
             float t01 = pin_update(&g_mult_pin, mult_filt);
-            /* ENVELOPE -> DELAY-TIME (the dead signal-in jack's intended
-             * feature, via the working sens channel): in "all sounds" mode the
-             * sens knob is the analog DEPTH control — its channel's envelope
-             * adds to the multiplier. Looper modes keep sens as the capture
-             * threshold; pitch mode keeps the knob on depth duty. Applied
-             * AFTER pin_update so preset knob-catch pinning is unaffected
-             * (verify-panel lesson from the first signal-in attempt). */
-#if PITCH_VOICE_ENABLE
-            if (!g_pitch_mode && g_auto_now == 1)
-#else
-            if (g_auto_now == 1)
-#endif
-            {
-#if ENV_TIME_ENABLE
-                t01 += g_sens_env[0] * ENV_TIME_DEPTH;
-                if (t01 > 1.0f) t01 = 1.0f;
-#endif
-            }
+            /* (The env->time self-modulation that once lived here was REMOVED
+             * by owner decision, 2026-07-25 — see #15: violent at extremes,
+             * blinded by output bleed on the sens pickup, and the field voted
+             * for CV/FM-only modulation. The sens channel's remaining roles
+             * are the looper threshold + silence gating in looper.c.) */
             g_time_raw01 = t01;
             /* KS tuning (owner-designed): the tap PHASES are the chord's
              * intervals; c.v. in transposes the whole chord at 1.2 V/oct —
@@ -755,7 +739,6 @@ int main(void)
             g_dbg_panel.preset = pc.preset;
             g_dbg_panel.octave = pc.octave;
             g_dbg_panel.bank_b = pc.automode;    /* dbg slot: red-switch position */
-            g_auto_now = pc.automode;            /* fast-tick snapshot (env->time gate) */
             /* Varispeed (#9): tape-motor loop playback in the looper positions
              * only. all sounds keeps constant-pitch respacing (the chorus/
              * flanger behavior); pitch mode keeps the multiplier as its depth
