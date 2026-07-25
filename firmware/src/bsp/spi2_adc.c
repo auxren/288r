@@ -14,16 +14,32 @@
 
 #define CS_PIN 12u
 
+/* Wedge telemetry: counts bounded-wait timeouts (read over SWD). A glitched
+ * transaction used to leave RXNE forever-clear and the unbounded wait HUNG THE
+ * SUPERLOOP — panel/knob dead, audio alive, reboot to recover (the owner's
+ * recurring "wedged state"). Bounded waits + the 1 Hz resync make it
+ * self-recovering; the counter proves each occurrence. */
+volatile uint16_t g_spi_timeouts __attribute__((used)) = 0;
+
 static uint8_t spi_xfer(uint8_t tx)
 {
-    while (!(SPI2->SR & SPI_SR_TXE)) { }
+    int w;
+    for (w = 0; !(SPI2->SR & SPI_SR_TXE) && w < 10000; w++) { }
+    if (w >= 10000) { g_spi_timeouts++; return 0; }
     *(volatile uint8_t *)&SPI2->DR = tx;
-    while (!(SPI2->SR & SPI_SR_RXNE)) { }
+    for (w = 0; !(SPI2->SR & SPI_SR_RXNE) && w < 10000; w++) { }
+    if (w >= 10000) { g_spi_timeouts++; return 0; }
     return *(volatile uint8_t *)&SPI2->DR;
 }
 
 static void cs_lo(void){ GPIOB->BSRR = (1u << (CS_PIN + 16)); for (volatile int d=0;d<40;d++){} }
-static void cs_hi(void){ while (SPI2->SR & SPI_SR_BSY) { } GPIOB->BSRR = (1u << CS_PIN); for (volatile int d=0;d<40;d++){} }
+static void cs_hi(void){
+    /* bounded BSY wait: an unbounded spin here (or in resync) hangs the whole
+     * superloop if SPI wedges with BSY stuck — panel dead, audio alive
+     * (bench 2026-07-25, self-inflicted). ~10k spins >> one byte at 328 kHz. */
+    for (volatile int w = 0; (SPI2->SR & SPI_SR_BSY) && w < 10000; w++) { }
+    GPIOB->BSRR = (1u << CS_PIN); for (volatile int d=0;d<40;d++){}
+}
 static void spi_drain(void){ (void)SPI2->DR; (void)SPI2->SR; }   /* clear stale RX/OVR */
 
 void bsp_spi2_adc_init(void)
@@ -76,7 +92,9 @@ volatile uint8_t g_spi_raw[4][3];
  * sub-second self-recovery instead of a power cycle. */
 void bsp_spi2_resync(void)
 {
-    while (SPI2->SR & SPI_SR_BSY) { }
+    /* BOUNDED wait (see cs_hi): if BSY is stuck, clearing SPE below is the
+     * cure — spinning on it forever was the disease. */
+    for (volatile int w = 0; (SPI2->SR & SPI_SR_BSY) && w < 10000; w++) { }
     SPI2->CR1 &= ~SPI_CR1_SPE;           /* reset shift/RX pipeline */
     (void)SPI2->DR; (void)SPI2->SR;      /* clear RXNE + OVR        */
     GPIOB->BSRR = (1u << CS_PIN);        /* CS high: ADC frame reset */
