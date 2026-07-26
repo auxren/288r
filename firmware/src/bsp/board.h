@@ -60,6 +60,17 @@
 /* Which ADC TDM slot carries the audio input signal (0..3). [BENCH] live test. */
 #define AUDIO_IN_SLOT     0u
 
+/* ---- SIGNAL IN = CODEC TDM SLOT 2 (PROVEN 2026-07-25) --------------------
+ * Owner-traced on the board: signal-in jack -> level pot -> R157||C126 filter
+ * -> 10k -> TL072 buffer pair -> AC coupling (C124) -> CS42448 differential
+ * AIN (pins 49/50) -> RX TDM SLOT 2. Verified live: audio patched at the jack
+ * with the pot up read RMS 0.89 (peak at the rail) on slot 2 with all other
+ * slots silent. The jack is NOT dead and is NOT on the analog Time-CV net —
+ * the earlier "dead analog path" verdict watched the wrong slots. The stock's
+ * signal-in feature was almost certainly computed digitally from this
+ * channel. Available at full audio rate for future features (#15 redesign,
+ * sidechain, second input); pot-up hot sources clip the ADC. */
+
 /* ---- sens. knob (AUTO CONTROL trigger threshold) — PROVEN slot 1 --------- */
 /* OWNER-SWEPT 2026-07-18: with signal playing and every other control static,
  * codec ADC slot 1 rose 0.000 -> 1.000 FS exactly as the sens. knob swept

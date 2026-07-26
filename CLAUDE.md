@@ -295,6 +295,14 @@ better engine; add new features/controls/modulation only *after* the clone is na
   "smooth lower half" was the sweep's slow start before searches kicked in). ALSO fixed
   same session: stale-flash trap struck AGAIN (make failed, openocd flashed old hex,
   'Verified OK' — CHECK BUILD EXIT BEFORE FLASH); fabsf isn't freestanding (fm_fabsf).
+- **SIGNAL-IN SOLVED (2026-07-25 late, owner board-tracing + live SWD slot sweep): the
+  signal-in jack = CODEC TDM RX SLOT 2** (jack -> pot -> R157||C126 -> 10k -> TL072 pair ->
+  C124 -> CS42448 AIN pins 49/50). Live-verified rms 0.89 slot 2 with the jack driven.
+  The years-old "dead analog path into the Time-CV net" verdict was WRONG (wrong slots
+  watched); the stock computed its signal-in feature DIGITALLY from this channel. Opens:
+  #15 env->time redesign on the REAL jack + dedicated pot (owner decision pending),
+  sidechain/second-input ideas. jimfowler's "signal-in broken" needs a slot-2 retest.
+  NOTE pot-up hot sources clip the ADC (peak 1.0 observed).
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
