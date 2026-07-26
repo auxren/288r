@@ -54,6 +54,14 @@ typedef struct {
     float srch_ratio;      /* context stamp: abort resume if ratio moved */
     int   scan_active, scan_lag, scan_bestlag;
     float scan_e0, scan_best;
+    /* --- signal-in FM (pitch-mode domain: "signal-in modulates whatever the
+     * multiplier's domain is", owner design 2026-07-25) -------------------
+     * fm_in: per-sample target offset in SAMPLES (ISR-written = slot-2 audio
+     * x span). fm_off: applied offset, slew-limited +/-0.5 samples/sample —
+     * shifts BOTH grains (and the unity-bypass read) together = pure pitch
+     * vibrato/FM of the voice. Excluded from the correlator (a common-mode
+     * wobble doesn't change relative grain alignment). */
+    float fm_in, fm_off;
     /* --- period-adaptive splice search (bass reach) ------------------------ */
     /* A background autocorrelation (idle ps_service calls) estimates the
      * source period; confident LOW material widens the splice search to cover

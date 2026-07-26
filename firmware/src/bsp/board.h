@@ -80,6 +80,10 @@
 #define TIME_FM_SLOT      2       /* proven: signal-in = codec RX slot 2       */
 #define TIME_FM_SPAN      0.10f   /* tap-distance swing at full pot + 0 dBFS:
                                      +/-10%% of each tap's delay [feel-cal]    */
+#define TIME_FM_VOICE_SPAN 96.0f  /* pitch mode: voice read-offset swing in
+                                     SAMPLES at full pot + 0 dBFS — ~+/-60
+                                     cents of vibrato at 6 Hz [feel-cal].
+                                     Keep < PITCH_BASE_SAMPLES - 32.          */
 
 /* ---- sens. knob (AUTO CONTROL trigger threshold) — PROVEN slot 1 --------- */
 /* OWNER-SWEPT 2026-07-18: with signal playing and every other control static,

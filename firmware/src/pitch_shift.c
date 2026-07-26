@@ -134,6 +134,7 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->srch_eb = 0.0f; p->srch_best = 0.0f; p->srch_ratio = 1.0f;
     p->scan_active = 0; p->scan_lag = 0; p->scan_bestlag = 0;
     p->scan_e0 = 0.0f; p->scan_best = 0.0f;
+    p->fm_in = 0.0f; p->fm_off = 0.0f;
     p->period = 0.0f;
     p->per_conf = 0.0f;
     p->per_tick = 0;
@@ -417,11 +418,26 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
 {
     const float W = p->window;
 
+    /* signal-in FM: slew the applied offset toward the target (max 0.5
+     * samples/sample — Doppler, never teleporting; same law as the TIME-mode
+     * tap FM). Applied to every voice read below. */
+    {
+        float delta = p->fm_in - p->fm_off;
+        if (delta >  0.5f) delta =  0.5f;
+        if (delta < -0.5f) delta = -0.5f;
+        p->fm_off += delta;
+        /* absolute clamp: the slew bounds SPEED, this bounds POSITION —
+         * keeps every read causal (base 256 - margin) whatever fm_in does */
+        if (p->fm_off >  192.0f) p->fm_off =  192.0f;
+        if (p->fm_off < -192.0f) p->fm_off = -192.0f;
+    }
+    const float vfm = p->fm_off;
+
     /* Near unity the ramp is frozen and two static taps would comb-filter;
        collapse to a single centered tap so unity is a clean delayed bypass.    */
     if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS) {
         p->pend_tap = -1;                    /* discard stale splice offsets */
-        return ps_read(p, d, p->base + 0.5f * W, interp);
+        return ps_read(p, d, p->base + 0.5f * W + vfm, interp);
     }
 
     const float fracA = p->phase;
@@ -450,8 +466,8 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
         band = 0;
         while (band < AA_NBANDS - 1 && p->ratio > aa_band_edge[band]) band++;
     }
-    const float dA = p->base + fracA * W + p->off[0];
-    const float dB = p->base + fracB * W + p->off[1];
+    const float dA = p->base + fracA * W + p->off[0] + vfm;
+    const float dB = p->base + fracB * W + p->off[1] + vfm;
     float out;
     if (band >= 0) {
         p->aaband_req = band;

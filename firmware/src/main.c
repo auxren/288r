@@ -280,10 +280,18 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
     for (unsigned f = 0; f < frames; ++f) {
         float x = audio_in_to_f(in[f * TDM_SLOTS + AUDIO_IN_SLOT]);
 #if TIME_FM_ENABLE
-        /* signal-in FM (slot 2, AC-coupled in analog): per-sample delay-time
-         * modulation; the front-panel signal-in pot is the depth control. */
-        g_engine.time_fm = audio_in_to_f(in[f * TDM_SLOTS + TIME_FM_SLOT])
-                           * TIME_FM_SPAN;
+        /* signal-in FM (slot 2, AC-coupled in analog): the front-panel
+         * signal-in pot is the depth control, and the modulation targets
+         * whatever the multiplier's domain is (owner design): TIME mode =
+         * delay time (tap distances); pitch mode = the voice's pitch
+         * (grain read offset -> vibrato/FM). */
+        {
+            float fms = audio_in_to_f(in[f * TDM_SLOTS + TIME_FM_SLOT]);
+            g_engine.time_fm = fms * TIME_FM_SPAN;
+#if PITCH_VOICE_ENABLE
+            g_pv.ps.fm_in = fms * TIME_FM_VOICE_SPAN;
+#endif
+        }
 #endif
 #if LED_INPUT_CLIP_MODE
         /* INPUT LED (PA0) repurposed: whole-chain clip detector, stage 1 — the
