@@ -1,6 +1,6 @@
-# 288r community firmware — v1.2.2-rc4 (pre-release for field testing)
+# 288r community firmware — v1.2.2-rc5 (pre-release for field testing)
 
-**Updating preserves your saved presets.** Supersedes rc1–rc3 (all their fixes included:
+**Updating preserves your saved presets.** Supersedes rc1–rc4 (all their fixes included:
 loop-aware pitch mode, snappier pitch controls, sens corroboration, envelope-master
 store end). Bench-verified on the reference unit; 36 host regression suites.
 
@@ -33,6 +33,12 @@ store end). Bench-verified on the reference unit; 36 host regression suites.
   signal-in FM path — dedicated, labeled controls only. The sens. knob's one job is the
   looper threshold.
 - 2-hour loop endurance soak: clean (zero clips, zero timeouts, ISR within budget).
+
+- **rc4 artifact reports — both causes fixed**: the pitch-mode splice aligner was being
+  starved under CV modulation (vibrato patches ran audibly grittier than rc3 — it now
+  stays aligned during modulation and only pauses for big knob flicks), and the new FM
+  input listened even to idle noise/bleed (it now engages only above a real-signal
+  floor, ~−40 dBFS, with a smooth ramp).
 
 ## Known / open issues
 
