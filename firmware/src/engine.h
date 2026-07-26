@@ -57,6 +57,11 @@ typedef struct {
                                       injecting before them would low-pass the
                                       modulation to nothing (~16 Hz). Clamped
                                       +/-0.25 at application. 0 = off.          */
+    float        fm_off[NUM_TAPS]; /* per-tap APPLIED FM offset (samples): slew-
+                                      limited to +/-FM_MAX_STEP per sample so
+                                      deep taps at audio-rate depth glide
+                                      (Doppler) instead of teleporting (alias
+                                      shred — heard on first bench listen).    */
 } engine_t;
 
 /* buf/len: delay memory. base_delay: cycle length in samples (SHORT/FULL).

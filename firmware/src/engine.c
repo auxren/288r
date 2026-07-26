@@ -22,6 +22,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->lp_phase = 0.0f;
     e->lp_rate = 1.0f;
     e->time_fm = 0.0f;
+    for (int i = 0; i < NUM_TAPS; i++) e->fm_off[i] = 0.0f;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -100,12 +101,23 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
     float fm = e->time_fm;
     if (fm >  0.25f) fm =  0.25f;
     if (fm < -0.25f) fm = -0.25f;
+#define FM_MAX_STEP 0.5f   /* max read-position slew, samples per sample: keeps
+                              the resample ratio inside [0.5, 1.5] — Doppler,
+                              never teleporting. Also rounds the corners of a
+                              rail-clipped modulator. */
     float taps[NUM_TAPS];
     for (int i = 0; i < NUM_TAPS; i++) {
         uint32_t d_int; float d_frac;
         taps_delay_frac(&e->taps, i, &d_int, &d_frac);
-        if (fm != 0.0f) {
-            float off = ((float)d_int + d_frac) * fm;
+        {
+            float target = ((float)d_int + d_frac) * fm;
+            float delta = target - e->fm_off[i];
+            if (delta >  FM_MAX_STEP) delta =  FM_MAX_STEP;
+            if (delta < -FM_MAX_STEP) delta = -FM_MAX_STEP;
+            e->fm_off[i] += delta;
+        }
+        float off = e->fm_off[i];
+        if (off != 0.0f) {
             float off_fl = (off >= 0.0f) ? (float)(int32_t)off
                                          : (float)((int32_t)off - 1);
             int32_t off_i = (int32_t)off_fl;
