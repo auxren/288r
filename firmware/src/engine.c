@@ -21,6 +21,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->lp_mult_ref = 1.0f;
     e->lp_phase = 0.0f;
     e->lp_rate = 1.0f;
+    e->time_fm = 0.0f;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -92,10 +93,30 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
 
     /* 3. read the 8 taps (loop-aware in RECIRC) — exact int+frac path, so the
      * fraction survives at SDRAM buffer sizes (see dl_read_frac) */
+    /* delay-time FM (signal-in, owner feature 2026-07-25): scale every tap
+     * distance by (1 + fm). The OFFSET is computed in float (error <= ULP at
+     * |offset|<=0.25*base ~ 0.005 samples — inaudible) and folded into the
+     * exact int+frac position, preserving the SDRAM-size precision rule. */
+    float fm = e->time_fm;
+    if (fm >  0.25f) fm =  0.25f;
+    if (fm < -0.25f) fm = -0.25f;
     float taps[NUM_TAPS];
     for (int i = 0; i < NUM_TAPS; i++) {
         uint32_t d_int; float d_frac;
         taps_delay_frac(&e->taps, i, &d_int, &d_frac);
+        if (fm != 0.0f) {
+            float off = ((float)d_int + d_frac) * fm;
+            float off_fl = (off >= 0.0f) ? (float)(int32_t)off
+                                         : (float)((int32_t)off - 1);
+            int32_t off_i = (int32_t)off_fl;
+            d_frac += off - off_fl;
+            if (d_frac >= 1.0f) { d_frac -= 1.0f; off_i += 1; }
+            if (off_i >= 0) d_int += (uint32_t)off_i;
+            else {
+                uint32_t mag = (uint32_t)(-off_i);
+                d_int = (d_int > mag) ? d_int - mag : 1u;
+            }
+        }
         if (recirc) {
             /* the true head is wpos + lp_phase: a tap D behind the true head
              * sits D - lp_phase behind wpos — this sub-sample term is what

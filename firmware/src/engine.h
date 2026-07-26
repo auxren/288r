@@ -51,6 +51,12 @@ typedef struct {
     float        lp_mult_ref;      /* multiplier at loop capture (rate = ref/mult) */
     float        lp_phase;         /* fractional part of the recirc head, [0,1)    */
     float        lp_rate;          /* last applied head rate (telemetry/debug)     */
+    float        time_fm;          /* per-sample delay-time FM term (signal-in slot
+                                      2 x depth, ISR-written): tap distances scale
+                                      by (1 + time_fm) AFTER the control slews —
+                                      injecting before them would low-pass the
+                                      modulation to nothing (~16 Hz). Clamped
+                                      +/-0.25 at application. 0 = off.          */
 } engine_t;
 
 /* buf/len: delay memory. base_delay: cycle length in samples (SHORT/FULL).

@@ -279,6 +279,12 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 #endif
     for (unsigned f = 0; f < frames; ++f) {
         float x = audio_in_to_f(in[f * TDM_SLOTS + AUDIO_IN_SLOT]);
+#if TIME_FM_ENABLE
+        /* signal-in FM (slot 2, AC-coupled in analog): per-sample delay-time
+         * modulation; the front-panel signal-in pot is the depth control. */
+        g_engine.time_fm = audio_in_to_f(in[f * TDM_SLOTS + TIME_FM_SLOT])
+                           * TIME_FM_SPAN;
+#endif
 #if LED_INPUT_CLIP_MODE
         /* INPUT LED (PA0) repurposed: whole-chain clip detector, stage 1 — the
          * input ADC at the 24-bit rail (information already lost upstream of us;

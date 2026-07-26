@@ -71,6 +71,16 @@
  * channel. Available at full audio rate for future features (#15 redesign,
  * sidechain, second input); pot-up hot sources clip the ADC. */
 
+/* ---- signal-in delay-time FM (owner feature 2026-07-25) ------------------ */
+#define TIME_FM_ENABLE    1       /* signal-in (TDM slot 2) frequency-modulates
+                                     the delay time. DEPTH IS THE PANEL POT
+                                     (analog, pre-ADC) — firmware applies a
+                                     fixed full-scale span. Injected post-slew
+                                     into the tap positions (engine.time_fm). */
+#define TIME_FM_SLOT      2       /* proven: signal-in = codec RX slot 2       */
+#define TIME_FM_SPAN      0.10f   /* tap-distance swing at full pot + 0 dBFS:
+                                     +/-10%% of each tap's delay [feel-cal]    */
+
 /* ---- sens. knob (AUTO CONTROL trigger threshold) — PROVEN slot 1 --------- */
 /* OWNER-SWEPT 2026-07-18: with signal playing and every other control static,
  * codec ADC slot 1 rose 0.000 -> 1.000 FS exactly as the sens. knob swept
