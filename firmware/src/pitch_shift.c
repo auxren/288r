@@ -304,7 +304,11 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
          * straddle a ratio change and would publish an offset for STALE
          * geometry — reads past the head, garbage; caught by test_aa). */
         if (tap != p->srch_tap || dist < 8.0f * astep ||
-            fabsf(p->ratio - p->srch_ratio) > 0.005f) {
+            fabsf(p->ratio - p->srch_ratio) > 0.08f) {
+            /* stamp tolerance 0.08: wide enough that vibrato-depth drift keeps
+             * the search alive (slightly off-center alignment still beats
+             * offset-0 by far); big context jumps (test_aa's 2.0->3.9) still
+             * abort. */
             p->srch_active = 0; return;
         }
         int iters = 0;

@@ -130,6 +130,9 @@ static volatile float g_pt_scale = 1.0f;
 static volatile uint8_t g_pulse_latch = 0;   /* bit0=write bit1=recirc bit2=arm */
 static uint8_t g_pulse_prev = 0;
 
+/* signal-in FM presence envelope (ISR-only state) */
+static float g_fm_env = 0.0f;
+
 /* chain-clip indicator (PA0 repurposed, LED_INPUT_CLIP_MODE): block count until
  * which the LED stays lit, + an event counter for SWD verification. */
 static volatile uint32_t g_clip_until = 0;
@@ -287,6 +290,15 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
          * (grain read offset -> vibrato/FM). */
         {
             float fms = audio_in_to_f(in[f * TDM_SLOTS + TIME_FM_SLOT]);
+            /* presence gate (rc4 field regression: idle noise/bleed on the
+             * jack wobbled the taps continuously). Envelope-follow slot 2;
+             * FM engages smoothly only above a real-signal floor. */
+            float afm = (fms < 0.0f) ? -fms : fms;
+            g_fm_env += (afm - g_fm_env) * 0.002f;
+            float gate = (g_fm_env - TIME_FM_GATE) * (4.0f / TIME_FM_GATE);
+            if (gate < 0.0f) gate = 0.0f;
+            if (gate > 1.0f) gate = 1.0f;
+            fms *= gate;
             g_engine.time_fm = fms * TIME_FM_SPAN;
 #if PITCH_VOICE_ENABLE
             g_pv.ps.fm_in = fms * TIME_FM_VOICE_SPAN;
@@ -613,11 +625,13 @@ int main(void)
          * Cheap check per pass; the actual search (~250k MACs) runs only when a
          * tap wrap is imminent (every ~0.5 s in pitch mode) — superloop-only,
          * never in the ISR. Measured: purity 0.98..1.00 vs 0.77..0.98 plain. */
-        /* SWEEP GATE (2026-07-25): no splice searches while the ratio is
-         * actively moving — the motion masks splices anyway, and searches
-         * were starving the control tick (the "quantized knob"). */
+        /* SWEEP GATE v2 (rc4 field regression: CV vibrato never "settles",
+         * so the old settled-only gate starved the aligner and every splice
+         * ran unaligned — grittier than rc3). Skip searches only during BIG
+         * transient moves (knob flicks); slow/shallow modulation keeps full
+         * alignment. Chunking alone protects the control tick either way. */
         if (g_pitch_mode &&
-            fm_fabsf(g_pv.ps.ratio - g_pv.target) < 0.003f)
+            fm_fabsf(g_pv.ps.ratio - g_pv.target) < 0.02f)
             ps_service(&g_pv.ps, &g_engine.dl);
 #endif
 #if PANEL_SCAN_ENABLE

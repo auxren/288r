@@ -105,6 +105,32 @@ int main(void)
         ck("reads stayed causal (no NaN)", outb[0] == outb[0]);
     }
 
+    /* ---- aligner survives vibrato (rc4 field regression) ------------------
+     * Slow ratio modulation must NOT starve the splice search: with the
+     * resume stamp at 0.08, searches complete and publish during +/-2%%
+     * vibrato. (rc4's tight stamp + settled-only gate ran every splice
+     * unaligned under CV modulation — audibly grittier than rc3.) */
+    {
+        delay_line_t d; dl_init(&d, buf, LEN); dl_clear(&d);
+        pitchshift_t p; ps_init(&p, 0.060f * FS, 256.0f);
+        int publishes = 0;
+        float ph2 = 0.0f, w2 = 2.0f * (float)M_PI * 220.0f / FS;
+        for (int n = 0; n < 4 * 96000; n++) {
+            dl_write(&d, sinf(ph2)); ph2 += w2;
+            if (ph2 >= 2.0f * (float)M_PI) ph2 -= 2.0f * (float)M_PI;
+            float r = 0.90f * (1.0f + 0.02f * sinf(2.0f * (float)M_PI * 2.0f
+                                                   * (float)n / FS));
+            ps_set_ratio(&p, r);
+            p.ratio = r;                    /* emulate the slewed ratio       */
+            int had = (p.pend_tap >= 0);
+            ps_service(&p, &d);
+            if (!had && p.pend_tap >= 0) publishes++;
+            (void)ps_process(&p, &d, DL_INTERP_HERMITE);
+        }
+        printf("      splice publishes under vibrato: %d in 4 s\n", publishes);
+        ck("aligner still publishes during vibrato (>10)", publishes > 10);
+    }
+
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }
