@@ -63,6 +63,9 @@ to the selected A/B/C preset slot — see [Presets](06-presets-taps-mixers.md).
     recipe: raise the input-mixer level until the LED lights, then back off until it stays dark.
     (The stock behavior — a simple half-full-scale input comparator — is available by building with
     `LED_INPUT_CLIP_MODE 0` in `board.h`.)
+  - **Input mixer LED** — a true **input overload** indicator (v1.2.2+): lights ~¼ s when
+    the input signal reaches the converter's rail — back off the input mixer knob. (It no
+    longer reports internal levels; a hot recorded loop playing back will not light it.)
   - **AUTO CONTROL LED** — lights only while incoming audio is above the threshold set by the
     **sens.** knob; it is the same comparison that fires the automatic capture. With sens. fully
     CCW the LED stays dark and auto triggering is disabled.

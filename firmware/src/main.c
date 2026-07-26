@@ -267,7 +267,8 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 {
     const uint32_t cyc0 = DWT_CYCCNT_REG;
     const float t = g_time_raw01;
-    int clip = 0;
+    int clip = 0;       /* lights the LED: INPUT overload only (field #21)  */
+    int clip_evt = 0;   /* SWD counter only: internal pre-limiter overrange */
 #if PITCH_VOICE_ENABLE
     /* looper window sync for the pitch voice (#19): reads must window-map in
      * RECIRC or the grains fetch garbage at every wrap (bench: ~100 overrange
@@ -426,12 +427,14 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         }
 #endif
 #if LED_INPUT_CLIP_MODE
-        /* clip stage 2 — any tap about to exceed full scale pre-limiter (covers
-         * the pitch-voice sum, hot recirc content, and the master-dry comp
-         * channel; the soft knee makes it inaudible-ish, which is exactly why
-         * it deserves an indicator). */
+        /* stage 2 — internal pre-limiter overrange: COUNTER ONLY as of #21.
+         * Two independent field testers read the lit LED during hot loop
+         * playback as a fault (a rail-recorded loop re-trips it every pass).
+         * The LED is now a true INPUT overload indicator (the 277-style
+         * meaning jimfowler argued for); internal overrange still counts in
+         * clip_q for SWD diagnosis (it is how #19 was caught). */
         for (unsigned s = 0; s < (unsigned)NUM_TAPS; ++s)
-            if (chan[s] >= 1.0f || chan[s] <= -1.0f) clip = 1;
+            if (chan[s] >= 1.0f || chan[s] <= -1.0f) clip_evt = 1;
 #endif
         for (unsigned s = 0; s < TDM_SLOTS; ++s)
             out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
@@ -454,7 +457,8 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         if ((uint16_t)dt > g_isr_pk) g_isr_pk = (uint16_t)dt;
     }
 #if LED_INPUT_CLIP_MODE
-    if (clip) { g_clip_until = g_blocks + CLIP_HOLD_BLOCKS; g_clip_count++; }
+    if (clip) { g_clip_until = g_blocks + CLIP_HOLD_BLOCKS; }
+    if (clip | clip_evt) { g_clip_count++; }
     if (g_blocks >= g_twinkle_until)
         bsp_panel_strobe((g_blocks < g_clip_until) ? 0 : 1);
 #endif
