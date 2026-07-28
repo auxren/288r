@@ -155,8 +155,11 @@ loops automatically at the cycle boundary; *store end* holds the finished window
 a recirc flick recalls it — while holding, the **write and READY LEDs light together**
 ("stored and waiting"), which is easy to misread as being stuck in write.
 
-> **Silence detection during playback (v1.2.2+).** The sens. channel's analog pickup also
-> hears the module's own output, so during loop playback or heavy echoes it stays high even
-> with nothing at input A. The firmware therefore corroborates every silence/onset decision
-> (and the presence LED) with input A's own level — the LED and the auto transport now follow
-> what you're actually playing, not what the module is playing back.
+> **Silence detection during playback (v1.2.2).** The sens. detector is wired in parallel
+> with the input-A level pot (its range never depends on your input level — and sidechain
+> patches work: input A's dynamics can gate what B/C record). Because its pickup also hears
+> the module's own output, the detector is *self-referencing*: a slow (~2 s) baseline tracks
+> the ambient level — including loop-playback bleed — and a trigger is a sound poking
+> clearly (~6 dB) above that baseline plus the sens. knob's floor. One consequence: a
+> perfectly steady, unchanging tone reads as ambient after a few seconds (for a looper this
+> is benign — steady content loops seamlessly).
