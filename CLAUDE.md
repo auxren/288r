@@ -303,6 +303,21 @@ better engine; add new features/controls/modulation only *after* the clone is na
   #15 env->time redesign on the REAL jack + dedicated pot (owner decision pending),
   sidechain/second-input ideas. jimfowler's "signal-in broken" needs a slot-2 retest.
   NOTE pot-up hot sources clip the ADC (peak 1.0 observed).
+- **v1.2.2 RELEASED (2026-07-28) — the signal-in release.** Consolidates the rc1-rc6 line:
+  signal-in = codec slot 2 reborn as the dual-domain FM input (TIME = delay-time FM, pitch =
+  voice vibrato/FM; panel pot = depth; presence gate; per-tap slew limiting); pitch voice
+  loop-aware (#19); tick-starvation fix (chunked splice search — the "quantized knob");
+  SPI wedge dead (bounded waits + self-heal); slider 1 = direct voice; input-overload LED
+  (#21, 277-style, field-designed); SELF-CORROBORATING capture threshold (#10 v3: sens
+  pickup is PRE-POT PARALLEL per jimfowler's continuity check — the serial feel was OUR
+  corroboration gate; new law = slow ~2 s ambient baseline + ~6 dB onset ratio, input-A
+  pot fully decoupled, sidechain patches work); env→time removed. 36 suites. Field verdicts
+  on the redesigned detector/LED still incoming (#10/#21 open). ROADMAP AGREED (owner):
+  overdub/sound-on-sound (float accumulation, cheap), split-tap loop+live mode (tap
+  partitioning = zero extra reads), stereo master option (2 DAC channels), Verbos-style
+  knob-steered internal feedback (needs the 4051-mux control-map bench session — ADC3
+  path, alive; g_dbg_muxscan is the tool). ISR headroom = the binding constraint (~20-35%
+  TIME, ~15-25% pitch).
 - **v1.2.1-rc3 PRE-RELEASE (2026-07-22, supersedes rc1/rc2 — the AUTO CONTROL line):**
   rc1 = red-switch toggle resets the looper (#13); rc2 = store beg./end toggle likewise (#16 —
   same no-transition-handling family); rc3 = **AUTO RE-ARM (#10): the shared silence->onset
