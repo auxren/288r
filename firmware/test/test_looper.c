@@ -29,21 +29,13 @@ static float buf[LEN];
 static engine_t E;
 static looper_t L;
 
-/* advance one panel tick: N engine samples, then the state machine.
- * tick() feeds the same level to sens and the input envelope (honest
- * channels); tick2() splits them for the sens-blindness scenarios (#10/#21:
- * the sens pickup hears the module's own output). */
-static void tick2(unsigned automode, unsigned store_end,
-                  int wr, int rc, int arm, float sens, float env)
-{
-    float chan[NUM_TAPS];
-    for (unsigned i = 0; i < TICK; i++) engine_process_multi(&E, 0.1f, 0.5f, chan);
-    looper_tick(&L, &E, automode, store_end, wr, rc, arm, sens, env);
-}
+/* advance one panel tick: N engine samples, then the state machine */
 static void tick(unsigned automode, unsigned store_end,
                  int wr, int rc, int arm, float sens)
 {
-    tick2(automode, store_end, wr, rc, arm, sens, sens);
+    float chan[NUM_TAPS];
+    for (unsigned i = 0; i < TICK; i++) engine_process_multi(&E, 0.1f, 0.5f, chan);
+    looper_tick(&L, &E, automode, store_end, wr, rc, arm, sens);
 }
 static void ticks(int n, unsigned am, unsigned se, float sens)
 {
@@ -56,7 +48,7 @@ static void fresh(void)
     looper_cfg_t cfg = { .sens_ref = REF, .arm_frac = 0.4f,
                          .release_ticks = 4, .release_samp = 4 * TICK,
                          .min_loop_samp = TICK, .delay_len = LEN,
-                         .input_eps = 0.005f };
+                         .base_coeff = 0.0025f, .onset_ratio = 2.0f };
     looper_init(&L, &cfg);
     tick(0, 0, 0, 0, 0, HI);   /* boot latch (no reset action); signal present
                                   so nothing arms before a scenario wants it */
@@ -138,21 +130,31 @@ int main(void)
         ck("rolling window bounded to one cycle", win == (uint32_t)CYC);
     }
 
-    /* ---- sens blindness (#10/#21): module output holds sens HIGH ---------- */
+    /* ---- adaptive baseline (#10 v3): steady bleed can't blind or trigger -- */
     fresh();
     ticks(2, 0, 0, LO); tick(0, 0, 0, 0, 0, HI); ticks(12, 0, 0, HI); /* LOOP */
-    /* loop plays; input A goes silent but the sens pickup still hears the
-     * loop: sens HIGH + env 0 must count as SILENCE (arm for re-trigger) */
-    for (int i = 0; i < 3; i++) tick2(0, 0, 0, 0, 0, HI, 0.0f);
-    ck("sens-blind silence still arms", L.armed == 1 && L.state == LP_LOOP);
-    tick2(0, 0, 0, 0, 0, HI, HI);   /* real input returns: onset */
-    ck("re-arm fires despite sens never dipping",
+    /* loop plays; the sens pickup hears steady playback bleed. Model the
+     * adapted state (the ~2 s time constant) directly: baseline == bleed. */
+    L.baseline = HI;
+    tick(0, 0, 0, 0, 0, HI);
+    ck("steady bleed reads as silence (arms)", L.armed == 1 && L.state == LP_LOOP);
+    tick(0, 0, 0, 0, 0, 3.0f * HI);   /* a real onset pokes above the bleed */
+    ck("onset above baseline re-triggers",
        L.state == LP_WRITE && L.take_auto == 1);
-    /* and a sens-only onset (env still silent) must NOT fire */
+    /* steady bleed alone (baseline adapted) must never fire */
     fresh();
     ticks(2, 0, 0, LO);
-    tick2(0, 0, 0, 0, 0, HI, 0.0f);
-    ck("sens alone (echo bleed) cannot trigger", L.state == LP_READY);
+    L.baseline = HI;
+    tick(0, 0, 0, 0, 0, HI);
+    tick(0, 0, 0, 0, 0, HI);
+    ck("adapted bleed cannot trigger", L.state == LP_READY);
+    /* and the input-A pot is OUT of the law entirely: a fresh onset fires
+     * with nothing at input A (sidechain patch, parallel wiring) */
+    fresh();
+    ticks(2, 0, 0, LO);
+    tick(0, 0, 0, 0, 0, HI);
+    ck("capture is independent of input-A level",
+       L.state == LP_WRITE && L.take_auto == 1);
 
     /* ---- store end, manual take: hold-and-recall ---- */
     fresh();

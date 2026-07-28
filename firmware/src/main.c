@@ -476,9 +476,11 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 #if SENS_IN_SLOT >= 0
     if (g_blocks >= g_twinkle_until)
         bsp_panel_ind(4, (g_sens_env[SENS_IN_SLOT - 1] > SENS_REF &&
-                          g_env > LP_INPUT_EPS) ? 0 : 1);   /* #21: the sens
-                          pickup hears the module's own output — corroborate
-                          with input A so the LED reflects the actual input */
+                          g_sens_env[SENS_IN_SLOT - 1] >
+                              g_lp.baseline * LP_ONSET_RATIO) ? 0 : 1);
+                          /* presence = the same self-corroborating law the
+                             trigger uses: above the knob floor AND clearly
+                             above the ambient/bleed baseline (#10 v3) */
 #else
     if (g_blocks >= g_twinkle_until) bsp_panel_ind(4, (g_env > 0.25f) ? 0 : 1);
 #endif
@@ -587,7 +589,8 @@ int main(void)
             .release_samp  = AUTO_RELEASE_SAMP,
             .min_loop_samp = AUTO_MIN_LOOP_SAMP,
             .delay_len     = DELAY_LEN,
-            .input_eps     = LP_INPUT_EPS,
+            .base_coeff    = LP_BASE_COEFF,
+            .onset_ratio   = LP_ONSET_RATIO,
         };
         looper_init(&g_lp, &lcfg);
     }
@@ -843,7 +846,7 @@ int main(void)
             float lp_sens = g_env;
 #endif
             looper_tick(&g_lp, &g_engine, pc.automode, pc.store_end_mode,
-                        wr_edge, rc_edge, (int)arm_in, lp_sens, g_env);
+                        wr_edge, rc_edge, (int)arm_in, lp_sens);
             /* LED intents -> pins (active-low); READY is EOC-owned in loop
              * playback (led_ready < 0) */
             lp_ind(1, g_lp.led_write  ? 0 : 1);

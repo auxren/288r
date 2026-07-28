@@ -36,10 +36,16 @@ typedef struct {
     uint32_t release_samp;  /* the same hang in samples (trimmed off the loop)  */
     uint32_t min_loop_samp; /* shortest auto-captured loop                      */
     uint32_t delay_len;     /* delay buffer length (head arithmetic)            */
-    float    input_eps;     /* true-input floor: below this the input is silent
-                               REGARDLESS of sens (the sens pickup hears the
-                               module's own output — loops/echoes kept it high
-                               and blinded all silence detection; #10/#21)     */
+    float    base_coeff;    /* slow-baseline one-pole per tick (~2 s): the sens
+                               channel corroborates ITSELF — an onset is the
+                               fast envelope rising above its own baseline.
+                               Steady output bleed raises the baseline (can't
+                               fake an onset); the input-A pot touches nothing
+                               (the sens pickup is wired pre-pot in PARALLEL —
+                               field-verified continuity, #10). Replaces the
+                               post-pot corroboration that made the parallel
+                               hardware behave serial.                        */
+    float    onset_ratio;   /* fire when fast > baseline * this (and > sens_ref)*/
 } looper_cfg_t;
 
 typedef struct {
@@ -50,6 +56,7 @@ typedef struct {
     uint8_t  prev_auto;     /* red-switch position last tick (0xFF = boot)      */
     uint8_t  prev_store;    /* store-selector position last tick (0xFF = boot)  */
     uint16_t sil_ticks;     /* consecutive ticks below the arm threshold        */
+    float    baseline;      /* slow sens baseline (adaptive floor)              */
     uint32_t start;         /* head when the current take began                 */
     uint32_t end;           /* store-end hold: head when the window completed   */
     /* LED intents after each tick (1 = lit). led_ready is -1 when this state
@@ -64,12 +71,11 @@ void looper_init(looper_t *lp, const looper_cfg_t *cfg);
 /* One panel tick. wr_edge/rc_edge: momentary rising edges; arm_in: arm-jack
  * pulse (fires a capture regardless of the arm state); sens: the sens-channel
  * envelope this tick. */
-/* sens: the sens-channel envelope (threshold by analog knob gain — but it
- * also hears the module output). input_env: input A's own envelope (clean).
- * Both must agree for "signal"; input_env alone decides "silence". */
+/* sens: the sens-channel envelope (threshold by analog knob gain; pre-pot
+ * pickup, but it also hears output bleed — the adaptive baseline inside
+ * absorbs that). */
 void looper_tick(looper_t *lp, engine_t *e,
                  unsigned automode, unsigned store_end,
-                 int wr_edge, int rc_edge, int arm_in,
-                 float sens, float input_env);
+                 int wr_edge, int rc_edge, int arm_in, float sens);
 
 #endif /* LOOPER_H */

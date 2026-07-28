@@ -12,6 +12,7 @@ void looper_init(looper_t *lp, const looper_cfg_t *cfg)
     lp->prev_auto = 0xFFu;
     lp->prev_store = 0xFFu;
     lp->sil_ticks = 0;
+    lp->baseline = 0.0f;
     lp->start = 0;
     lp->end = 0;
     lp->led_write = 0;
@@ -30,8 +31,7 @@ static void begin_take(looper_t *lp, engine_t *e, uint8_t take_auto)
 
 void looper_tick(looper_t *lp, engine_t *e,
                  unsigned automode, unsigned store_end,
-                 int wr_edge, int rc_edge, int arm_in,
-                 float sens, float input_env)
+                 int wr_edge, int rc_edge, int arm_in, float sens)
 {
     /* Physical switch MOVEMENT resets the state machine (#13/#16): all-sounds
      * entry releases any loop back to continuous write; looper entry sits
@@ -78,15 +78,21 @@ void looper_tick(looper_t *lp, engine_t *e,
      * by LOOP/HOLD (auto re-arm, #10). The arm-jack pulse fires regardless.
      * sens knob = threshold by analog gain; knob at zero = auto-trigger off. */
     uint32_t cyc = (uint32_t)e->taps.base_delay;
-    /* Silence/onset law, sens CORROBORATED by the true input (#10/#21): the
-     * sens pickup hears the module's own output, so loops/echoes held it high
-     * forever — the LED lied during recirc and store-end never saw silence.
-     * input_env (input A's codec slot) stays clean during playback: silence
-     * on it IS silence; an onset needs both channels to agree. */
-    int lp_silent = (sens < lp->cfg.sens_ref * lp->cfg.arm_frac) ||
-                    (input_env < lp->cfg.input_eps);
+    /* SELF-CORROBORATING silence/onset law (#10 v3, field-informed): the
+     * sens pickup is wired PRE-POT in parallel (continuity-verified), so it
+     * is the honest capture detector — but it also hears output bleed. The
+     * slow baseline absorbs any STEADY level (loop playback, echoes, hum):
+     * silence = fast env near/below baseline; onset = fast env a clear
+     * ratio ABOVE baseline and above the knob-scaled absolute floor. The
+     * input-A pot no longer affects capture at all (that coupling was our
+     * corroboration gate fighting parallel hardware). */
+    lp->baseline += (sens - lp->baseline) * lp->cfg.base_coeff;
+    float floor_ = lp->baseline * 1.2f;
+    if (floor_ < lp->cfg.sens_ref * lp->cfg.arm_frac)
+        floor_ = lp->cfg.sens_ref * lp->cfg.arm_frac;
+    int lp_silent = (sens < floor_);
     int lp_auto_fire = (lp->armed && sens > lp->cfg.sens_ref &&
-                        input_env >= lp->cfg.input_eps) || arm_in;
+                        sens > lp->baseline * lp->cfg.onset_ratio) || arm_in;
     if (lp_silent) {
         lp->armed = 1;
         if (lp->sil_ticks < 0xFFFFu) lp->sil_ticks++;
