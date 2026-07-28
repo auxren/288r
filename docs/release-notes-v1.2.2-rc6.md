@@ -1,6 +1,6 @@
-# 288r community firmware — v1.2.2-rc5 (pre-release for field testing)
+# 288r community firmware — v1.2.2-rc6 (pre-release for field testing)
 
-**Updating preserves your saved presets.** Supersedes rc1–rc4 (all their fixes included:
+**Updating preserves your saved presets.** Supersedes rc1–rc5 (all their fixes included:
 loop-aware pitch mode, snappier pitch controls, sens corroboration, envelope-master
 store end). Bench-verified on the reference unit; 36 host regression suites.
 
@@ -39,6 +39,16 @@ store end). Bench-verified on the reference unit; 36 host regression suites.
   stays aligned during modulation and only pauses for big knob flicks), and the new FM
   input listened even to idle noise/bleed (it now engages only above a real-signal
   floor, ~−40 dBFS, with a smooth ramp).
+
+- **The capture threshold is now truly independent of the input level** (#10): the
+  hardware wires the sens detector in parallel with the input-A pot (field-verified),
+  but our earlier fix accidentally re-coupled them. The detector now corroborates
+  itself — a slow baseline absorbs steady playback bleed, and an onset is a sound
+  poking clearly above it. Full sens-knob range at any input-pot position; sidechain
+  patches (input A's dynamics gating what B/C record) work as the panel implies.
+- **The input-mixer LED is a true input-overload indicator** (#21): it lights only when
+  the input hits the converter's rail (277-style). It no longer reports internal levels,
+  so a hot recorded loop playing back won't light it.
 
 ## Known / open issues
 
