@@ -123,9 +123,9 @@
                                      bridges staccato gaps). Feel-calibrate.       */
 #define AUTO_RELEASE_SAMP  (AUTO_RELEASE_TICKS * 15u * 32u) /* same, in samples     */
 #define AUTO_MIN_LOOP_SAMP 4800u  /* shortest auto-captured loop (~50 ms @96k)      */
-#define LP_BASE_COEFF     0.0025f /* sens slow-baseline per ~5 ms tick (~2 s):
-                                     the self-corroborating threshold's memory
-                                     (#10 v3). [feel-cal]                        */
+#define LP_FLOOR_WIN      300u    /* min-statistics floor window in ~5 ms ticks
+                                     (~1.5 s): ambient = the envelope's minimum
+                                     over the recent window (#13). [feel-cal]   */
 #define LP_ONSET_RATIO    2.0f    /* onset = fast sens > baseline * this (~6 dB
                                      above the ambient/bleed floor). [feel-cal] */
 

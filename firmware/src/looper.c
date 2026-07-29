@@ -13,6 +13,7 @@ void looper_init(looper_t *lp, const looper_cfg_t *cfg)
     lp->prev_store = 0xFFu;
     lp->sil_ticks = 0;
     lp->baseline = 0.0f;
+    lp->min_cur = 1.0e9f; lp->min_prev = 1.0e9f; lp->min_tick = 0;
     lp->start = 0;
     lp->end = 0;
     lp->led_write = 0;
@@ -78,21 +79,28 @@ void looper_tick(looper_t *lp, engine_t *e,
      * by LOOP/HOLD (auto re-arm, #10). The arm-jack pulse fires regardless.
      * sens knob = threshold by analog gain; knob at zero = auto-trigger off. */
     uint32_t cyc = (uint32_t)e->taps.base_delay;
-    /* SELF-CORROBORATING silence/onset law (#10 v3, field-informed): the
-     * sens pickup is wired PRE-POT in parallel (continuity-verified), so it
-     * is the honest capture detector — but it also hears output bleed. The
-     * slow baseline absorbs any STEADY level (loop playback, echoes, hum):
-     * silence = fast env near/below baseline; onset = fast env a clear
-     * ratio ABOVE baseline and above the knob-scaled absolute floor. The
-     * input-A pot no longer affects capture at all (that coupling was our
-     * corroboration gate fighting parallel hardware). */
-    lp->baseline += (sens - lp->baseline) * lp->cfg.base_coeff;
-    float floor_ = lp->baseline * 1.2f;
-    if (floor_ < lp->cfg.sens_ref * lp->cfg.arm_frac)
-        floor_ = lp->cfg.sens_ref * lp->cfg.arm_frac;
-    int lp_silent = (sens < floor_);
+    /* MINIMUM-STATISTICS silence/onset law (#13, field iteration 4): the
+     * ambient floor = the envelope's MINIMUM over the recent window — what
+     * the level dips to between notes. Foreground playing (staccato!) never
+     * lifts it; continuous bleed (loop playback, echoes, hum) IS the floor
+     * within ~1.5 s. Silence = near the floor; onset = clearly above it and
+     * above the knob's absolute reference. Input-A pot: not in the law
+     * (parallel pre-pot pickup, continuity-verified). */
+    if (sens < lp->min_cur) lp->min_cur = sens;
+    if (++lp->min_tick >= lp->cfg.floor_win) {
+        lp->min_prev = lp->min_cur;
+        lp->min_cur = sens;
+        lp->min_tick = 0;
+    }
+    float floor_ = (lp->min_prev < lp->min_cur) ? lp->min_prev : lp->min_cur;
+    if (floor_ > 1.0e8f) floor_ = 0.0f;            /* pre-warmup            */
+    lp->baseline = floor_;                          /* published (LED law)   */
+    float sil_at = floor_ * 1.5f;
+    if (sil_at < lp->cfg.sens_ref * lp->cfg.arm_frac)
+        sil_at = lp->cfg.sens_ref * lp->cfg.arm_frac;
+    int lp_silent = (sens < sil_at);
     int lp_auto_fire = (lp->armed && sens > lp->cfg.sens_ref &&
-                        sens > lp->baseline * lp->cfg.onset_ratio) || arm_in;
+                        sens > floor_ * lp->cfg.onset_ratio) || arm_in;
     if (lp_silent) {
         lp->armed = 1;
         if (lp->sil_ticks < 0xFFFFu) lp->sil_ticks++;

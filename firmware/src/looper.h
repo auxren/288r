@@ -36,16 +36,17 @@ typedef struct {
     uint32_t release_samp;  /* the same hang in samples (trimmed off the loop)  */
     uint32_t min_loop_samp; /* shortest auto-captured loop                      */
     uint32_t delay_len;     /* delay buffer length (head arithmetic)            */
-    float    base_coeff;    /* slow-baseline one-pole per tick (~2 s): the sens
-                               channel corroborates ITSELF — an onset is the
-                               fast envelope rising above its own baseline.
-                               Steady output bleed raises the baseline (can't
-                               fake an onset); the input-A pot touches nothing
-                               (the sens pickup is wired pre-pot in PARALLEL —
-                               field-verified continuity, #10). Replaces the
-                               post-pot corroboration that made the parallel
-                               hardware behave serial.                        */
-    float    onset_ratio;   /* fire when fast > baseline * this (and > sens_ref)*/
+    uint16_t floor_win;     /* MINIMUM-STATISTICS floor window in ticks
+                               (~1.5 s): the ambient floor is the envelope's
+                               MINIMUM over the recent window — what the level
+                               dips to BETWEEN notes. Staccato playing never
+                               lifts it (the gaps reset it); continuous loop-
+                               playback bleed is absorbed within the window.
+                               Replaces the one-pole baseline, which tracked
+                               the player's own material and ratcheted the
+                               threshold up until staccato couldn't trigger
+                               (field #13: "signal re-zeroes the threshold"). */
+    float    onset_ratio;   /* fire when fast > floor * this (and > sens_ref)  */
 } looper_cfg_t;
 
 typedef struct {
@@ -56,7 +57,9 @@ typedef struct {
     uint8_t  prev_auto;     /* red-switch position last tick (0xFF = boot)      */
     uint8_t  prev_store;    /* store-selector position last tick (0xFF = boot)  */
     uint16_t sil_ticks;     /* consecutive ticks below the arm threshold        */
-    float    baseline;      /* slow sens baseline (adaptive floor)              */
+    float    baseline;      /* published ambient floor (min-statistics)         */
+    float    min_cur, min_prev; /* two-bucket sliding-minimum state             */
+    uint16_t min_tick;      /* bucket age                                        */
     uint32_t start;         /* head when the current take began                 */
     uint32_t end;           /* store-end hold: head when the window completed   */
     /* LED intents after each tick (1 = lit). led_ready is -1 when this state

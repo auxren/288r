@@ -155,11 +155,10 @@ loops automatically at the cycle boundary; *store end* holds the finished window
 a recirc flick recalls it — while holding, the **write and READY LEDs light together**
 ("stored and waiting"), which is easy to misread as being stuck in write.
 
-> **Silence detection during playback (v1.2.2).** The sens. detector is wired in parallel
+> **Silence detection during playback (v1.2.2+).** The sens. detector is wired in parallel
 > with the input-A level pot (its range never depends on your input level — and sidechain
 > patches work: input A's dynamics can gate what B/C record). Because its pickup also hears
-> the module's own output, the detector is *self-referencing*: a slow (~2 s) baseline tracks
-> the ambient level — including loop-playback bleed — and a trigger is a sound poking
-> clearly (~6 dB) above that baseline plus the sens. knob's floor. One consequence: a
-> perfectly steady, unchanging tone reads as ambient after a few seconds (for a looper this
-> is benign — steady content loops seamlessly).
+> the module's own output, the detector references an *ambient floor*: the level the signal
+> **dips to between sounds** (a ~1.5 s sliding minimum). Staccato playing never raises it —
+> every hit after a gap can trigger — while continuous loop-playback bleed becomes the
+> floor a new sound must clearly exceed (~6 dB) along with the sens. knob's reference.

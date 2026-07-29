@@ -48,7 +48,7 @@ static void fresh(void)
     looper_cfg_t cfg = { .sens_ref = REF, .arm_frac = 0.4f,
                          .release_ticks = 4, .release_samp = 4 * TICK,
                          .min_loop_samp = TICK, .delay_len = LEN,
-                         .base_coeff = 0.0025f, .onset_ratio = 2.0f };
+                         .floor_win = 40, .onset_ratio = 2.0f };
     looper_init(&L, &cfg);
     tick(0, 0, 0, 0, 0, HI);   /* boot latch (no reset action); signal present
                                   so nothing arms before a scenario wants it */
@@ -130,31 +130,52 @@ int main(void)
         ck("rolling window bounded to one cycle", win == (uint32_t)CYC);
     }
 
-    /* ---- adaptive baseline (#10 v3): steady bleed can't blind or trigger -- */
+    /* ---- min-statistics floor (#13): bleed absorbed, staccato untouched --- */
     fresh();
     ticks(2, 0, 0, LO); tick(0, 0, 0, 0, 0, HI); ticks(12, 0, 0, HI); /* LOOP */
-    /* loop plays; the sens pickup hears steady playback bleed. Model the
-     * adapted state (the ~2 s time constant) directly: baseline == bleed. */
-    L.baseline = HI;
-    tick(0, 0, 0, 0, 0, HI);
-    ck("steady bleed reads as silence (arms)", L.armed == 1 && L.state == LP_LOOP);
+    /* loop plays; the sens pickup hears CONTINUOUS playback bleed: within
+     * one floor window the minimum IS the bleed -> reads as ambient */
+    ticks(85, 0, 0, HI);              /* > 2 windows of steady bleed        */
+    ck("steady bleed becomes the floor (arms)",
+       L.armed == 1 && L.state == LP_LOOP && L.baseline >= 0.9f * HI);
     tick(0, 0, 0, 0, 0, 3.0f * HI);   /* a real onset pokes above the bleed */
-    ck("onset above baseline re-triggers",
+    ck("onset above bleed re-triggers",
        L.state == LP_WRITE && L.take_auto == 1);
-    /* steady bleed alone (baseline adapted) must never fire */
+    /* a rising steady signal from READY is a legitimate onset (fires once);
+     * once looping, the absorbed bleed must never re-fire */
     fresh();
     ticks(2, 0, 0, LO);
-    L.baseline = HI;
     tick(0, 0, 0, 0, 0, HI);
-    tick(0, 0, 0, 0, 0, HI);
-    ck("adapted bleed cannot trigger", L.state == LP_READY);
-    /* and the input-A pot is OUT of the law entirely: a fresh onset fires
-     * with nothing at input A (sidechain patch, parallel wiring) */
+    ck("first onset fires (legitimate)", L.state == LP_WRITE);
+    ticks(12, 0, 0, HI);              /* cap -> LOOP                        */
+    uint32_t stable_start = L.start;
+    ticks(85, 0, 0, HI);              /* bleed absorbed; steady level holds */
+    ck("absorbed bleed cannot re-trigger",
+       L.state == LP_LOOP && L.start == stable_start);
+    /* input-A pot is OUT of the law (sidechain patch, parallel wiring) */
     fresh();
     ticks(2, 0, 0, LO);
     tick(0, 0, 0, 0, 0, HI);
     ck("capture is independent of input-A level",
        L.state == LP_WRITE && L.take_auto == 1);
+
+    /* ---- THE STACCATO REGRESSION (#13): repeated hits keep triggering ----- */
+    /* Field failure: the old one-pole baseline tracked the PLAYING and
+     * ratcheted the threshold up until staccato couldn't trigger. With the
+     * min-statistics floor, the gaps keep the floor at ambient and EVERY
+     * hit after silence can fire. Simulate 12 hit/gap cycles in store beg.
+     * with a short cycle; count auto take starts. */
+    fresh();
+    int fires = 0;
+    for (int cyc_i = 0; cyc_i < 12; cyc_i++) {
+        for (int k = 0; k < 4; k++) tick(0, 0, 0, 0, 0, LO);   /* gap  */
+        uint8_t st_before = L.state;
+        for (int k = 0; k < 12; k++) tick(0, 0, 0, 0, 0, HI);  /* hit + cap */
+        if (st_before != LP_WRITE && L.take_auto == 1 &&
+            (L.state == LP_WRITE || L.state == LP_LOOP)) fires++;
+    }
+    ck("staccato keeps triggering (>=10 of 12 hits)", fires >= 10);
+    ck("floor stayed at ambient under staccato", L.baseline < 0.5f * HI);
 
     /* ---- store end, manual take: hold-and-recall ---- */
     fresh();

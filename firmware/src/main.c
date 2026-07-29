@@ -589,7 +589,7 @@ int main(void)
             .release_samp  = AUTO_RELEASE_SAMP,
             .min_loop_samp = AUTO_MIN_LOOP_SAMP,
             .delay_len     = DELAY_LEN,
-            .base_coeff    = LP_BASE_COEFF,
+            .floor_win     = LP_FLOOR_WIN,
             .onset_ratio   = LP_ONSET_RATIO,
         };
         looper_init(&g_lp, &lcfg);
