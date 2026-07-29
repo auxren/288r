@@ -23,6 +23,8 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->lp_rate = 1.0f;
     e->time_fm = 0.0f;
     for (int i = 0; i < NUM_TAPS; i++) e->fm_off[i] = 0.0f;
+    e->od_active = 0;
+    e->od_decay = 0.95f;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -79,9 +81,31 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
         }
         e->lp_rate = r;
         e->lp_phase += r;
-        while (e->lp_phase >= 1.0f) {
-            dl_advance_loop(&e->dl, ls, le);
-            e->lp_phase -= 1.0f;
+        if (e->od_active) {
+            /* OVERDUB: condition the input exactly like the write path, then
+             * lay it over every position the head visits this sample (ZOH
+             * across varispeed skips — no gaps at rate > 1). Existing
+             * material fades by od_decay per pass; a soft ceiling lets a
+             * wall of layers bloom instead of clipping. */
+            float xo = mixer_input(input, e->in_gain);
+            xo = bw_process(&e->bw, xo);
+            while (e->lp_phase >= 1.0f) {
+                float v = e->dl.buf[e->dl.wpos] * e->od_decay + xo;
+                float a = (v < 0.0f) ? -v : v;
+                if (a > 1.0f) {
+                    float ex = a - 1.0f;
+                    a = 1.0f + ex / (1.0f + ex);     /* asymptote 2.0 */
+                    v = (v < 0.0f) ? -a : a;
+                }
+                e->dl.buf[e->dl.wpos] = v;
+                dl_advance_loop(&e->dl, ls, le);
+                e->lp_phase -= 1.0f;
+            }
+        } else {
+            while (e->lp_phase >= 1.0f) {
+                dl_advance_loop(&e->dl, ls, le);
+                e->lp_phase -= 1.0f;
+            }
         }
     }
 

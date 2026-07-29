@@ -123,6 +123,9 @@
                                      bridges staccato gaps). Feel-calibrate.       */
 #define AUTO_RELEASE_SAMP  (AUTO_RELEASE_TICKS * 15u * 32u) /* same, in samples     */
 #define AUTO_MIN_LOOP_SAMP 4800u  /* shortest auto-captured loop (~50 ms @96k)      */
+#define OD_DECAY          0.95f   /* overdub: per-pass fade of existing loop
+                                     material while layering (hold recirc in a
+                                     playing loop). [feel-cal]                  */
 #define LP_FLOOR_WIN      300u    /* min-statistics floor window in ~5 ms ticks
                                      (~1.5 s): ambient = the envelope's minimum
                                      over the recent window (#13). [feel-cal]   */

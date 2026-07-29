@@ -145,6 +145,16 @@ read head. In *all sounds* the multiplier keeps its constant-pitch tap-respacing
 (that's what makes chorus/flanger possible), and in pitch mode the knob stays the pitch
 depth — the three never fight over the knob.
 
+**Overdub — sound-on-sound (v1.2.3+).** While a loop plays, **hold the red recirc
+momentary**: everything at the input layers into the loop for as long as you hold, and the
+loop keeps everything when you let go. Existing material fades gently (~5% per pass) under
+new layers, and a soft ceiling lets dense stacks bloom instead of clipping — the buffer is
+full-precision, so layer forty sounds as clean as layer one. While held, the **write and
+recirc LEDs light together** ("writing into the loop") and the auto re-arm is suspended —
+a loud hit can't steal your loop mid-gesture. It composes with everything: overdub onto a
+varispeed-slowed loop, return the multiplier, and your layer plays back pitched — exactly
+like tape.
+
 **Resetting the loop from the panel:** flip the red switch to **all sounds and back to center**,
 or flip the **store beg./store end** selector to its other position. Either physical movement
 resets the capture state machine: the module returns to READY *armed* — so if your signal is

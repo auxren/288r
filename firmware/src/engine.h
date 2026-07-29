@@ -62,6 +62,14 @@ typedef struct {
                                       deep taps at audio-rate depth glide
                                       (Doppler) instead of teleporting (alias
                                       shred — heard on first bench listen).    */
+    int          od_active;        /* OVERDUB (sound-on-sound): while set in
+                                      RECIRC, the head writes old*od_decay +
+                                      conditioned input at every position it
+                                      visits (ZOH across varispeed skips) with
+                                      a soft ceiling — layers accumulate in
+                                      float with zero generational loss.      */
+    float        od_decay;         /* per-pass fade of existing material while
+                                      overdubbing (~0.95); no effect when idle */
 } engine_t;
 
 /* buf/len: delay memory. base_delay: cycle length in samples (SHORT/FULL).

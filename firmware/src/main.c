@@ -593,6 +593,7 @@ int main(void)
             .onset_ratio   = LP_ONSET_RATIO,
         };
         looper_init(&g_lp, &lcfg);
+        g_engine.od_decay = OD_DECAY;
     }
 #endif
 #if PRESET_ENABLE
@@ -846,7 +847,7 @@ int main(void)
             float lp_sens = g_env;
 #endif
             looper_tick(&g_lp, &g_engine, pc.automode, pc.store_end_mode,
-                        wr_edge, rc_edge, (int)arm_in, lp_sens);
+                        wr_edge, rc_edge, (int)rc_act, (int)arm_in, lp_sens);
             /* LED intents -> pins (active-low); READY is EOC-owned in loop
              * playback (led_ready < 0) */
             lp_ind(1, g_lp.led_write  ? 0 : 1);

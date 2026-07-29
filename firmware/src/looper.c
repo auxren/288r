@@ -32,7 +32,7 @@ static void begin_take(looper_t *lp, engine_t *e, uint8_t take_auto)
 
 void looper_tick(looper_t *lp, engine_t *e,
                  unsigned automode, unsigned store_end,
-                 int wr_edge, int rc_edge, int arm_in, float sens)
+                 int wr_edge, int rc_edge, int rc_lvl, int arm_in, float sens)
 {
     /* Physical switch MOVEMENT resets the state machine (#13/#16): all-sounds
      * entry releases any loop back to continuous write; looper entry sits
@@ -175,6 +175,14 @@ void looper_tick(looper_t *lp, engine_t *e,
         break;
 
     default: /* LP_LOOP */
+        /* OVERDUB (owner feature): holding the recirc momentary while the
+         * loop plays layers the input into it (sound-on-sound). The hold
+         * SUSPENDS auto re-arm — you're explicitly adding to this loop, so
+         * a loud hit must not punch a fresh take mid-gesture. */
+        if (rc_lvl) {
+            lp->led_write = 1; lp->led_recirc = 1; lp->led_ready = -1;
+            break;
+        }
         /* AUTO RE-ARM (#10/#16): stock evidence — in the batchas 288v video
          * auto control cycles write/recirc continuously with the input, so a
          * playing loop re-triggers on the next onset, not holds forever. */
@@ -184,4 +192,6 @@ void looper_tick(looper_t *lp, engine_t *e,
         lp->led_write = 0; lp->led_recirc = 1; lp->led_ready = -1;
         break;
     }
+    /* engine overdub follows the LOOP-state recirc hold exclusively */
+    e->od_active = (lp->state == LP_LOOP && rc_lvl) ? 1 : 0;
 }

@@ -77,8 +77,11 @@ void looper_init(looper_t *lp, const looper_cfg_t *cfg);
 /* sens: the sens-channel envelope (threshold by analog knob gain; pre-pot
  * pickup, but it also hears output bleed — the adaptive baseline inside
  * absorbs that). */
+/* rc_lvl: the recirc momentary's LEVEL (held = 1). In the LOOP state,
+ * holding recirc = OVERDUB while held (sound-on-sound; auto re-arm is
+ * suspended for the duration). Other states keep their edge meanings. */
 void looper_tick(looper_t *lp, engine_t *e,
                  unsigned automode, unsigned store_end,
-                 int wr_edge, int rc_edge, int arm_in, float sens);
+                 int wr_edge, int rc_edge, int rc_lvl, int arm_in, float sens);
 
 #endif /* LOOPER_H */

@@ -35,7 +35,14 @@ static void tick(unsigned automode, unsigned store_end,
 {
     float chan[NUM_TAPS];
     for (unsigned i = 0; i < TICK; i++) engine_process_multi(&E, 0.1f, 0.5f, chan);
-    looper_tick(&L, &E, automode, store_end, wr, rc, arm, sens);
+    looper_tick(&L, &E, automode, store_end, wr, rc, /*rc_lvl*/ rc, arm, sens);
+}
+/* tick with the recirc momentary HELD (level 1, no fresh edge) */
+static void tick_hold(unsigned automode, unsigned store_end, float sens)
+{
+    float chan[NUM_TAPS];
+    for (unsigned i = 0; i < TICK; i++) engine_process_multi(&E, 0.1f, 0.5f, chan);
+    looper_tick(&L, &E, automode, store_end, 0, 0, /*rc_lvl*/ 1, 0, sens);
 }
 static void ticks(int n, unsigned am, unsigned se, float sens)
 {
@@ -236,6 +243,26 @@ int main(void)
        !transport_should_write(&E.xport));
     tick(1, 0, 1, 0, 0, HI);   /* wr punches back in */
     ck("delay-mode wr -> write", transport_should_write(&E.xport));
+
+    /* ---- OVERDUB: hold recirc in a playing loop ---------------------------- */
+    fresh();
+    ticks(2, 0, 0, LO); tick(0, 0, 0, 0, 0, HI); ticks(12, 0, 0, HI); /* LOOP */
+    ck("pre-overdub: engine flag clear", E.od_active == 0);
+    tick_hold(0, 0, HI);
+    ck("hold recirc in LOOP -> overdub engaged",
+       L.state == LP_LOOP && E.od_active == 1);
+    ck("overdub LEDs: write+recirc together",
+       L.led_write == 1 && L.led_recirc == 1);
+    /* auto re-arm suspended: silence then a loud onset must NOT punch */
+    L.min_cur = 0.0f; L.min_prev = 0.0f;   /* floor at ambient */
+    tick_hold(0, 0, LO);
+    tick_hold(0, 0, 3.0f * HI);
+    ck("re-arm suspended while held", L.state == LP_LOOP);
+    /* release: flag clears, re-arm law resumes */
+    tick(0, 0, 0, 0, 0, LO);
+    ck("release clears overdub", E.od_active == 0);
+    tick(0, 0, 0, 0, 0, 3.0f * HI);
+    ck("re-arm resumes after release", L.state == LP_WRITE);
 
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
