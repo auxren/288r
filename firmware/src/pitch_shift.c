@@ -441,6 +441,13 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
        collapse to a single centered tap so unity is a clean delayed bypass.    */
     if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS) {
         p->pend_tap = -1;                    /* discard stale splice offsets */
+        /* PIN phase to 0.5 while bypassed (#24): the bypass read position
+         * IS grain A's position at phase 0.5 (weight sin^2(pi/2) = 1, grain
+         * B exactly 0) — so leaving unity resumes from the very sample the
+         * bypass was reading. With phase left stale, exit jumped the read
+         * by up to W/2 (~30 ms of tape) = a spike on EVERY unity departure,
+         * knob or CV, both directions (field: RECLee, deterministic). */
+        p->phase = 0.5f;
         return ps_read(p, d, p->base + 0.5f * W + vfm, interp);
     }
 

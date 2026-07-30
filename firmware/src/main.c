@@ -376,6 +376,19 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
              * "weird stuff"); passing through the sliver during slews is
              * inaudible, living in it is not. */
             float wet = dev * 200.0f; if (wet > 1.0f) wet = 1.0f;
+            /* #24 (field, deterministic): the ratio slew (0.0028/samp)
+             * crosses the whole 0.5%-deviation sliver in <2 samples, so
+             * leaving unity SNAPPED the output between the dry read and the
+             * voice read — sources ~30-60 ms apart in the buffer = a spike
+             * on every unity departure, knob or CV. The MIX gets its own
+             * ~4 ms smoothing, decoupled from the ratio: never parks
+             * mid-mix (converges in ms — the artifact the thin sliver
+             * exists to prevent), never snaps. */
+            {
+                static float wet_s = 0.0f;
+                wet_s += (wet - wet_s) * 0.003f;
+                wet = wet_s;
+            }
             /* REPLACE, don't layer (stock: pitch-mode output IS the shifted
              * signal). Dry leg for the unity-transition sliver = ONE tap-0
              * read (the taps sit at min delay in pitch mode; per-channel dry

@@ -184,6 +184,56 @@ int main(void)
         if (!(ratio > 0.8f && ratio < 1.25f)) { printf("    FAIL level drifts (ratio %.3f)\n", ratio); fails++; }
     }
 
+    /* ---- unity departure is click-free (#24) ------------------------------
+     * Field (deterministic, every time): a spike when the ratio LEAVES the
+     * exact-unity bypass — knob from full CCW, or CV crossing 0 V. Cause:
+     * stale grain phase at bypass exit jumped the read by up to W/2.
+     * Emulate the firmware's slewed ratio through the boundary both ways
+     * and bound the output step by the tone's own slope. */
+    {
+        for (int dir = 0; dir < 2; dir++) {
+            delay_line_t d2; static float db2[1u<<17];
+            dl_init(&d2, db2, 1u<<17); dl_clear(&d2);
+            pitchshift_t p2; ps_init(&p2, 0.060f * 96000.0f, 256.0f);
+            ps_set_ratio(&p2, 1.0f); p2.ratio = 1.0f;
+            float ph2 = 0.0f, w2 = 2.0f * (float)M_PI * 300.0f / 96000.0f;
+            float target = dir ? 1.05f : 0.95f;
+            float prev = 0.0f, mx = 0.0f; int primed = 0;
+            /* the field gesture: shift (dirties the grain phase), RETURN to
+             * unity, sit in bypass, then depart again — the stale phase at
+             * the second departure is what spiked (a fresh init lands
+             * benign, which hides the bug) */
+            for (int n = 0; n < 4*96000; n++) {
+                dl_write(&d2, 0.8f * sinf(ph2)); ph2 += w2;
+                if (ph2 >= 2.0f*(float)M_PI) ph2 -= 2.0f*(float)M_PI;
+                float want = 1.0f;
+                if (n < 96000)            want = 0.90f;   /* dirty the phase */
+                else if (n < 2*96000)     want = 1.0f;    /* back to unity   */
+                else                       want = target;  /* the departure   */
+                float dr = want - p2.ratio;
+                float st = 0.0028f;                 /* PITCH_RATIO_SLEW    */
+                if (dr >  st) dr =  st;
+                if (dr < -st) dr = -st;
+                p2.ratio += dr;
+                ps_service(&p2, &d2);
+                float y = ps_process(&p2, &d2, DL_INTERP_HERMITE);
+                if (n > 96000 + 48000) {            /* settled at unity on  */
+                    if (primed) { float sp = fabsf(y - prev); if (sp > mx) mx = sp; }
+                    prev = y; primed = 1;
+                }
+            }
+            /* 300 Hz, amp .8, ratio<=1.05: analog slope ~ .8*2pi*300/96000*1.05
+             * = 0.0165/sample; allow 2.5x for splice fades */
+            printf("      unity departure %s: max step %.4f\n",
+                   dir ? "up" : "down", mx);
+            if (!(mx < 0.042f)) {
+                printf("    FAIL unity departure %s clicks (%.4f)\n",
+                       dir ? "up" : "down", mx);
+                fails++;
+            }
+        }
+    }
+
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }
