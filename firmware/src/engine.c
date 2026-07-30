@@ -131,6 +131,12 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
                 float tgt = (e->od_env > 0.75f) ? 0.75f / e->od_env : 1.0f;
                 e->od_lim += (tgt - e->od_lim) * 0.002f;
                 v *= e->od_lim;
+                /* hard FS clamp: the gain slew lags transients, and anything
+                 * written >1.0 is BAKED into the loop forever (field forensics:
+                 * content peak 1.092 after an od session). The clamp only
+                 * touches the brief settling overs the slew already misses. */
+                if (v >  1.0f) v =  1.0f;
+                if (v < -1.0f) v = -1.0f;
                 e->dl.buf[e->dl.wpos] = v;
                 dl_advance_loop(&e->dl, ls, le);
                 e->lp_phase -= 1.0f;

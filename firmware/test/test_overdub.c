@@ -140,6 +140,12 @@ int main(void)
         }
         double thd = sqrt(mag[2]*mag[2] + mag[3]*mag[3] + mag[4]*mag[4])
                    / (mag[1] > 1e-9 ? mag[1] : 1e-9);
+        float mxa = 0.0f;
+        for (int i = 0; i < W; i++) {
+            float av2 = fabsf(b2[(s2 + (uint32_t)i) % LEN]);
+            if (av2 > mxa) mxa = av2;
+        }
+        ck("no above-FS content ever written (<= 1.0)", mxa <= 1.0f);
         printf("      hot-stack content THD (h2..h4 / h1) = %.4f\n", thd);
         ck("limiter writes no distortion (THD < 2%)", thd < 0.02);
         ck("limited content is hot (fundamental present)",
