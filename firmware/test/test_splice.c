@@ -59,6 +59,10 @@ int main(void)
     uint32_t head = e.dl.wpos;
     engine_recirc_window(&e, 4000);
     uint32_t ls = e.xport.loop_start;
+    /* the splice is CHUNKED now (8 RMW per process call — the inline burst
+     * starved the ISR and recorded the tear at the seam, field 2026-07-29):
+     * run the engine ~2 ms so the job completes before asserting */
+    for (int i = 0; i < 200; i++) engine_process_multi(&e, 0.0f, 0.5f, chan);
     ck("engine splice: window tail meets the head content",
        fabsf(buf[(head + LEN - 1u) % LEN]
              - buf[(ls + LEN - 1u) % LEN]) < 0.02f);

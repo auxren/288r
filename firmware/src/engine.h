@@ -87,6 +87,14 @@ typedef struct {
                                       was audible zipper when the multiplier
                                       moved during an overdub               */
     uint32_t     od_xn;            /* samples accumulated                    */
+    /* CHUNKED SEAM SPLICE (field 2026-07-29): the inline 960-RMW splice
+     * burst at punch-out starved the ISR (~115% of block budget) while the
+     * write head sat AT the seam — the torn block was RECORDED at loop
+     * start and replayed every wrap. The splice is now a job the engine
+     * services 8 samples per process() call: same result in ~1.3 ms,
+     * bounded ~2% ISR cost, no burst. */
+    uint8_t      spl_active;
+    uint32_t     spl_start, spl_end, spl_fade, spl_idx;
     float        od_lp1, od_lp2;   /* 2-pole ~10 kHz lowpass on the LAYERED
                                       INPUT only: breaks ultrasonic feedback
                                       modes through the sound-on-sound loop
@@ -121,6 +129,7 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
 /* Transport control (driven by panel/pulse layer). */
 void  engine_write(engine_t *e);    /* enter WRITE at current head          */
 void  engine_recirc(engine_t *e);   /* enter RECIRC, capture loop window     */
+void  engine_resplice(engine_t *e); /* re-run the seam splice, chunked (od)  */
 /* Enter RECIRC looping exactly the last `window` samples (the stock semantics:
  * "recirc loops the buffer at one of three cycle lengths"). */
 void  engine_recirc_window(engine_t *e, uint32_t window);

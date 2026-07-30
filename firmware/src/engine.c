@@ -33,6 +33,8 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->od_xn = 0u;
     e->od_lp1 = 0.0f;
     e->od_lp2 = 0.0f;
+    e->spl_active = 0;
+    e->spl_start = e->spl_end = e->spl_fade = e->spl_idx = 0;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -50,8 +52,46 @@ float engine_clamp_base(float base, uint32_t len, float time_hi)
     return (base < max_base) ? base : max_base;
 }
 
+/* arm the chunked seam splice: guards written immediately (4 writes), the
+ * crossfade amortized into engine_process_multi. Re-arming mid-job simply
+ * restarts on the new window. */
+static void splice_arm(engine_t *e, uint32_t start, uint32_t end, uint32_t fade)
+{
+    uint32_t win = (end >= start) ? end - start : end + e->dl.len - start;
+    if (fade == 0u || win <= 2u * fade) { e->spl_active = 0; return; }
+    for (uint32_t i = 0; i < 4u; i++)   /* stencil guards past the seam */
+        e->dl.buf[(end + i) % e->dl.len] = e->dl.buf[(start + i) % e->dl.len];
+    e->spl_start = start; e->spl_end = end; e->spl_fade = fade;
+    e->spl_idx = 0; e->spl_active = 1;
+}
+
+#define SPLICE_CHUNK 8u
+static void splice_service(engine_t *e)
+{
+    if (!e->spl_active) return;
+    uint32_t len = e->dl.len, fade = e->spl_fade;
+    float inv = 1.0f / (float)fade;
+    uint32_t n = fade - e->spl_idx;
+    if (n > SPLICE_CHUNK) n = SPLICE_CHUNK;
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t i = e->spl_idx + k;
+        float w = (float)(i + 1u) * inv;
+        uint32_t tail = (e->spl_end   + len - fade + i) % len;
+        uint32_t lead = (e->spl_start + len - fade + i) % len;
+        e->dl.buf[tail] = (1.0f - w) * e->dl.buf[tail] + w * e->dl.buf[lead];
+    }
+    e->spl_idx += n;
+    if (e->spl_idx >= fade) e->spl_active = 0;
+}
+
+void engine_resplice(engine_t *e)
+{
+    splice_arm(e, e->xport.loop_start, e->xport.loop_end, LOOP_SPLICE_FADE);
+}
+
 float engine_process_multi(engine_t *e, float input, float time_raw01, float chan[NUM_TAPS])
 {
+    splice_service(e);
     /* 1. delay-time control -> tap positions (continuous, slewed) */
     float mult = tc_update(&e->time, time_raw01);
     /* VARISPEED TAP FREEZE (stock tape model): on the original hardware the
@@ -243,7 +283,7 @@ void engine_write(engine_t *e)  { transport_begin_write(&e->xport, e->dl.wpos); 
 void engine_recirc(engine_t *e)
 {
     transport_begin_recirc(&e->xport, e->dl.wpos);
-    dl_loop_splice(&e->dl, e->xport.loop_start, e->xport.loop_end, LOOP_SPLICE_FADE);
+    splice_arm(e, e->xport.loop_start, e->xport.loop_end, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
 }
@@ -262,7 +302,7 @@ void engine_recirc_window(engine_t *e, uint32_t window)
      * right — reads are window-mapped — but the head never wrapped, so no
      * end-of-cycle events fired). */
     e->dl.wpos = start;
-    dl_loop_splice(&e->dl, start, e->xport.loop_end, LOOP_SPLICE_FADE);
+    splice_arm(e, start, e->xport.loop_end, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
 }
@@ -276,7 +316,7 @@ void engine_recirc_span(engine_t *e, uint32_t start, uint32_t end)
     e->xport.loop_start = start;
     e->xport.loop_end = end;
     e->dl.wpos = start;
-    dl_loop_splice(&e->dl, start, end, LOOP_SPLICE_FADE);
+    splice_arm(e, start, end, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
 }
@@ -290,7 +330,7 @@ void engine_recirc_between(engine_t *e, uint32_t start)
     e->xport.loop_start = start;
     e->xport.loop_end = head;
     e->dl.wpos = start;
-    dl_loop_splice(&e->dl, start, head, LOOP_SPLICE_FADE);
+    splice_arm(e, start, head, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
 }

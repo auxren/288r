@@ -200,8 +200,7 @@ void looper_tick(looper_t *lp, engine_t *e,
          * crossfade + guard samples — the wrap was a hard discontinuity
          * again (field: "staticy" when taps/varispeed cross it). Re-splice
          * the window so the seam is continuous over the new content. */
-        dl_loop_splice(&e->dl, e->xport.loop_start, e->xport.loop_end,
-                       LOOP_SPLICE_FADE);
+        engine_resplice(e);   /* chunked: the inline burst tore the ISR */
     }
     lp->od_prev = od_now;
     e->od_active = od_now;
