@@ -329,6 +329,39 @@ better engine; add new features/controls/modulation only *after* the clone is na
   evidence — none found, so #9 leans design-option. NOT hardware-verified (bench offline) —
   graduate to v1.2.1 on field confirmation. Store-end held window shows write+READY LEDs
   together ("stored and waiting") — documented, was misread as stuck-in-write.
+- **2026-07-29 marathon debug session (owner live): THE LED/EOC BLEED CRACKED — bench-8's
+  open mystery CLOSED.** The DSP-driven indicator pins (PA0/1/7/8/11) electrically bleed
+  into the audio path on EDGES. Proven by g_dbg_eoc_mute (wrap zipper vanished, owner ear)
+  then g_dbg_led_mute in bsp/panel.c (the family-wide choke-point mute — od-session zipper
+  vanished too). Two firing patterns: the EOC wrap blip (fuzz burst per loop pass, ~0.35-2 s
+  periodicity in the owner's zipps.wav = the loop length), and threshold-compare LEDs
+  edge-storming at up to block rate when an envelope hovers at threshold (AUTO/presence
+  during sound-on-sound). Shipped mitigations (LEDs stay on): ~100 ms dwell hysteresis
+  (LED_DWELL_BLOCKS) on AUTO/presence, KS breathing PWM (a 3 kHz edge stream) -> slow
+  on/off, EOC blip 2 ticks -> 1 (~5 ms). If a whisper remains: bisect LED pin vs the
+  PA7/PA8 jack pulses; consider TIM hardware-PWM drive (all 5 pins are timer channels).
+  SAME SESSION, also landed: **varispeed TAP FREEZE** (stock tape-head model: on a playing
+  loop the multiplier is MOTOR-ONLY, tap sample-distances hold capture scale — live
+  respacing double-applied the knob and the fast sweeps aliased through Hermite = 'zippers
+  then corrects', owner-confirmed fixed); **overdub v2**: slew-gain write limiter (the
+  memoryless knee flat-topped stacks at ±0.92 = 'digitally clippy'; then the fast-attack
+  follower gain-rippled at 2x signal = harmonic distortion baked in — now peak-hold env +
+  ~5 ms slewed gain, THD 0.02%), varispeed-clock input resampling (box-decimate rate<1 /
+  linear interp rate>1; ZOH dropped/duplicated = mid-od knob zipper), hard FS clamp
+  (limiter lag baked 1.092 content), 2-pole ~10 kHz squeal guard on the layered input
+  (an 18.87 kHz codec-round-trip feedback mode carried 13% of loop energy after od
+  sessions — 'a little FM where layers overlap' = beats between layers' carrier copies);
+  varispeed widened to ANY playing loop (owner ask). Field lab lessons (hard-won):
+  g_dbg_panel.isr_pk is a NEVER-RESET boot latch re-copied every slow tick — reset
+  g_isr_pk (the real static) or every read shows the all-time max (a 115% one-shot from
+  the capture splice read as 'constant overrun' for an hour); re-nm EVERY address after
+  EVERY build (a stale poke hit g_env); the owner's Big Six ch7 capture chain is NOT the
+  mixed out (solo walk unaffected) — content dumps from SDRAM are the only trustworthy
+  audio forensics; input-A rail clipping (peak parked at exactly 1.0 in content) is the
+  gain-staging signature — check it FIRST on any 'staticy capture' report (also the
+  leading #9 percussive-clipping suspect). Manual ch5 rewritten: signal-in = the FM input
+  (stale 'dead analog path' text), plus a check-signal-in-first troubleshooting callout.
+  Live ISR load in TIME-recirc measured ~90% of budget — tight; watch as features land.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
