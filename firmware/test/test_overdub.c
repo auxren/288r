@@ -36,18 +36,15 @@ int main(void)
     ck("idle overdub: content untouched",
        fabsf(buf[(ls + 4000u) % LEN] - 0.25f) < 1e-6f);
 
-    /* ---- one settled pass: old*decay + input (after the ~10 ms ramp) ------ */
+    /* ---- exact accumulation, measured MID-HOLD with the ramp pre-settled -- */
+    e.od_gain = 1.0f;          /* skip the engage ramp for deterministic math */
     e.od_active = 1;
-    for (int i = 0; i < 16000; i++) engine_process_multi(&e, 0.10f, 0.5f, chan);
-    e.od_active = 0;
     for (int i = 0; i < 8000; i++) engine_process_multi(&e, 0.10f, 0.5f, chan);
-    /* the release ramp keeps writing (decaying) for ~90 ms after od_active
-     * clears, so the pass count isn't exact — assert the accumulation lands
-     * in the 2-to-3.5-pass envelope instead of chasing exact arithmetic */
-    float v2 = buf[(ls + 4000u) % LEN];
-    float lo2 = (0.25f * 0.95f + 0.10f) * 0.95f + 0.10f;          /* 2 passes */
-    float hi2 = ((lo2 * 0.95f) + 0.10f) * 0.95f + 0.10f + 0.02f;  /* ~3.5    */
-    ck("accumulation within the 2-3.5 pass envelope", v2 >= lo2 - 5e-3f && v2 <= hi2);
+    float v1p = buf[(ls + 4000u) % LEN];
+    ck("one pass mid-hold: old*decay + input",
+       fabsf(v1p - (0.25f * 0.95f + 0.10f)) < 1e-3f);
+    e.od_active = 0;
+    for (int i = 0; i < 16000; i++) engine_process_multi(&e, 0.10f, 0.5f, chan);
 
     /* ---- release: after the release ramp, content stable ------------------ */
     for (int i = 0; i < 16000; i++) engine_process_multi(&e, 0.0f, 0.5f, chan);
