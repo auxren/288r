@@ -25,6 +25,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     for (int i = 0; i < NUM_TAPS; i++) e->fm_off[i] = 0.0f;
     e->od_active = 0;
     e->od_decay = 0.95f;
+    e->od_gain = 0.0f;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -81,20 +82,25 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
         }
         e->lp_rate = r;
         e->lp_phase += r;
-        if (e->od_active) {
-            /* OVERDUB: condition the input exactly like the write path, then
-             * lay it over every position the head visits this sample (ZOH
-             * across varispeed skips — no gaps at rate > 1). Existing
-             * material fades by od_decay per pass; a soft ceiling lets a
-             * wall of layers bloom instead of clipping. */
+        /* OVERDUB: ramp the layered input in/out over ~10 ms at the hold
+         * edges (a step at engage/release wrote a click front every tap
+         * crossed each pass — field: "staticy"), and knee the WRITTEN value
+         * at 0.75 with asymptote 1.0 — the same regime the output stage is
+         * linear in, so stacked layers compress gracefully instead of
+         * parking the whole loop in the output limiter (field: "digitally
+         * clippy"; the old 2.0 ceiling overshot DAC-linear range). */
+        if (e->od_active)      { e->od_gain += (1.0f - e->od_gain) * 0.001f; }
+        else if (e->od_gain > 0.0f) { e->od_gain -= e->od_gain * 0.001f;
+                                      if (e->od_gain < 1e-4f) e->od_gain = 0.0f; }
+        if (e->od_gain > 0.0f) {
             float xo = mixer_input(input, e->in_gain);
-            xo = bw_process(&e->bw, xo);
+            xo = bw_process(&e->bw, xo) * e->od_gain;
             while (e->lp_phase >= 1.0f) {
                 float v = e->dl.buf[e->dl.wpos] * e->od_decay + xo;
                 float a = (v < 0.0f) ? -v : v;
-                if (a > 1.0f) {
-                    float ex = a - 1.0f;
-                    a = 1.0f + ex / (1.0f + ex);     /* asymptote 2.0 */
+                if (a > 0.75f) {
+                    float ex = a - 0.75f;
+                    a = 0.75f + ex / (1.0f + ex * 4.0f); /* knee@0.75, asym 1.0 */
                     v = (v < 0.0f) ? -a : a;
                 }
                 e->dl.buf[e->dl.wpos] = v;

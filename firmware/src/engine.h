@@ -70,6 +70,9 @@ typedef struct {
                                       float with zero generational loss.      */
     float        od_decay;         /* per-pass fade of existing material while
                                       overdubbing (~0.95); no effect when idle */
+    float        od_gain;          /* engage/release ramp (~10 ms) on the
+                                      layered input — no click fronts in the
+                                      buffer at the hold edges               */
 } engine_t;
 
 /* buf/len: delay memory. base_delay: cycle length in samples (SHORT/FULL).

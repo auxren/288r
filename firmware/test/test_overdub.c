@@ -36,14 +36,21 @@ int main(void)
     ck("idle overdub: content untouched",
        fabsf(buf[(ls + 4000u) % LEN] - 0.25f) < 1e-6f);
 
-    /* ---- one overdubbed pass: old*decay + input --------------------------- */
+    /* ---- one settled pass: old*decay + input (after the ~10 ms ramp) ------ */
     e.od_active = 1;
-    for (int i = 0; i < 8000; i++) engine_process_multi(&e, 0.10f, 0.5f, chan);
+    for (int i = 0; i < 16000; i++) engine_process_multi(&e, 0.10f, 0.5f, chan);
     e.od_active = 0;
-    float expect = 0.25f * 0.95f + 0.10f;
-    ck("one pass: old*decay + input", fabsf(buf[(ls + 4000u) % LEN] - expect) < 1e-3f);
+    for (int i = 0; i < 8000; i++) engine_process_multi(&e, 0.10f, 0.5f, chan);
+    /* the release ramp keeps writing (decaying) for ~90 ms after od_active
+     * clears, so the pass count isn't exact — assert the accumulation lands
+     * in the 2-to-3.5-pass envelope instead of chasing exact arithmetic */
+    float v2 = buf[(ls + 4000u) % LEN];
+    float lo2 = (0.25f * 0.95f + 0.10f) * 0.95f + 0.10f;          /* 2 passes */
+    float hi2 = ((lo2 * 0.95f) + 0.10f) * 0.95f + 0.10f + 0.02f;  /* ~3.5    */
+    ck("accumulation within the 2-3.5 pass envelope", v2 >= lo2 - 5e-3f && v2 <= hi2);
 
-    /* ---- release: content stable again ------------------------------------ */
+    /* ---- release: after the release ramp, content stable ------------------ */
+    for (int i = 0; i < 16000; i++) engine_process_multi(&e, 0.0f, 0.5f, chan);
     float held = buf[(ls + 4000u) % LEN];
     for (int i = 0; i < 16000; i++) engine_process_multi(&e, 0.9f, 0.5f, chan);
     ck("released: content stable", buf[(ls + 4000u) % LEN] == held);
@@ -72,7 +79,7 @@ int main(void)
         float a = fabsf(buf[(ls + k) % LEN]); if (a > mx) mx = a;
     }
     printf("      max |buffer| after 10 hot passes = %.3f\n", mx);
-    ck("soft ceiling bounds accumulation (<2.05)", mx < 2.05f);
+    ck("knee ceiling keeps content DAC-linear-ish (<1.01)", mx < 1.01f);
 
     /* ---- release re-splice (via looper): seam continuous over new layers -- */
     /* simulate what looper does on release: re-splice and check the guards
