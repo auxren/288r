@@ -140,6 +140,10 @@
 #define LED_INPUT_CLIP_MODE  1
 #define CLIP_IN_THRESH       0.9999f  /* |input| at/over this = ADC rail       */
 #define CLIP_HOLD_BLOCKS     750u     /* ~250 ms at ~3000 blocks/s             */
+#define LED_DWELL_BLOCKS  300u    /* ~100 ms min dwell per indicator state:
+                                     threshold-compare LEDs edge-stormed at
+                                     block rate and the pin edges bleed into
+                                     audio (field forensics 2026-07-29)     */
 
 /* ---- multiplier control source (both OFF for a clean first bring-up) ----- */
 /* The multiplier (delay-time / pitch amount) has two possible live sources:

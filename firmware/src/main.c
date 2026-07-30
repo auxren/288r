@@ -468,26 +468,40 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 #endif
     /* KS mode indicator: READY LED breathes (~2 s cycle, PWM at block rate) */
     if (g_ks_mode && g_blocks >= g_twinkle_until) {
+        /* breathing READY: slow on/off at the breath rate (was block-rate
+         * software PWM = a 3 kHz edge stream on a bleed-prone pin — see the
+         * LED-bleed forensics 2026-07-29) */
         uint32_t ph = g_blocks % 6000u;
-        uint32_t tri = (ph < 3000u) ? ph : (6000u - ph);      /* 0..3000 */
-        uint32_t duty = (tri * 255u) / 3000u;
-        bsp_panel_ind(3, (((g_blocks * 97u) & 0xFFu) < duty) ? 0 : 1);
+        bsp_panel_ind(3, (ph < 3000u) ? 0 : 1);
     }
     /* AUTO/presence LED (PA11) — owner spec: illuminate ONLY when incoming
      * audio exceeds the threshold set by the sens. knob (sens channel envelope
      * vs the fixed reference — same comparison that fires the auto-trigger).
      * Until the sens slot is wire-proven, fall back to the stock 0.25 FS law. */
+    /* DWELL hysteresis (field 2026-07-29): this pin's edges bleed into the
+     * audio path, and a raw per-block compare edge-storms at up to 3 kHz
+     * while the envelope hovers at threshold (the overdub-session 'zipper').
+     * A state must persist LED_DWELL_BLOCKS (~100 ms) before the pin moves:
+     * worst case ~10 gentle edges/s, and the LED still reads honestly. */
+    {
+        static uint8_t  led4_cur = 1, led4_pend = 1;
+        static uint32_t led4_since = 0;
 #if SENS_IN_SLOT >= 0
-    if (g_blocks >= g_twinkle_until)
-        bsp_panel_ind(4, (g_sens_env[SENS_IN_SLOT - 1] > SENS_REF &&
-                          g_sens_env[SENS_IN_SLOT - 1] >
-                              g_lp.baseline * LP_ONSET_RATIO) ? 0 : 1);
-                          /* presence = the same self-corroborating law the
-                             trigger uses: above the knob floor AND clearly
-                             above the ambient/bleed baseline (#10 v3) */
+        uint8_t want = (g_sens_env[SENS_IN_SLOT - 1] > SENS_REF &&
+                        g_sens_env[SENS_IN_SLOT - 1] >
+                            g_lp.baseline * LP_ONSET_RATIO) ? 0 : 1;
+                        /* presence = the same self-corroborating law the
+                           trigger uses (#10 v3) */
 #else
-    if (g_blocks >= g_twinkle_until) bsp_panel_ind(4, (g_env > 0.25f) ? 0 : 1);
+        uint8_t want = (g_env > 0.25f) ? 0 : 1;
 #endif
+        if (want != led4_pend) { led4_pend = want; led4_since = g_blocks; }
+        if (led4_pend != led4_cur &&
+            (uint32_t)(g_blocks - led4_since) >= LED_DWELL_BLOCKS) {
+            led4_cur = led4_pend;
+            if (g_blocks >= g_twinkle_until) bsp_panel_ind(4, led4_cur);
+        }
+    }
 }
 
 int main(void)
@@ -865,7 +879,7 @@ int main(void)
              * boundary — blip the end-of-cycle outputs (PA7/PA8) at each wrap,
              * the stock's loop-rate pulse/LED behavior. */
             if (!transport_should_write(&g_engine.xport)) {
-                if (g_engine.dl.wpos < g_prev_wpos) g_eoc_blink = 2;
+                if (g_engine.dl.wpos < g_prev_wpos) g_eoc_blink = 1;  /* 1 tick ~5 ms: halve the bleed window */
             }
             g_prev_wpos = g_engine.dl.wpos;
             if (g_dbg_eoc_mute) { g_eoc_blink = 0; }
