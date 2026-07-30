@@ -27,6 +27,10 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->od_decay = 0.95f;
     e->od_gain = 0.0f;
     e->od_env = 0.0f;
+    e->od_lim = 1.0f;
+    e->od_xprev = 0.0f;
+    e->od_xsum = 0.0f;
+    e->od_xn = 0u;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -96,21 +100,43 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
         if (e->od_gain > 0.0f) {
             float xo = mixer_input(input, e->in_gain);
             xo = bw_process(&e->bw, xo) * e->od_gain;
+            /* The layered input is RESAMPLED onto the loop's varispeed clock:
+             * rate < 1 box-averages the samples between writes (ZOH dropped
+             * them — zipper when the multiplier moved mid-overdub); rate > 1
+             * interpolates linearly across the multi-writes (ZOH duplicated
+             * them — images). */
+            e->od_xsum += xo;
+            e->od_xn++;
+            int nw = (int)e->lp_phase, j = 0;
             while (e->lp_phase >= 1.0f) {
-                float v = e->dl.buf[e->dl.wpos] * e->od_decay + xo;
-                /* WRITE LIMITER (shape-preserving): ride the summed level
-                 * with a fast-attack / slow-release envelope and scale the
-                 * whole write so it settles near 0.75 — a memoryless knee
-                 * here flat-topped hot stacks into a saturated square
-                 * (field: 'digitally clippy', plateaus at +/-0.92). */
+                float val;
+                j++;
+                if (nw <= 1) {
+                    val = e->od_xsum / (float)e->od_xn;
+                } else {
+                    val = e->od_xprev
+                        + (xo - e->od_xprev) * ((float)j / (float)nw);
+                }
+                float v = e->dl.buf[e->dl.wpos] * e->od_decay + val;
+                /* WRITE LIMITER: peak-hold envelope + a ~5 ms slewed GAIN.
+                 * The gain must move far below audio rate — a fast-attack
+                 * follower modulated the gain at 2x the signal frequency,
+                 * i.e. harmonic distortion written INTO the loop (field:
+                 * 'second overdub = distortion and grit'). Brief overs while
+                 * the gain settles ride the float headroom + output knee. */
                 float av = (v < 0.0f) ? -v : v;
-                if (av > e->od_env) e->od_env += (av - e->od_env) * 0.05f;
-                else                e->od_env += (av - e->od_env) * 0.0002f;
-                if (e->od_env > 0.75f) v *= 0.75f / e->od_env;
+                if (av > e->od_env) e->od_env = av;
+                else                e->od_env += (0.0f - e->od_env) * 0.0002f
+                                              + av * 0.0002f;
+                float tgt = (e->od_env > 0.75f) ? 0.75f / e->od_env : 1.0f;
+                e->od_lim += (tgt - e->od_lim) * 0.002f;
+                v *= e->od_lim;
                 e->dl.buf[e->dl.wpos] = v;
                 dl_advance_loop(&e->dl, ls, le);
                 e->lp_phase -= 1.0f;
             }
+            if (nw > 0) { e->od_xsum = 0.0f; e->od_xn = 0u; }
+            e->od_xprev = xo;
         } else {
             while (e->lp_phase >= 1.0f) {
                 dl_advance_loop(&e->dl, ls, le);

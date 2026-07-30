@@ -73,11 +73,20 @@ typedef struct {
     float        od_gain;          /* engage/release ramp (~10 ms) on the
                                       layered input — no click fronts in the
                                       buffer at the hold edges               */
-    float        od_env;           /* write-limiter envelope: rides the summed
-                                      level and scales the WHOLE write toward
-                                      0.75 smoothly — shape-preserving gain
-                                      riding instead of memoryless flat-tops
-                                      (field: saturated slab at +/-0.92)     */
+    float        od_env;           /* write-limiter peak envelope (instant
+                                      attack, slow decay)                    */
+    float        od_lim;           /* write-limiter GAIN, slewed ~5 ms toward
+                                      0.75/env: audio-rate gain ripple on the
+                                      old fast-attack follower was harmonic
+                                      distortion baked into the loop (field:
+                                      second overdub = grit)                 */
+    float        od_xprev;         /* previous layered-input sample: linear
+                                      interp for multi-writes (rate > 1)     */
+    float        od_xsum;          /* input accumulator: box-decimation for
+                                      dropped samples (rate < 1) — ZOH here
+                                      was audible zipper when the multiplier
+                                      moved during an overdub               */
+    uint32_t     od_xn;            /* samples accumulated                    */
 } engine_t;
 
 /* buf/len: delay memory. base_delay: cycle length in samples (SHORT/FULL).

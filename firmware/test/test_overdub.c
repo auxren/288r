@@ -1,7 +1,8 @@
 /* test_overdub.c — sound-on-sound (engine od_active/od_decay; owner feature).
  * While a loop plays with overdub engaged, every position the head visits
- * becomes old*decay + conditioned input, with ZOH across varispeed skips and
- * a soft ceiling. Idle = bit-exact passthrough.
+ * becomes old*decay + conditioned input, resampled onto the varispeed clock
+ * (box-decimate under rate<1, linear interp across multi-writes) and held
+ * near 0.75 by a slew-gain write limiter. Idle = bit-exact passthrough.
  */
 #include "engine.h"
 #include <stdio.h>
@@ -106,6 +107,72 @@ int main(void)
         for (uint32_t i = 0; i < 4u; i++)
             if (buf[(le2 + i) % LEN] != buf[(ls + i) % LEN]) ok = 0;
         ck("post-overdub re-splice restores guards", ok);
+    }
+
+    /* ---- limiter linearity: hot stacking must not WRITE distortion --------
+     * (field: 'second overdub = distortion and grit' — the old fast-attack
+     * follower modulated the gain at 2x the signal frequency, i.e. harmonic
+     * distortion baked into the loop.) Stack a correlated sine 30 passes so
+     * the limiter is continuously engaged, then Goertzel-THD the content. */
+    {
+        engine_t e2; static float b2[LEN];
+        engine_init(&e2, b2, LEN, 2000.0f, 0.4f, 1.6f, 0.02f);
+        const int W = 8000, CYC = 40;               /* 40 cycles in the loop */
+        for (int i = 0; i < 20000; i++)
+            engine_process_multi(&e2, 0.5f * (float)sin(2.0*M_PI*CYC*i/W),
+                                 0.5f, chan);
+        engine_recirc_window(&e2, (uint32_t)W);
+        uint32_t s2 = e2.xport.loop_start;
+        e2.od_active = 1; e2.od_gain = 1.0f;
+        for (int i = 0; i < 30 * W; i++)
+            engine_process_multi(&e2, 0.5f * (float)sin(2.0*M_PI*CYC*i/W),
+                                 0.5f, chan);
+        e2.od_active = 0;
+        double mag[5] = {0};
+        for (int h = 1; h <= 4; h++) {              /* Goertzel at h*f0 */
+            double cr = 0, ci = 0;
+            for (int i = 0; i < W; i++) {
+                float v = b2[(s2 + (uint32_t)i) % LEN];
+                cr += v * cos(2.0*M_PI*h*CYC*i/W);
+                ci += v * sin(2.0*M_PI*h*CYC*i/W);
+            }
+            mag[h] = sqrt(cr*cr + ci*ci);
+        }
+        double thd = sqrt(mag[2]*mag[2] + mag[3]*mag[3] + mag[4]*mag[4])
+                   / (mag[1] > 1e-9 ? mag[1] : 1e-9);
+        printf("      hot-stack content THD (h2..h4 / h1) = %.4f\n", thd);
+        ck("limiter writes no distortion (THD < 2%)", thd < 0.02);
+        ck("limited content is hot (fundamental present)",
+           mag[1] / (double)W * 2.0 > 0.5);
+    }
+
+    /* ---- fractional-rate overdub: no duplicate writes (ZOH signature) -----
+     * (field: multiplier moved mid-overdub = zipper.) Layer a sine at rate
+     * 1.5 into a silent loop: interp across the double-writes means no two
+     * consecutive content samples are bit-identical; ZOH duplicated ~1/3. */
+    {
+        engine_t e3; static float b3[LEN];
+        engine_init(&e3, b3, LEN, 2000.0f, 0.4f, 1.6f, 0.02f);
+        for (int i = 0; i < 20000; i++) engine_process_multi(&e3, 0.0f, 0.5f, chan);
+        engine_recirc_window(&e3, 8000u);
+        uint32_t s3 = e3.xport.loop_start;
+        /* capture ref = settled mult (1.0); rate 1.5 = raw for mult 1/1.5
+         * (linear taper: raw = (m - 0.4) / 1.2) */
+        float raw15 = (1.0f/1.5f - 0.4f) / 1.2f;
+        for (int i = 0; i < 60000; i++) engine_process_multi(&e3, 0.0f, raw15, chan);
+        e3.od_active = 1; e3.od_gain = 1.0f;
+        for (int i = 0; i < 30000; i++)
+            engine_process_multi(&e3, 0.7f * (float)sin(2.0*M_PI*i/173.0),
+                                 raw15, chan);
+        e3.od_active = 0;
+        int dup = 0, n = 0;
+        for (int i = 0; i < 7999; i++) {
+            float a2 = b3[(s3 + (uint32_t)i)  % LEN];
+            float b4 = b3[(s3 + (uint32_t)i+1u) % LEN];
+            if (fabsf(a2) > 0.05f) { n++; if (a2 == b4) dup++; }
+        }
+        printf("      rate-1.5 layer: %d duplicate pairs of %d\n", dup, n);
+        ck("no ZOH duplicates at fractional rate", n > 1000 && dup == 0);
     }
 
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);
