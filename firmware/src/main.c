@@ -265,6 +265,12 @@ volatile struct dbg_panel g_dbg_panel __attribute__((used));
 #define DWT_CYCCNT_REG (*(volatile uint32_t *)0xE0001004u)
 #define DEMCR_REG      (*(volatile uint32_t *)0xE000EDFCu)
 static volatile uint16_t g_isr_pk = 0;   /* max cycles/block >> 4 */
+/* superloop heartbeat for the ISR-side STARVATION BREAKER: overdub is
+ * cleared BY the superloop, so an ISR overload that starves the superloop
+ * latches od_active forever (field 2026-07-29: SOS on a ~3x varispeed loop
+ * froze the panel; SWD showed 100% ISR, od stuck 1). If the control loop
+ * has been silent ~50 ms, the ISR force-releases the overdub itself. */
+static volatile uint32_t g_loop_alive = 0;
 
 void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 {
@@ -284,6 +290,8 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
     else
         ps_set_loop_window(&g_pv.ps, 0u, 0u, g_engine.dl.len);
 #endif
+    if (g_engine.od_active && (uint32_t)(g_blocks - g_loop_alive) > 150u)
+        g_engine.od_active = 0;               /* starvation breaker */
     for (unsigned f = 0; f < frames; ++f) {
         float x = audio_in_to_f(in[f * TDM_SLOTS + AUDIO_IN_SLOT]);
 #if TIME_FM_ENABLE
@@ -646,6 +654,7 @@ int main(void)
     float mult_filt = 0.5f;
     pin_free(&g_mult_pin, 0.5f);
     for (;;) {
+        g_loop_alive = g_blocks;              /* starvation-breaker heartbeat */
 #if PITCH_VOICE_ENABLE
         /* de-glitch service: correlation-aligned splices for the pitch voice.
          * Cheap check per pass; the actual search (~250k MACs) runs only when a

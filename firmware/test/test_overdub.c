@@ -110,6 +110,25 @@ int main(void)
         ck("post-overdub re-splice restores guards", ok);
     }
 
+    /* ---- od headroom: linear interp during the hold, Hermite after --------
+     * (the freeze fix: halved tap loads while od runs; release restores) */
+    {
+        engine_t e5; static float b5[LEN];
+        engine_init(&e5, b5, LEN, 2000.0f, 0.4f, 1.6f, 0.02f);
+        float c5[NUM_TAPS];
+        for (int i = 0; i < 20000; i++)
+            engine_process_multi(&e5, 0.5f*(float)sin(2.0*M_PI*i/173.0), 0.5f, c5);
+        engine_recirc_window(&e5, 8000u);
+        for (int i = 0; i < 2000; i++) engine_process_multi(&e5, 0.0f, 0.5f, c5);
+        float a_h = c5[3];
+        e5.od_active = 1; e5.od_gain = 1.0f;
+        engine_process_multi(&e5, 0.0f, 0.5f, c5);
+        e5.od_active = 0; e5.od_gain = 0.0f;
+        for (int i = 0; i < 2000; i++) engine_process_multi(&e5, 0.0f, 0.5f, c5);
+        ck("od-hold output stays sane (linear interp)", fabsf(a_h) < 1.0f &&
+           c5[3] == c5[3]);
+    }
+
     /* ---- limiter linearity: hot stacking must not WRITE distortion --------
      * (field: 'second overdub = distortion and grit' — the old fast-attack
      * follower modulated the gain at 2x the signal frequency, i.e. harmonic

@@ -264,8 +264,15 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
             }
         }
         if (d_int < 1) { d_int = 1; d_frac = 0.0f; }   /* keep off the write head */
-        taps[i] = recirc ? dl_read_loop_frac(&e->dl, d_int, d_frac, ls, le, e->interp)
-                         : dl_read_frac(&e->dl, d_int, d_frac, e->interp);
+        /* OD HEADROOM: while overdub is held the write loop costs up to
+         * rate x (RMW + limiter) per sample ON TOP of the ~90% baseline —
+         * a ~3x varispeed overdub SATURATED the ISR and starved the
+         * superloop into a freeze (field 2026-07-29, SWD-captured). Linear
+         * interp halves the tap SDRAM loads for the duration of the hold;
+         * Hermite returns the moment od_gain decays out. */
+        dl_interp_t itp = (e->od_gain > 0.0f) ? DL_INTERP_LINEAR : e->interp;
+        taps[i] = recirc ? dl_read_loop_frac(&e->dl, d_int, d_frac, ls, le, itp)
+                         : dl_read_frac(&e->dl, d_int, d_frac, itp);
     }
 
     /* 4. mix: 8 per-tap DAC channels + the summed ("mixed") output */
