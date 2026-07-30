@@ -86,6 +86,32 @@ int main(void)
     measure_freq(&e, 1.0f, 6000, 2000);
     ck("rate clamped at 0.25", e.lp_rate >= 0.25f - 1e-6f && e.lp_rate < 0.26f);
 
+    /* ---- tap freeze: knob is MOTOR-ONLY while a loop plays ----------------
+     * (stock tape-head model; live respacing during varispeed double-applied
+     * the knob and aliased — field: 'zippers then corrects'.) */
+    {
+        engine_t e2; static float b2[96000];
+        engine_init(&e2, b2, 96000u, 2000.0f, 0.4f, 1.6f, 0.02f);
+        float ch2[NUM_TAPS];
+        for (int i = 0; i < 40000; i++) engine_process_multi(&e2, 0.2f, 0.5f, ch2);
+        e2.varispeed = 1;
+        engine_recirc_window(&e2, 8000u);
+        for (int i = 0; i < 20000; i++) engine_process_multi(&e2, 0.0f, 0.5f, ch2);
+        float d_before = taps_delay(&e2.taps, 7);
+        for (int i = 0; i < 40000; i++) engine_process_multi(&e2, 0.0f, 0.9f, ch2);
+        float d_after = taps_delay(&e2.taps, 7);
+        printf("      loop: tap7 %.1f -> %.1f under a knob sweep\n", d_before, d_after);
+        ck("loop playback: taps frozen under the knob", 
+           fabsf(d_after - d_before) < 1.0f);
+        ck("loop playback: rate follows the knob",
+           e2.lp_rate < 0.85f);
+        engine_write(&e2);
+        for (int i = 0; i < 60000; i++) engine_process_multi(&e2, 0.2f, 0.9f, ch2);
+        float d_live = taps_delay(&e2.taps, 7);
+        printf("      live: tap7 -> %.1f after returning to write\n", d_live);
+        ck("live delay: taps respace again", d_live > d_before * 1.2f);
+    }
+
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

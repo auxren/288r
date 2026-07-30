@@ -110,13 +110,22 @@ void bsp_panel_mux_boot_state(void)
  * transport mode + loop-wrap pulses). Active-LOW at the LEDs. */
 static const uint8_t IND_PIN[5] = { 0, 1, 7, 8, 11 };
 
+/* SWD live A/B: poke 1 to freeze EVERY DSP-driven indicator pin (PA0/1/7/
+ * 8/11). Field forensics 2026-07-29: hard edges on these pins bleed into
+ * the audio path (EOC blip = zipper at every loop wrap, confirmed by mute;
+ * the AUTO/presence threshold re-compares every block and edge-storms while
+ * playing near threshold = the overdub-session zipper). */
+volatile uint8_t g_dbg_led_mute = 0;
+
 void bsp_panel_ind(unsigned idx, int level)
 {
+    if (g_dbg_led_mute) return;
     if (idx < 5u) a_set(IND_PIN[idx], level);
 }
 
 void bsp_panel_strobe(int level)   /* legacy name: indicator 0 (input LED) */
 {
+    if (g_dbg_led_mute) return;
     a_set(0, level);
 }
 

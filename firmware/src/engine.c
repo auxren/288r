@@ -54,7 +54,18 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
 {
     /* 1. delay-time control -> tap positions (continuous, slewed) */
     float mult = tc_update(&e->time, time_raw01);
-    taps_update(&e->taps, mult);
+    /* VARISPEED TAP FREEZE (stock tape model): on the original hardware the
+     * play heads are fixed — changing speed repitches the loop but the tap
+     * distances IN SAMPLES never move. Applying the live multiplier to the
+     * taps during varispeed playback double-applied the knob (motor + head
+     * movement at once) and the fast read sweeps aliased through Hermite
+     * (field: 'zippers and distorts for a little then corrects'). While a
+     * loop plays under varispeed, taps hold their capture-time scale; the
+     * knob is the motor alone. Live/all-sounds write keeps respacing — that
+     * is the chorus/flanger behavior. */
+    float m_taps = (e->varispeed && !transport_should_write(&e->xport))
+                   ? e->lp_mult_ref : mult;
+    taps_update(&e->taps, m_taps);
 
     const int recirc = !transport_should_write(&e->xport);
     const uint32_t ls = e->xport.loop_start, le = e->xport.loop_end;
