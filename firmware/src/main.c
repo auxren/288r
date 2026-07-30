@@ -132,6 +132,9 @@ static uint8_t g_pulse_prev = 0;
 
 /* signal-in FM presence envelope (ISR-only state) */
 static float g_fm_env = 0.0f;
+/* SWD live A/B: poke 1 to hard-mute the signal-in FM path (diagnosis:
+ * separating 'FM by a patched source / bleed' from everything else). */
+volatile uint8_t g_fm_mute = 0;
 
 /* chain-clip indicator (PA0 repurposed, LED_INPUT_CLIP_MODE): block count until
  * which the LED stays lit, + an event counter for SWD verification. */
@@ -300,6 +303,7 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             if (gate < 0.0f) gate = 0.0f;
             if (gate > 1.0f) gate = 1.0f;
             fms *= gate;
+            if (g_fm_mute) fms = 0.0f;
             g_engine.time_fm = fms * TIME_FM_SPAN;
 #if PITCH_VOICE_ENABLE
             g_pv.ps.fm_in = fms * TIME_FM_VOICE_SPAN;
