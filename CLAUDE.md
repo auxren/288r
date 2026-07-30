@@ -362,6 +362,17 @@ better engine; add new features/controls/modulation only *after* the clone is na
   leading #9 percussive-clipping suspect). Manual ch5 rewritten: signal-in = the FM input
   (stale 'dead analog path' text), plus a check-signal-in-first troubleshooting callout.
   Live ISR load in TIME-recirc measured ~90% of budget — tight; watch as features land.
+- **v1.2.3-rc3 PRE-RELEASE (2026-07-30):** the marathon-session batch shipped (overdub v2
+  line, tap freeze, chunked splice, LED mitigations, starvation breaker + od linear-interp
+  headroom — od held at rate 1 now measures BELOW idle baseline; idle TIME-recirc ~93%).
+  All open issues commented with rc3 asks. COMMITTED on-tracker: #13 floor-law-off
+  diagnostic build (one comparison site in looper.c) + SENS_REF range cal (~-50..-6 dB
+  sweep; jimfowler sending usable-arc data — his unit has NO output bleed, ours does:
+  per-unit variance is real); #24 = NEXT DEBUG TARGET: spike crossing ratio 1.0 upward in
+  pitch mode — suspect the AA engage boundary (up-shift-only = the +side fingerprint;
+  force-sweep g_dbg_ratio_force over SWD to reproduce handless); #18 closing as by-design
+  in a few days (tap time-scrub physics; explanation promised for the manual). Graduation
+  to v1.2.3 on field verdicts (#13/#16/#19/#20).
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
