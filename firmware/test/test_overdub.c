@@ -39,6 +39,7 @@ int main(void)
 
     /* ---- exact accumulation, measured MID-HOLD with the ramp pre-settled -- */
     e.od_gain = 1.0f;          /* skip the engage ramp for deterministic math */
+    e.od_lp1 = e.od_lp2 = 0.10f;  /* pre-charge the squeal-guard LP (DC-unity) */
     e.od_active = 1;
     for (int i = 0; i < 8000; i++) engine_process_multi(&e, 0.10f, 0.5f, chan);
     float v1p = buf[(ls + 4000u) % LEN];
@@ -179,6 +180,36 @@ int main(void)
         }
         printf("      rate-1.5 layer: %d duplicate pairs of %d\n", dup, n);
         ck("no ZOH duplicates at fractional rate", n > 1000 && dup == 0);
+    }
+
+    /* ---- squeal guard: ultrasonic input is attenuated, audible band isn't -
+     * (field: an 18.9 kHz tone at 13%% of loop energy after od sessions —
+     * a codec-round-trip feedback mode. The od input LP must break it.) */
+    {
+        engine_t e4; static float b4[LEN];
+        float g19 = 0.0f, g1k = 0.0f;
+        for (int pass = 0; pass < 2; pass++) {
+            float frq = pass ? 1000.0f : 19000.0f;
+            engine_init(&e4, b4, LEN, 2000.0f, 0.4f, 1.6f, 0.02f);
+            for (int i = 0; i < 20000; i++) engine_process_multi(&e4, 0.0f, 0.5f, chan);
+            engine_recirc_window(&e4, 8000u);
+            uint32_t s4 = e4.xport.loop_start;
+            e4.od_active = 1; e4.od_gain = 1.0f;
+            for (int i = 0; i < 8000; i++)      /* exactly ONE pass: no
+                                                   accumulation confound */
+                engine_process_multi(&e4,
+                    0.5f * (float)sin(2.0*M_PI*frq*i/96000.0), 0.5f, chan);
+            e4.od_active = 0;
+            float mx = 0.0f;
+            for (int i = 0; i < 8000; i++) {
+                float av4 = fabsf(b4[(s4 + (uint32_t)i) % LEN]);
+                if (av4 > mx) mx = av4;
+            }
+            if (pass) g1k = mx; else g19 = mx;
+        }
+        printf("      od write level: 1 kHz %.3f   19 kHz %.3f\n", g1k, g19);
+        ck("squeal guard: 19 kHz attenuated >8 dB vs 1 kHz", g19 < g1k * 0.4f);
+        ck("squeal guard: audible band preserved (>0.4)", g1k > 0.4f);
     }
 
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);

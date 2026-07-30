@@ -87,6 +87,15 @@ typedef struct {
                                       was audible zipper when the multiplier
                                       moved during an overdub               */
     uint32_t     od_xn;            /* samples accumulated                    */
+    float        od_lp1, od_lp2;   /* 2-pole ~10 kHz lowpass on the LAYERED
+                                      INPUT only: breaks ultrasonic feedback
+                                      modes through the sound-on-sound loop
+                                      (field forensics: an 18.9 kHz tone at
+                                      13%% of loop energy after od sessions —
+                                      codec round-trip resonance, held at the
+                                      edge of stability by the write limiter).
+                                      Inaudible on layers: tape sound-on-sound
+                                      loses top end by nature.               */
 } engine_t;
 
 /* buf/len: delay memory. base_delay: cycle length in samples (SHORT/FULL).

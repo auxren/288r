@@ -31,6 +31,8 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->od_xprev = 0.0f;
     e->od_xsum = 0.0f;
     e->od_xn = 0u;
+    e->od_lp1 = 0.0f;
+    e->od_lp2 = 0.0f;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -100,6 +102,11 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
         if (e->od_gain > 0.0f) {
             float xo = mixer_input(input, e->in_gain);
             xo = bw_process(&e->bw, xo) * e->od_gain;
+            /* squeal guard: 2x one-pole at ~10 kHz (see od_lp1 in engine.h) */
+            #define OD_LP_A 0.480f
+            e->od_lp1 += (xo - e->od_lp1) * OD_LP_A;
+            e->od_lp2 += (e->od_lp1 - e->od_lp2) * OD_LP_A;
+            xo = e->od_lp2;
             /* The layered input is RESAMPLED onto the loop's varispeed clock:
              * rate < 1 box-averages the samples between writes (ZOH dropped
              * them — zipper when the multiplier moved mid-overdub); rate > 1
