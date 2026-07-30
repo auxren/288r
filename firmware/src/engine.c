@@ -26,6 +26,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->od_active = 0;
     e->od_decay = 0.95f;
     e->od_gain = 0.0f;
+    e->od_env = 0.0f;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -97,12 +98,15 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
             xo = bw_process(&e->bw, xo) * e->od_gain;
             while (e->lp_phase >= 1.0f) {
                 float v = e->dl.buf[e->dl.wpos] * e->od_decay + xo;
-                float a = (v < 0.0f) ? -v : v;
-                if (a > 0.75f) {
-                    float ex = a - 0.75f;
-                    a = 0.75f + ex / (1.0f + ex * 4.0f); /* knee@0.75, asym 1.0 */
-                    v = (v < 0.0f) ? -a : a;
-                }
+                /* WRITE LIMITER (shape-preserving): ride the summed level
+                 * with a fast-attack / slow-release envelope and scale the
+                 * whole write so it settles near 0.75 — a memoryless knee
+                 * here flat-topped hot stacks into a saturated square
+                 * (field: 'digitally clippy', plateaus at +/-0.92). */
+                float av = (v < 0.0f) ? -v : v;
+                if (av > e->od_env) e->od_env += (av - e->od_env) * 0.05f;
+                else                e->od_env += (av - e->od_env) * 0.0002f;
+                if (e->od_env > 0.75f) v *= 0.75f / e->od_env;
                 e->dl.buf[e->dl.wpos] = v;
                 dl_advance_loop(&e->dl, ls, le);
                 e->lp_phase -= 1.0f;

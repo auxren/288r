@@ -73,6 +73,11 @@ typedef struct {
     float        od_gain;          /* engage/release ramp (~10 ms) on the
                                       layered input — no click fronts in the
                                       buffer at the hold edges               */
+    float        od_env;           /* write-limiter envelope: rides the summed
+                                      level and scales the WHOLE write toward
+                                      0.75 smoothly — shape-preserving gain
+                                      riding instead of memoryless flat-tops
+                                      (field: saturated slab at +/-0.92)     */
 } engine_t;
 
 /* buf/len: delay memory. base_delay: cycle length in samples (SHORT/FULL).

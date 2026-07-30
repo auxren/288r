@@ -67,16 +67,34 @@ int main(void)
     }
     ck("varispeed overdub: no unwritten gaps", gaps == 0);
 
-    /* ---- soft ceiling: sustained hot layering stays bounded --------------- */
+    /* ---- sustained hot layering: bounded AND shape-preserving ------------- */
     e.od_active = 1;
-    for (int i = 0; i < 80000; i++) engine_process_multi(&e, 0.9f, 0.5f, chan);
+    for (int i = 0; i < 80000; i++)
+        engine_process_multi(&e, 0.9f * (float)sin(2.0 * M_PI * i / 173.0),
+                             0.5f, chan);
     e.od_active = 0;
     float mx = 0.0f;
     for (uint32_t k = 0; k < 8000u; k++) {
         float a = fabsf(buf[(ls + k) % LEN]); if (a > mx) mx = a;
     }
     printf("      max |buffer| after 10 hot passes = %.3f\n", mx);
-    ck("knee ceiling keeps content DAC-linear-ish (<1.01)", mx < 1.01f);
+    ck("write limiter keeps content near DAC-linear (<0.85)", mx < 0.85f);
+    {   /* shape preserved: no flat-top runs (the old knee squared the wave) */
+        int runs = 0, i2 = 0;
+        while (i2 < 7999) {
+            float ai = fabsf(buf[(ls + (uint32_t)i2) % LEN]);
+            if (ai > 0.5f) {
+                int j2 = i2;
+                while (j2 + 1 < 8000 &&
+                       fabsf(buf[(ls + (uint32_t)(j2+1)) % LEN]
+                             - buf[(ls + (uint32_t)i2) % LEN]) < 1e-4f) j2++;
+                if (j2 - i2 >= 3) runs++;
+                i2 = j2 + 1;
+            } else i2++;
+        }
+        printf("      flat-top runs after hot stacking = %d\n", runs);
+        ck("no flat-topping (shape-preserving limiter)", runs == 0);
+    }
 
     /* ---- release re-splice (via looper): seam continuous over new layers -- */
     /* simulate what looper does on release: re-splice and check the guards
