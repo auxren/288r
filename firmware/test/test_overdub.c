@@ -74,6 +74,18 @@ int main(void)
     printf("      max |buffer| after 10 hot passes = %.3f\n", mx);
     ck("soft ceiling bounds accumulation (<2.05)", mx < 2.05f);
 
+    /* ---- release re-splice (via looper): seam continuous over new layers -- */
+    /* simulate what looper does on release: re-splice and check the guards
+     * mirror the (now-layered) head content and the tail meets the lead-in */
+    {
+        uint32_t le2 = e.xport.loop_end;
+        dl_loop_splice(&e.dl, ls, le2, LOOP_SPLICE_FADE);
+        int ok = 1;
+        for (uint32_t i = 0; i < 4u; i++)
+            if (buf[(le2 + i) % LEN] != buf[(ls + i) % LEN]) ok = 0;
+        ck("post-overdub re-splice restores guards", ok);
+    }
+
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

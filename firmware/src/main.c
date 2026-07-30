@@ -799,9 +799,12 @@ int main(void)
              * only. all sounds keeps constant-pitch respacing (the chorus/
              * flanger behavior); pitch mode keeps the multiplier as its depth
              * control, so the two never fight over the knob. */
+            /* varispeed applies to ANY playing loop (owner field find: an
+             * all-sounds manual recirc under the multiplier should tape-warp
+             * like a looper capture — the engine only applies rate in RECIRC,
+             * so the live/chorus path is untouched by definition). */
             g_engine.varispeed =
-                (VARISPEED_ENABLE && !g_pitch_mode && !g_ks_mode &&
-                 pc.automode != 1u) ? 1 : 0;
+                (VARISPEED_ENABLE && !g_pitch_mode && !g_ks_mode) ? 1 : 0;
 
             /* KS gesture: HOLD next-sound (red momentary) ~2 s -> toggle the
              * string bank; twinkle confirms; a short flick keeps its normal

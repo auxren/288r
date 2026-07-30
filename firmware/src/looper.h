@@ -60,6 +60,7 @@ typedef struct {
     float    baseline;      /* published ambient floor (min-statistics)         */
     float    min_cur, min_prev; /* two-bucket sliding-minimum state             */
     uint16_t min_tick;      /* bucket age                                        */
+    uint8_t  od_prev;       /* overdub hold state last tick (release detection)  */
     uint32_t start;         /* head when the current take began                 */
     uint32_t end;           /* store-end hold: head when the window completed   */
     /* LED intents after each tick (1 = lit). led_ready is -1 when this state

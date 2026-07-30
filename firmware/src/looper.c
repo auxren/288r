@@ -14,6 +14,7 @@ void looper_init(looper_t *lp, const looper_cfg_t *cfg)
     lp->sil_ticks = 0;
     lp->baseline = 0.0f;
     lp->min_cur = 1.0e9f; lp->min_prev = 1.0e9f; lp->min_tick = 0;
+    lp->od_prev = 0;
     lp->start = 0;
     lp->end = 0;
     lp->led_write = 0;
@@ -193,5 +194,15 @@ void looper_tick(looper_t *lp, engine_t *e,
         break;
     }
     /* engine overdub follows the LOOP-state recirc hold exclusively */
-    e->od_active = (lp->state == LP_LOOP && rc_lvl) ? 1 : 0;
+    uint8_t od_now = (lp->state == LP_LOOP && rc_lvl) ? 1 : 0;
+    if (lp->od_prev && !od_now && lp->state == LP_LOOP) {
+        /* overdub RELEASE: layered writes chewed the capture-time seam
+         * crossfade + guard samples — the wrap was a hard discontinuity
+         * again (field: "staticy" when taps/varispeed cross it). Re-splice
+         * the window so the seam is continuous over the new content. */
+        dl_loop_splice(&e->dl, e->xport.loop_start, e->xport.loop_end,
+                       LOOP_SPLICE_FADE);
+    }
+    lp->od_prev = od_now;
+    e->od_active = od_now;
 }
