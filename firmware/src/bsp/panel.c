@@ -116,16 +116,19 @@ static const uint8_t IND_PIN[5] = { 0, 1, 7, 8, 11 };
  * the AUTO/presence threshold re-compares every block and edge-storms while
  * playing near threshold = the overdub-session zipper). */
 volatile uint8_t g_dbg_led_mute = 0;
+/* per-pin freeze bitmask (bit i = indicator i muted) — the bleed bisect:
+ * find WHICH of the 5 pins actually couples into audio, treat surgically. */
+volatile uint8_t g_dbg_led_mask = 0;
 
 void bsp_panel_ind(unsigned idx, int level)
 {
-    if (g_dbg_led_mute) return;
+    if (g_dbg_led_mute || ((g_dbg_led_mask >> idx) & 1u)) return;
     if (idx < 5u) a_set(IND_PIN[idx], level);
 }
 
 void bsp_panel_strobe(int level)   /* legacy name: indicator 0 (input LED) */
 {
-    if (g_dbg_led_mute) return;
+    if (g_dbg_led_mute || (g_dbg_led_mask & 1u)) return;
     a_set(0, level);
 }
 
