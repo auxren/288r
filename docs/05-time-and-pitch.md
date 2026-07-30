@@ -87,11 +87,22 @@ attenuverter scales the pitch CV.
 
 **Modulating delay time.** Delay-time modulation lives on the **c.v. in** jack (through the
 attenuverter, with a ~10 ms de-zipper glide) — patch LFOs, envelopes, or audio-rate sources
-there for chorus, flanging, and warble. The panel's **signal in** jack is the hardware's own
-self-modulation path (all-analog: jack → attenuverter → the time-CV net); note it has been
-found dead on multiple units from the original run. An earlier digital envelope→time feature
-on the sens. knob was removed in v1.2.2 (see issue #15): modulation belongs on the dedicated
-CV inputs, and the sens. knob's job is the looper capture threshold.
+there for chorus, flanging, and warble.
+
+**The signal in jack — audio-rate FM (v1.2.2+).** The **signal in** jack is a true audio-rate
+FM input, and its panel pot is the depth. What it modulates follows the multiplier's domain:
+in **TIME** it modulates the tap delay times (metallic FM textures, extreme flange); in
+**pitch** it modulates the voice's pitch (vibrato through clangorous FM). At zero depth it is
+completely out of the signal path.
+
+> **If your delays or loops sound like static or garbled noise, check signal in first.** A
+> forgotten source patched there (a free-running oscillator, say) frequency-modulates
+> everything the module plays — on a recirculating loop this reads as broken audio rather
+> than as an effect. Turn the signal-in pot fully down when you're not using it.
+
+An earlier digital envelope→time feature on the sens. knob was removed in v1.2.2 (see issue
+#15): modulation belongs on the dedicated inputs above, and the sens. knob's job is the looper
+capture threshold.
 
 **Pitch quality, measured on hardware:** up-shifts are anti-aliased (a ratio-tracked filter —
 about 70 dB of alias suppression at +1 octave, so bright material stays clean), splices are
