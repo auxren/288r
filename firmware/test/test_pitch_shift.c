@@ -196,7 +196,7 @@ int main(void)
             dl_init(&d2, db2, 1u<<17); dl_clear(&d2);
             pitchshift_t p2; ps_init(&p2, 0.060f * 96000.0f, 256.0f);
             ps_set_ratio(&p2, 1.0f); p2.ratio = 1.0f;
-            float ph2 = 0.0f, w2 = 2.0f * (float)M_PI * 300.0f / 96000.0f;
+            float ph2 = 0.0f, w2 = (float)TWO_PI * 300.0f / 96000.0f;
             float target = dir ? 1.05f : 0.95f;
             float prev = 0.0f, mx = 0.0f; int primed = 0;
             /* the field gesture: shift (dirties the grain phase), RETURN to
@@ -205,7 +205,7 @@ int main(void)
              * benign, which hides the bug) */
             for (int n = 0; n < 4*96000; n++) {
                 dl_write(&d2, 0.8f * sinf(ph2)); ph2 += w2;
-                if (ph2 >= 2.0f*(float)M_PI) ph2 -= 2.0f*(float)M_PI;
+                if (ph2 >= (float)TWO_PI) ph2 -= (float)TWO_PI;
                 float want = 1.0f;
                 if (n < 96000)            want = 0.90f;   /* dirty the phase */
                 else if (n < 2*96000)     want = 1.0f;    /* back to unity   */
