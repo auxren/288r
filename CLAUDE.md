@@ -373,6 +373,24 @@ better engine; add new features/controls/modulation only *after* the clone is na
   force-sweep g_dbg_ratio_force over SWD to reproduce handless); #18 closing as by-design
   in a few days (tap time-scrub physics; explanation promised for the manual). Graduation
   to v1.2.3 on field verdicts (#13/#16/#19/#20).
+- **v1.2.3-rc4 PRE-RELEASE (2026-07-31): #24 FIXED + a free 17-point ISR win.** RECLee's
+  knob-only repro (full-CCW->CW, every time) overturned the AA-boundary theory: the real bug
+  = the dry->voice WET SLIVER crossed by the ratio glide in <2 samples = an instant swap
+  between reads 30-60 ms apart (spike on every unity departure; born when the thinned
+  sliver met the quickened slew, both v1.2.2-era). Fix: the wet mix gets its OWN ~4 ms
+  smoothing decoupled from ratio (can't park mid-mix, can't snap) + grain phase pinned 0.5
+  in the unity bypass (bypass read == grain A @0.5 -> seamless exit; the ps-level phase bug
+  alone did NOT reproduce on host — the audible spike was the main.c mix layer, remember
+  the layering). Wire-proven: 12 forced unity crossings over SWD (g_dbg_ratio_force),
+  owner-ear clean. BONUS: the wet_s edit shifted inlining topology and DROPPED the ISR
+  ~93%->76% (bsp_audio_isr as own symbol; -4KB text) — headroom largely restored.
+  LESSONS: CI was silently red for a day (M_PI vs Linux gcc in the new test — CHECK CI
+  AFTER EVERY PUSH; a red CI silently blocks tagged releases); Big Six device index moved
+  then vanished (avfoundation enumeration empty — re-check `-list_devices` before captures).
+  Field state: #18 CLOSED (by-design, reporter-confirmed); #13 trending resolved as
+  gain-staging (jimfowler: sidechain works, riff was too-staccato, 206 too hot; scope
+  numbers pending; floor-off diagnostic build ON HOLD); #24 awaiting RECLee's rc4 verdict;
+  #16/#19/#20 awaiting rc3/rc4 confirmations -> then v1.2.3 graduates.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
