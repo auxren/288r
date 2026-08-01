@@ -744,10 +744,15 @@ int main(void)
                 float ratio = (1.0f - d01 * span) * fm_exp2f(volts * (1.0f/1.2f));
                 if (g_dbg_ratio_force > 0.0f) ratio = g_dbg_ratio_force;
                 pv_set_ratio(&g_pv, ratio);
-                /* publish the AA band's coefficients to CCM on change (the
-                 * ISR uses flash rows until the copy is republished) */
+                /* publish the AA band's coefficients to CCM on change. KEEP
+                 * BAND 0 WARM while pitch mode idles below the AA edge (#24
+                 * part 2): the blend now engages only on published rows, so
+                 * pre-publishing makes engage instant with zero flash-row
+                 * window — the request itself would otherwise cost ~5 ms of
+                 * ART-thrash exactly at the click-sensitive crossing. */
                 int req = g_pv.ps.aaband_req;
-                if (req >= 0 && req != g_aa_ccm_band) {
+                if (req < 0) req = 0;
+                if (req != g_aa_ccm_band) {
                     ps_set_aa_rows(&g_pv.ps, -1, 0);
                     memcpy(g_aa_ccm, ps_aa_flash_rows(req), sizeof g_aa_ccm);
                     ps_set_aa_rows(&g_pv.ps, req, (const float (*)[16])g_aa_ccm);

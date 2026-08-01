@@ -38,6 +38,14 @@ typedef struct {
     int      aarows_band;     /* band aarows holds, -1 = none                    */
     volatile int aaband_req;  /* band the ISR wants published (platform reads)   */
     int      aa_bypass;       /* test hook: 1 = force Hermite path (no AA)       */
+    int      aa_on;           /* hysteretic engage state (on >1.025, off <1.015):
+                                 a slow CV envelope hovering at the old hard
+                                 1.02 edge crossed it every cycle (#24 part 2) */
+    int      aa_lastband;     /* band used while blending out (band = -1)        */
+    float    aa_mix;          /* AA<->Hermite crossfade, ~5 ms slew: the engage
+                                 was a hard kernel swap = a click per crossing,
+                                 echoed by the tap pattern (field: 'clicks align
+                                 with the active taps')                          */
     /* --- looper awareness (#19) -------------------------------------------
      * When the engine RECIRCs, the write head snaps back at the loop boundary
      * — every read must window-map or the grains fetch garbage (bench: ~100+

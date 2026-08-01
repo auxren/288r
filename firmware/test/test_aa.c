@@ -33,6 +33,9 @@ static void run_tone2(float f_in, int N, float ratio, int bypass)
     for (int n = 0; n < N; n++) {
         dl_write(&d, sinf(ph));
         ph += w; if (ph >= (float)TWO_PI) ph -= (float)TWO_PI;
+        if (p.aaband_req >= 0 && p.aarows_band != p.aaband_req)
+            ps_set_aa_rows(&p, p.aaband_req,
+                           ps_aa_flash_rows(p.aaband_req)); /* emulate superloop */
         ps_service(&p, &d);
         outb[n] = ps_process(&p, &d, DL_INTERP_HERMITE);
     }
@@ -89,7 +92,10 @@ int main(void)
             float r = 1.0f + 0.5f * (float)n / (float)N;   /* 1.0 -> 1.5:
                 crosses the Hermite<->AA swap at 1.02 AND the band edge 1.4 */
             ps_set_ratio(&p, r);
-            ps_service(&p, &d);
+            if (p.aaband_req >= 0 && p.aarows_band != p.aaband_req)
+            ps_set_aa_rows(&p, p.aaband_req,
+                           ps_aa_flash_rows(p.aaband_req)); /* emulate superloop */
+        ps_service(&p, &d);
             float y = ps_process(&p, &d, DL_INTERP_HERMITE);
             if (n > A) { float st = fabsf(y - prev); if (st > mx) mx = st; }
             prev = y;
@@ -110,6 +116,58 @@ int main(void)
         double purity = carrier / (tot * (double)(N - A) / 2.0 + 1e-12);
         printf("      cache-stress purity @3.9x = %.3f\n", purity);
         ck("streaming cache intact at ratio 3.9 (>0.9)", purity > 0.9);
+    }
+
+    /* ---- engage protections (#24 part 2) ----------------------------------
+     * Field: a slow CV envelope crossing the AA boundary clicked every time,
+     * echoed by the tap pattern. Two invariants kill it, both asserted here:
+     * (1) the AA<->Hermite blend traverses GRADUALLY (>=2 ms) — never a hard
+     * kernel swap; (2) the blend does not begin until the fast (CCM) rows
+     * are published — engaging on flash rows is a CPU spike exactly at the
+     * click-sensitive crossing (publisher emulated WITH DELAY to prove it).
+     */
+    {
+        static float bufc[1u<<15];
+        delay_line_t dc; dl_init(&dc, bufc, 1u<<15); dl_clear(&dc);
+        pitchshift_t p; ps_init(&p, 0.020f * 96000.0f, 256.0f);
+        int publish_at = -1;             /* delayed-publisher emulation      */
+        int prev_on = 0, mix_low = 0, mix_hi = 0, traverse = -1;
+        int premature = 0, engages = 0;
+        for (int i = 0; i < 384000; i++) {
+            float x = 0.4f*sinf(2.f*(float)M_PI*400.f*i/96000.f)
+                    + 0.3f*sinf(2.f*(float)M_PI*9000.f*i/96000.f);
+            dl_write(&dc, x);
+            float r = 1.02f + 0.04f*sinf(2.f*(float)M_PI*0.5f*i/96000.f);
+            ps_set_ratio(&p, r); p.ratio = r;
+            /* publisher with a 300-sample delay after each request change */
+            if (p.aaband_req >= 0 && p.aarows_band != p.aaband_req) {
+                if (publish_at < 0) publish_at = i + 300;
+                if (i >= publish_at) {
+                    ps_set_aa_rows(&p, p.aaband_req,
+                                   ps_aa_flash_rows(p.aaband_req));
+                    publish_at = -1;
+                }
+            }
+            ps_service(&p, &dc);
+            (void)ps_process(&p, &dc, DL_INTERP_HERMITE);
+            /* invariant 2: no blending while this band's rows are pending */
+            if (p.aarows_band != p.aa_lastband && p.aa_mix > 0.0f && p.aa_on)
+                premature = 1;
+            /* invariant 1: time the 0.1 -> 0.9 traversal of each engage */
+            if (p.aa_on && !prev_on) { engages++; mix_low = mix_hi = -1; }
+            if (p.aa_on) {
+                if (mix_low < 0 && p.aa_mix > 0.1f) mix_low = i;
+                if (mix_hi  < 0 && p.aa_mix > 0.9f) mix_hi  = i;
+                if (mix_low >= 0 && mix_hi >= 0 && traverse < 0)
+                    traverse = mix_hi - mix_low;
+            }
+            prev_on = p.aa_on;
+        }
+        printf("      engages %d  first blend 0.1->0.9 in %d samples\n",
+               engages, traverse);
+        ck("boundary crossed repeatedly (test is live)", engages >= 2);
+        ck("blend is gradual (>= 2 ms, no kernel swap)", traverse >= 192);
+        ck("no blending before the fast rows are published", premature == 0);
     }
 
     printf(fails ? "FAILURES: %d\n" : "ALL PASS\n", fails);

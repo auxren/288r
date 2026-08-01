@@ -125,6 +125,9 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->aarows_band = -1;
     p->aaband_req = -1;
     p->aa_bypass = 0;
+    p->aa_on = 0;
+    p->aa_lastband = 0;
+    p->aa_mix = 0.0f;
     p->lp_start = 0u;
     p->lp_end = 0u;
     p->lp_span = 0u;
@@ -472,22 +475,53 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
      * ratio crosses an edge — coefficient steps are tiny and click-free.
      * Coefficients: platform-published fast rows (CCM) when the band matches,
      * const flash tables otherwise (correct either way, CCM is just faster). */
+    /* hysteretic engage (#24 part 2): the old hard >1.02 test made a slow
+     * CV envelope cross the boundary every cycle. */
+    if (!p->aa_bypass && !p->lp_span) {
+        if (!p->aa_on && p->ratio > 1.025f) p->aa_on = 1;
+        if ( p->aa_on && p->ratio < 1.015f) p->aa_on = 0;
+    } else p->aa_on = 0;
     int band = -1;
-    if (!p->aa_bypass && !p->lp_span && p->ratio > 1.02f) {
+    if (p->aa_on) {
         band = 0;
         while (band < AA_NBANDS - 1 && p->ratio > aa_band_edge[band]) band++;
+        p->aa_lastband = band;
     }
     const float dA = p->base + fracA * W + p->off[0] + vfm;
     const float dB = p->base + fracB * W + p->off[1] + vfm;
     float out;
-    if (band >= 0) {
-        p->aaband_req = band;
+    /* AA<->Hermite CROSSFADE (#24 part 2): the engage was a hard kernel swap
+     * — different top-octave shaping = a click per boundary crossing, which
+     * the transposed-multitap pattern then echoes ('clicks align with the
+     * active taps'). Blend over ~5 ms; both paths run only mid-blend. */
+    /* publish the request FIRST; blend in only once the fast (CCM) rows are
+     * actually published — engaging on flash rows is the ART-thrash regime
+     * the CCM design exists to avoid (a CPU spike at every crossing = torn
+     * blocks = clicks louder than the kernel difference itself). */
+    if (band >= 0) p->aaband_req = band;
+    {
+        int ready = (band >= 0 && p->aarows_band == band && p->aarows);
+        float want = ready ? 1.0f : 0.0f;
+        p->aa_mix += (want - p->aa_mix) * 0.002f;
+        if (p->aa_mix > 0.999f) p->aa_mix = 1.0f;
+        if (p->aa_mix < 0.001f) p->aa_mix = 0.0f;
+    }
+    if (p->aa_mix >= 1.0f && band >= 0) {
         const float (*rows)[AA_TAPS] =
             (p->aarows_band == band && p->aarows) ? p->aarows : aa_tab[band];
         out = gA * ps_read_bl(p, d, 0, dA, rows)
             + gB * ps_read_bl(p, d, 1, dB, rows);
-    } else {
+    } else if (p->aa_mix <= 0.0f || !p->aarows) {
         out = gA * ps_read(p, d, dA, interp) + gB * ps_read(p, d, dB, interp);
+    } else {
+        int rb = (band >= 0) ? band : p->aa_lastband;
+        const float (*rows)[AA_TAPS] =
+            (p->aarows_band == rb && p->aarows) ? p->aarows : aa_tab[rb];
+        float oa = gA * ps_read_bl(p, d, 0, dA, rows)
+                 + gB * ps_read_bl(p, d, 1, dB, rows);
+        float oh = gA * ps_read(p, d, dA, interp)
+                 + gB * ps_read(p, d, dB, interp);
+        out = oh + p->aa_mix * (oa - oh);
     }
 
     /* advance: delay changes by (1 - ratio) samples per output sample          */
