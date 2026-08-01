@@ -93,7 +93,14 @@ jack** you are monitoring — the output section has four different kinds.)*
 **AUTO CONTROL** is the automatic capture: with the red transport switch in its center (auto)
 position, the transport triggers when incoming audio exceeds the threshold set by the **sens.**
 knob. sens. is an analog attenuator on the level-detect input — raising it lets quieter material
-trigger; fully counter-clockwise disables auto triggering. The **AUTO CONTROL LED** lights while
+trigger; fully counter-clockwise disables auto triggering.
+
+> **Source levels (field-measured, v1.2.3 era).** The detector's floor sits around
+> **300 mV**, and typical oscillator outputs (3–5.5 Vpp on Buchla-format sources) give a
+> full, musical sweep across the sens. arc. Very hot sources — mixer outputs above
+> ~10 Vpp — swamp the threshold so most of the knob's travel does nothing; attenuate
+> before the 288 and the range comes back. If auto capture feels like an on/off switch
+> instead of a threshold, check your source level first. The **AUTO CONTROL LED** lights while
 the signal is above the threshold — the same comparison that fires the capture — so the LED shows
 exactly what will trigger. See [Operation](04-operation.md).
 
