@@ -142,25 +142,31 @@ how an automatic capture *ends*:
 A take started with the **write momentary** in store end keeps the classic hold-and-recall:
 records one cycle, holds it silently (write + READY LEDs together), recirc flick recalls it.
 
-**Varispeed — the multiplier is the tape motor (v1.2.1-rc4+).** While a loop plays in the
-looper positions, turning the **time multiplier** (knob or CV) changes the loop's playback
-speed *and* pitch together, like a tape machine's motor: knob down from where you captured =
-faster and higher, knob up = slower and lower, up to ±2 octaves. This is confirmed stock
-behavior — on the original hardware the delay knob literally moves the sample clock, so a
-recirculating loop repitches for free; this firmware recreates it with a fractional-rate
-read head. In *all sounds* the multiplier keeps its constant-pitch tap-respacing behavior
-(that's what makes chorus/flanger possible), and in pitch mode the knob stays the pitch
-depth — the three never fight over the knob.
+**Varispeed — the multiplier is the tape motor (v1.2.1-rc4+, refined in v1.3).** While
+any loop plays — a looper capture *or* a manual recirc in all sounds — turning the **time
+multiplier** (knob or CV) changes the loop's playback speed *and* pitch together, like a
+tape machine's motor: knob down from where you captured = faster and higher, knob up =
+slower and lower, up to ±2 octaves. This is confirmed stock behavior — on the original
+hardware the delay knob literally moves the sample clock, so a recirculating loop repitches
+for free. As of v1.3 the tape model is exact: **the tap pattern holds its capture-time
+spacing while a loop plays** (the play heads are fixed — only the motor moves), so turning
+the knob on a loop is a clean pitch bend with no zipper. In *live* delay (all sounds,
+writing) the multiplier keeps its constant-pitch tap-respacing behavior — that's what makes
+chorus/flanger possible — and in pitch mode the knob stays the pitch depth: the three never
+fight over the knob.
 
-**Overdub — sound-on-sound (v1.2.3+).** While a loop plays, **hold the red recirc
+**Overdub — sound-on-sound (v1.3).** While a loop plays, **hold the red recirc
 momentary**: everything at the input layers into the loop for as long as you hold, and the
 loop keeps everything when you let go. Existing material fades gently (~5% per pass) under
-new layers, and a soft ceiling lets dense stacks bloom instead of clipping — the buffer is
-full-precision, so layer forty sounds as clean as layer one. While held, the **write and
-recirc LEDs light together** ("writing into the loop") and the auto re-arm is suspended —
-a loud hit can't steal your loop mid-gesture. It composes with everything: overdub onto a
-varispeed-slowed loop, return the multiplier, and your layer plays back pitched — exactly
-like tape.
+new layers, and a smooth level-riding limiter lets dense stacks bloom with tape-style
+compression instead of clipping. Like tape sound-on-sound, each layer loses a whisper of
+top end — that's by design (it also keeps feedback-heavy patches from squealing
+ultrasonically). While held, the **write and recirc LEDs light together** ("writing into
+the loop") and the auto re-arm is suspended — a loud hit can't steal your loop mid-gesture.
+It composes with everything: overdub onto a varispeed-slowed loop (any rate — the layered
+audio is properly resampled onto the loop's clock), return the multiplier, and your layer
+plays back pitched — exactly like tape. If the processor is ever pushed past its limits
+mid-overdub, the overdub releases itself gracefully rather than hanging the module.
 
 **Resetting the loop from the panel:** flip the red switch to **all sounds and back to center**,
 or flip the **store beg./store end** selector to its other position. Either physical movement

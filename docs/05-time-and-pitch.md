@@ -104,6 +104,14 @@ An earlier digital envelope→time feature on the sens. knob was removed in v1.2
 #15): modulation belongs on the dedicated inputs above, and the sens. knob's job is the looper
 capture threshold.
 
+**Modulating the pitch (v1.3): continuous through unity.** The pitch CV path is built
+for vibrato: a bipolar LFO or envelope through the attenuverter sweeps the pitch smoothly
+through *and across* unity with no clicks, no dropouts, and no steps — every internal
+transition (the zero-shift point, the anti-aliasing filter's engagement and its internal
+bands) is continuous. Parked at exactly zero depth (knob CCW, no CV), the output settles
+to the bit-exact clean dry feed after a fraction of a second; the moment modulation
+returns, the voice takes over seamlessly.
+
 **Pitch quality, measured on hardware:** up-shifts are anti-aliased (a ratio-tracked filter —
 about 70 dB of alias suppression at +1 octave, so bright material stays clean), splices are
 period-aware down to roughly **30 Hz** (deep bass shifts cleanly instead of thumping at the
