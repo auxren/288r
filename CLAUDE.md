@@ -391,6 +391,26 @@ better engine; add new features/controls/modulation only *after* the clone is na
   gain-staging (jimfowler: sidechain works, riff was too-staccato, 206 too hot; scope
   numbers pending; floor-off diagnostic build ON HOLD); #24 awaiting RECLee's rc4 verdict;
   #16/#19/#20 awaiting rc3/rc4 confirmations -> then v1.2.3 graduates.
+- **v1.2.3-rc5 PRE-RELEASE (2026-08-01): #24 FULLY CRACKED — a THREE-LAYER bug, each layer
+  isolated by a different field repro.** Layer 1 (rc4, knob departures): wet-sliver snap ->
+  4ms smoothing. Layer 2 (envelope crossings of 1.02): AA engage = hard kernel swap + a
+  flash-rows CPU spike -> hysteresis (on>1.025/off<1.015) + ~5ms AA<->Hermite crossfade +
+  rows-ready gate + band-0 kept pre-published by the superloop (test_aa asserts the
+  invariants w/ a delayed-publisher; NOTE: waveform-differential click detectors CANNOT see
+  this class — the steady spectral difference between paths swamps transients; assert
+  invariants instead). Layer 3, THE CORE (found by live LFO + aa_bypass poke = AA
+  exonerated, clicks persisted): the exact-unity BYPASS COLLAPSE jumped the grain read to
+  the window center on every bypass ENTRY — bipolar vibrato grazes unity ~6x/s = pops
+  immune to every smoothing above. FINAL ARCHITECTURE: no special unity read path (grains
+  play through; phase/offsets DRIFT to the single-grain pole ~1s; pole INIT keeps parked
+  unity bit-exact) + TIMESCALE-SEPARATED dry swap in main.c (true dry only after ~300ms
+  SETTLED at unity; modulation keeps the voice engaged — no source swaps = no pops AND no
+  'random drops'). Owner-verified clean under live bipolar LFO. ALSO: isr_pk protocol
+  gotcha resurfaced — SWD-forced ratio steps (20-25Hz pokes) create their OWN pops (the
+  slew passes micro-steps through in 1 sample): SWD forcing CANNOT emulate continuous CV;
+  use a real LFO for ear tests. And the day's meta-lesson: a silent str.replace no-op
+  flashed the same image twice ('identical text size' = the tell — ASSERT every patch
+  landed). Awaiting RECLee's 281/e verdict -> #24 closes -> v1.2.3 graduates.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
