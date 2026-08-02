@@ -87,6 +87,40 @@ const float (*ps_aa_flash_rows(int band))[16]
     return aa_tab[band];
 }
 
+/* CONTINUOUS COEFFICIENT MORPH (#24 deep-sweep clicks): band-to-band
+ * transitions were hard table swaps (plus a revoke-to-flash window during
+ * the republish) — deterministic clicks at ratio 1.40/2.00/2.83 under deep
+ * CV sweeps. The platform now publishes rows LERPED between adjacent band
+ * tables as the ratio moves, so the filter response GLIDES — there is no
+ * switch left to click. frac in [0,1] morphs band -> band+1 (clamped). */
+void ps_aa_morph_rows(int band, float frac, float (*dest)[16])
+{
+    if (band < 0) band = 0;
+    if (band >= AA_NBANDS) band = AA_NBANDS - 1;
+    int b2 = (band < AA_NBANDS - 1) ? band + 1 : band;
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    for (int r = 0; r <= AA_PHASES; ++r)
+        for (int t = 0; t < AA_TAPS; ++t)
+            dest[r][t] = aa_tab[band][r][t]
+                       + frac * (aa_tab[b2][r][t] - aa_tab[band][r][t]);
+}
+
+/* continuous band coordinate for the publisher: integer part = the lower
+ * band, fraction = morph progress across a +/-6% zone around each edge */
+float ps_aa_band_coord(float ratio)
+{
+    float b = 0.0f;
+    for (int k = 0; k < AA_NBANDS - 1; ++k) {
+        float e  = aa_band_edge[k];
+        float lo = e * 0.94f, hi = e * 1.06f;
+        if      (ratio <= lo) { }
+        else if (ratio >= hi) b += 1.0f;
+        else                  b += (ratio - lo) / (hi - lo);
+    }
+    return b;
+}
+
 void ps_set_aa_rows(pitchshift_t *p, int band, const float (*rows)[16])
 {
     if (rows == 0 || band < 0) {                     /* revoke BEFORE overwrite */
@@ -506,23 +540,21 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
      * blocks = clicks louder than the kernel difference itself). */
     if (band >= 0) p->aaband_req = band;
     {
-        int ready = (band >= 0 && p->aarows_band == band && p->aarows);
+        int ready = (band >= 0 && p->aarows != 0);
         float want = ready ? 1.0f : 0.0f;
         p->aa_mix += (want - p->aa_mix) * 0.002f;
         if (p->aa_mix > 0.999f) p->aa_mix = 1.0f;
         if (p->aa_mix < 0.001f) p->aa_mix = 0.0f;
     }
     if (p->aa_mix >= 1.0f && band >= 0) {
-        const float (*rows)[AA_TAPS] =
-            (p->aarows_band == band && p->aarows) ? p->aarows : aa_tab[band];
+        const float (*rows)[AA_TAPS] = p->aarows ? p->aarows : aa_tab[band];
         out = gA * ps_read_bl(p, d, 0, dA, rows)
             + gB * ps_read_bl(p, d, 1, dB, rows);
     } else if (p->aa_mix <= 0.0f || !p->aarows) {
         out = gA * ps_read(p, d, dA, interp) + gB * ps_read(p, d, dB, interp);
     } else {
         int rb = (band >= 0) ? band : p->aa_lastband;
-        const float (*rows)[AA_TAPS] =
-            (p->aarows_band == rb && p->aarows) ? p->aarows : aa_tab[rb];
+        const float (*rows)[AA_TAPS] = p->aarows ? p->aarows : aa_tab[rb];
         float oa = gA * ps_read_bl(p, d, 0, dA, rows)
                  + gB * ps_read_bl(p, d, 1, dB, rows);
         float oh = gA * ps_read(p, d, dA, interp)

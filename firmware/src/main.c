@@ -195,8 +195,14 @@ static void lp_ind(unsigned idx, int level)
  * ISR vs ART-thrashing flash loads — adversarial-verify blocker fix). The
  * superloop copies on band change; revoke-before-overwrite protocol in
  * ps_set_aa_rows keeps the ISR on the flash tables during the memcpy. */
-static float g_aa_ccm[33][16] __attribute__((section(".ccmram")));
-static int   g_aa_ccm_band = -1;
+/* PING-PONG morph buffers (#24 deep sweeps): the publisher lerps adjacent
+ * band tables into the INACTIVE buffer as the ratio moves and swaps the
+ * pointer atomically — the ISR always holds one valid fast table, the
+ * response GLIDES across band edges, and the old revoke-to-flash window
+ * (an ART-thrash CPU spike mid-sweep) no longer exists. */
+static float g_aa_ccm[2][33][16] __attribute__((section(".ccmram")));
+static int   g_aa_ccm_active = 0;
+static float g_aa_ccm_coord = -1.0f;   /* band coordinate last published */
 /* bench-only: force the pitch ratio over SWD (0 = off) to measure worst-case
  * ISR load without patching a CV. Strip with the other g_dbg scaffolding. */
 volatile float g_dbg_ratio_force __attribute__((used)) = 0.0f;
@@ -749,19 +755,27 @@ int main(void)
                 float ratio = (1.0f - d01 * span) * fm_exp2f(volts * (1.0f/1.2f));
                 if (g_dbg_ratio_force > 0.0f) ratio = g_dbg_ratio_force;
                 pv_set_ratio(&g_pv, ratio);
-                /* publish the AA band's coefficients to CCM on change. KEEP
-                 * BAND 0 WARM while pitch mode idles below the AA edge (#24
-                 * part 2): the blend now engages only on published rows, so
-                 * pre-publishing makes engage instant with zero flash-row
-                 * window — the request itself would otherwise cost ~5 ms of
-                 * ART-thrash exactly at the click-sensitive crossing. */
-                int req = g_pv.ps.aaband_req;
-                if (req < 0) req = 0;
-                if (req != g_aa_ccm_band) {
-                    ps_set_aa_rows(&g_pv.ps, -1, 0);
-                    memcpy(g_aa_ccm, ps_aa_flash_rows(req), sizeof g_aa_ccm);
-                    ps_set_aa_rows(&g_pv.ps, req, (const float (*)[16])g_aa_ccm);
-                    g_aa_ccm_band = req;
+                /* MORPHING PUBLISHER (#24 deep sweeps): rows track the
+                 * slewed ratio continuously — band edges are a coefficient
+                 * GLIDE, not a swap. Republish into the inactive ping-pong
+                 * buffer when the band coordinate moves > 2%; band 0 stays
+                 * pre-published while idling below the AA edge (instant
+                 * engage, zero flash window). */
+                {
+                    float bc = ps_aa_band_coord(g_pv.ps.ratio);
+                    float dc2 = bc - g_aa_ccm_coord;
+                    if (dc2 < 0.0f) dc2 = -dc2;
+                    if (g_aa_ccm_coord < 0.0f || dc2 > 0.02f) {
+                        int   bk = (int)bc;
+                        float bf = bc - (float)bk;
+                        int   nx = g_aa_ccm_active ^ 1;
+                        ps_aa_morph_rows(bk, bf,
+                                         (float (*)[16])g_aa_ccm[nx]);
+                        ps_set_aa_rows(&g_pv.ps, bk,
+                                       (const float (*)[16])g_aa_ccm[nx]);
+                        g_aa_ccm_active = nx;
+                        g_aa_ccm_coord  = bc;
+                    }
                 }
             } else
 #endif

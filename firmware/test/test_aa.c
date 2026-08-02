@@ -174,6 +174,44 @@ int main(void)
         ck("no blending before the fast rows are published", premature == 0);
     }
 
+    /* ---- band-edge morph (#24 deep sweeps) --------------------------------
+     * Band transitions used to be hard table swaps = deterministic clicks
+     * at ratio 1.40/2.00/2.83 under deep CV sweeps (field: RECLee 281e).
+     * The publisher now LERPS adjacent tables along a continuous band
+     * coordinate: assert the coordinate is continuous and that one publish
+     * step (2%% of a zone) moves coefficients ~50x less than a full swap. */
+    {
+        float cont = 1; float prev = ps_aa_band_coord(1.0f);
+        for (float r = 1.0f; r < 4.2f; r += 0.005f) {
+            float b = ps_aa_band_coord(r);
+            if (b - prev > 0.06f || b < prev) cont = 0;   /* jump or reverse */
+            prev = b;
+        }
+        ck("band coordinate is continuous & monotonic", cont == 1);
+        ck("coordinate spans all bands", ps_aa_band_coord(4.1f) > 2.9f);
+        static float ra[33][16], rb[33][16];
+        float full = 0, step = 0;
+        ps_aa_morph_rows(0, 0.0f, ra); ps_aa_morph_rows(0, 1.0f, rb);
+        for (int r2 = 0; r2 <= 32; r2++) for (int t = 0; t < 16; t++) {
+            float d2 = fabsf(rb[r2][t] - ra[r2][t]);
+            if (d2 > full) full = d2;
+        }
+        ps_aa_morph_rows(0, 0.50f, ra); ps_aa_morph_rows(0, 0.52f, rb);
+        for (int r2 = 0; r2 <= 32; r2++) for (int t = 0; t < 16; t++) {
+            float d2 = fabsf(rb[r2][t] - ra[r2][t]);
+            if (d2 > step) step = d2;
+        }
+        printf("      full band swap max-delta %.4f, one publish step %.5f\n",
+               full, step);
+        ck("publish step is a sliver of a swap (<5%)", step < full * 0.05f);
+        ps_aa_morph_rows(1, 0.0f, ra);
+        const float (*fl)[16] = ps_aa_flash_rows(1);
+        int exact = 1;
+        for (int r2 = 0; r2 <= 32; r2++) for (int t = 0; t < 16; t++)
+            if (ra[r2][t] != fl[r2][t]) exact = 0;
+        ck("morph endpoint == flash table (frac 0)", exact);
+    }
+
     printf(fails ? "FAILURES: %d\n" : "ALL PASS\n", fails);
     return fails ? 1 : 0;
 }

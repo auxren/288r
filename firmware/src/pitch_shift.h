@@ -93,6 +93,11 @@ void  ps_init(pitchshift_t *p, float window, float base);
 void  ps_set_aa_rows(pitchshift_t *p, int band, const float (*rows)[16]);
 /* The const flash coefficient rows for `band` (source for platform copies). */
 const float (*ps_aa_flash_rows(int band))[16];
+/* lerp adjacent band tables (frac 0..1: band -> band+1) into dest — the
+ * platform's morphing publisher (see #24 deep-sweep notes in the .c) */
+void  ps_aa_morph_rows(int band, float frac, float (*dest)[16]);
+/* continuous band coordinate: floor = lower band, frac = morph progress */
+float ps_aa_band_coord(float ratio);
 void  ps_set_ratio(pitchshift_t *p, float ratio);   /* clamp to a sane span      */
 void  ps_reset(pitchshift_t *p);                     /* phase = 0                 */
 
