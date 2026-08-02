@@ -411,6 +411,21 @@ better engine; add new features/controls/modulation only *after* the clone is na
   use a real LFO for ear tests. And the day's meta-lesson: a silent str.replace no-op
   flashed the same image twice ('identical text size' = the tell — ASSERT every patch
   landed). Awaiting RECLee's 281/e verdict -> #24 closes -> v1.2.3 graduates.
+- **v1.2.3-rc6 PRE-RELEASE (2026-08-02): #24 layer 4/5 — CONTINUOUS AA COEFFICIENT MORPH.**
+  RECLee's rc5 verdict: unity crossings fixed, deeper 281e sweeps still clicked at fixed
+  points = the AA band edges (1.40/2.00/2.83): hard table swaps + a revoke-to-flash window
+  per republish. Fix: the publisher LERPS adjacent band tables along a continuous band
+  coordinate (+/-6% zones, 2%-motion republish) into PING-PONG CCM buffers swapped
+  atomically — response GLIDES (swap delta 0.183 -> 0.0037/step, 50x finer), revoke-to-
+  flash eliminated, read path uses published rows unconditionally (band-match gate gone).
+  NOT yet bench-flashed (unit off) — rc6 shipped for RECLee's deterministic repro as the
+  definitive test (owner call). NOTE for the flash-next-power-on queue: current HEAD =
+  morph build; verify isr_pk through a forced deep ramp when flashed. Also that session:
+  slider-5 hunt continues — jack is NOT normalled (topology corrected: jack tip and fader
+  top are one hard net; TL072 on PCB1 = local summing, two virtual-earth buses ch0-4/
+  ch5-8 = fader pin-3 groups; do NOT bridge them); every DC measurement passes mated and
+  unmated; next = SIGNAL-INJECTION test (oscillator driven backwards into the tap-5 jack,
+  slider solo, listen at mix out) to split fader-branch vs feed live with zero disassembly.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
