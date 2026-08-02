@@ -370,23 +370,28 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
              * faded by |ratio-1| so pitch mode is transparent at zero CV. */
             float y = pv_process(&g_pv, &g_engine.dl, DL_INTERP_HERMITE);
             float dev = g_pv.ratio - 1.0f; if (dev < 0.0f) dev = -dev;
-            /* steep wet slope: full wet by 0.5% ratio deviation (~9 cents).
-             * The old 2% band let CV/attenuverter offsets PARK in a dry+shift
-             * partial mix whose slow beating read as a broken tremolo (owner:
-             * "weird stuff"); passing through the sliver during slews is
-             * inaudible, living in it is not. */
-            float wet = dev * 200.0f; if (wet > 1.0f) wet = 1.0f;
-            /* #24 (field, deterministic): the ratio slew (0.0028/samp)
-             * crosses the whole 0.5%-deviation sliver in <2 samples, so
-             * leaving unity SNAPPED the output between the dry read and the
-             * voice read — sources ~30-60 ms apart in the buffer = a spike
-             * on every unity departure, knob or CV. The MIX gets its own
-             * ~4 ms smoothing, decoupled from the ratio: never parks
-             * mid-mix (converges in ms — the artifact the thin sliver
-             * exists to prevent), never snaps. */
+            /* #24 final form — TIMESCALE-SEPARATED dry swap. History: a
+             * dev-proportional sliver (full wet by 0.5% dev) kept partial
+             * mixes from PARKING and beating; rc4 smoothed its crossing.
+             * But any modulation THROUGH unity (vibrato — RECLee's LFO,
+             * the owner's live repro) still dragged the output through a
+             * dry<->voice source swap (reads 30-60 ms apart) every
+             * crossing: pops + dips no matter how the swap is smoothed.
+             * The two use cases separate by TIME, not deviation: true dry
+             * only after the ratio SETTLES at unity (~300 ms — knob parked
+             * CCW, no CV); while modulation passes through unity the voice
+             * stays fully engaged — continuous across every crossing, zero
+             * swaps. Parked partials stay dead (the timer either expires ->
+             * pure dry, or doesn't -> pure voice; never a lingering mix). */
+            float wet;
             {
-                static float wet_s = 0.0f;
-                wet_s += (wet - wet_s) * 0.003f;
+                static uint32_t unity_run = 0;   /* SAMPLES near unity      */
+                static float    wet_s = 0.0f;
+                if (dev < 0.0015f) {
+                    if (unity_run < 0x7FFFFFFFu) unity_run++;
+                } else unity_run = 0;
+                float wet_t = (unity_run >= 28800u) ? 0.0f : 1.0f; /* 300 ms */
+                wet_s += (wet_t - wet_s) * 0.0005f; /* ~20 ms gentle swap   */
                 wet = wet_s;
             }
             /* REPLACE, don't layer (stock: pitch-mode output IS the shifted

@@ -105,7 +105,9 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->ratio  = 1.0f;
     p->window = window;
     p->base   = base;
-    p->phase  = 0.0f;
+    p->phase  = 0.5f;   /* START at the single-grain pole (grain A full, B
+                           zero): unity from boot is the exact centered
+                           read, and the unity drift has nothing to move */
     p->off[0] = 0.0f;
     p->off[1] = 0.0f;
     /* coherence prior = 1 (amplitude-complementary): before the first splice
@@ -168,7 +170,7 @@ void ps_set_ratio(pitchshift_t *p, float ratio)
 
 void ps_reset(pitchshift_t *p)
 {
-    p->phase = 0.0f;
+    p->phase = 0.5f;    /* the single-grain pole (see ps_init) */
     p->off[0] = p->off[1] = 0.0f;
     p->pend_tap = -1;
     p->next_tap = 0;
@@ -444,14 +446,18 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
        collapse to a single centered tap so unity is a clean delayed bypass.    */
     if (fabsf(1.0f - p->ratio) < PS_UNITY_EPS) {
         p->pend_tap = -1;                    /* discard stale splice offsets */
-        /* PIN phase to 0.5 while bypassed (#24): the bypass read position
-         * IS grain A's position at phase 0.5 (weight sin^2(pi/2) = 1, grain
-         * B exactly 0) — so leaving unity resumes from the very sample the
-         * bypass was reading. With phase left stale, exit jumped the read
-         * by up to W/2 (~30 ms of tape) = a spike on EVERY unity departure,
-         * knob or CV, both directions (field: RECLee, deterministic). */
-        p->phase = 0.5f;
-        return ps_read(p, d, p->base + 0.5f * W + vfm, interp);
+        /* NO special read path at unity (#24 final form). The old collapse
+         * (and rc4's phase pin) JUMPED the read to the window center on
+         * every bypass entry — modulation THROUGH unity (vibrato: RECLee's
+         * LFO, the owner's live repro) popped on every crossing. Instead,
+         * DRIFT toward the single-grain pole (phase 0.5, splice offsets 0):
+         * a graze during modulation moves nothing and the two-grain path
+         * continues seamlessly; PARKED unity de-combs over ~1 s and
+         * converges to the exact centered read (bit-exact from boot, since
+         * init starts at the pole). */
+        p->phase  += (0.5f - p->phase)  * 0.00002f;
+        p->off[0] += (0.0f - p->off[0]) * 0.00002f;
+        p->off[1] += (0.0f - p->off[1]) * 0.00002f;
     }
 
     const float fracA = p->phase;
