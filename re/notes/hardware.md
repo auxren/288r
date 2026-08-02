@@ -131,7 +131,9 @@ conflict). The A/B/C toggle just picks which trimmer-derived phase row feeds the
 
 **Continuous controls (ADC-read — sliders/pots via the SPI2 ADC per above, trimmers likely via the
 4051 mux; calibration targets, min/max):**
-- **9× 50 K linear ALPS 45 mm sliders** (POT8–POT16) = output-mixer levels.
+- **9× 50 K linear ALPS 45 mm sliders** (POT8–POT16) = output-mixer levels. BOM order code
+  **FARNELL/NEWARK `RS4511150K`** = ALPS **RS45111-series**, 50KB linear, 45 mm travel (match
+  lever style when ordering spares).
 - **7× rotary pots** (POT1–POT7; POT1–5 log, POT6–7 lin) = input mixer / time / etc.
 - **36× 50 K single-turn trimmers** (TR1–TR36) = the four PRESET banks' tap positions (set to the
   printed 0–160 scale; ADC range still worth normalizing).
