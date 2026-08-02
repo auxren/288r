@@ -426,6 +426,24 @@ better engine; add new features/controls/modulation only *after* the clone is na
   ch5-8 = fader pin-3 groups; do NOT bridge them); every DC measurement passes mated and
   unmated; next = SIGNAL-INJECTION test (oscillator driven backwards into the tap-5 jack,
   slider solo, listen at mix out) to split fader-branch vs feed live with zero disassembly.
+- **v1.3.0 RELEASED (2026-08-02) — the rc3-rc6 graduation (owner call: 1.3, it's a feature
+  release).** Headline features: OVERDUB/sound-on-sound (slew-gain write limiter, varispeed-
+  clock input resampling, ~10 kHz squeal-guard LP, FS clamp, starvation breaker + linear-
+  interp headroom); TAPE-MOTOR multiplier on any playing loop (tap freeze = fixed heads);
+  CONTINUOUS pitch modulation (unity pole-drift + timescale-separated dry swap + AA engage
+  crossfade/hysteresis/rows-gate + band-edge coefficient MORPH w/ ping-pong CCM). Fixed:
+  recorded seam tear (chunked splice), LED-bleed mitigations, ISR 93->76%. Manual ch5/ch6
+  updated; release notes = the consolidation. ISSUES: #9/#10/#16/#19/#20 CLOSED as shipped;
+  #13/#18 closed earlier (gain-staging + by-design); #24 open pending RECLee's deep-sweep
+  verdict on the morph; #5 open (roadmap). **NEW #25 (RECLee): write/recirc PULSE OUT jacks
+  (red bananas) never fire during loop capture — top post-1.3 item.** Note the jacks share
+  DSP-driven pins with the transport LEDs (bleed-mitigation interaction possible; or we
+  never drove them stock-correctly — decompile what stock does on PA7/PA8-family pins at
+  transport transitions + scope the jacks on the bench). ALSO OPEN: the reference unit is
+  still on the rc5-era flash (rc6/v1.3.0 content NOT yet flashed locally — unit was off;
+  flash + forced-deep-ramp isr_pk check on next power-on); slider-5 mix-dead hunt paused at
+  the signal-injection test (see rc6 entry). Roadmap: split-tap loop+live, stereo master,
+  knob-steered feedback (needs the 4051 mux bench session).
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
