@@ -185,3 +185,23 @@ Still to confirm:
 - [ ] HSE crystal frequency (clock tree).
 - [ ] Option bytes / RDP level before any erasing connect (we already have the `.hex`).
 - [ ] 25AA512 EEPROM actually populated? (likely a BOM paste error; low priority now.)
+
+
+## Output mixer — PCB1 analog topology (traced live 2026-08-04, slider-5 repair)
+Reverse-engineered during the channel-5 mix-silence hunt (injection tracing, boards split):
+- **Fader wiring (each of the 9 sliders):** lug 1 = channel feed (hard-wired to the tap
+  output jack tip — the tap jacks are NOT normalled/switched); lug 2 = wiper, loaded by a
+  **4.99 k (SMD 4991) taper resistor to ground** (linear 50 K element + load = audio taper;
+  explains the ~4.3-4.5 k wiper-to-ground readings); lug 3 = ground (two commoned ground
+  groups: ch0-4 and ch5-8 — do NOT bridge the groups, they sit at different DC).
+- **Per-channel sum path:** wiper -> **~68 k series summing resistor** -> **phase switch
+  CENTER lug** (on/off/ON: up = in-phase bus, center = MUTE/disconnected, down = inverted
+  bus) -> summing bus -> **4.7 k** -> TL072 inverting input. Dual TL072 halves: A (pins
+  1/2/3, 41 k feedback) and B (pins 5/6/7, 68 k feedback); **mix out driven from pin 7
+  through 470 R**; pin 8 decoupled to ground.
+- **CH5 FAULT + FIX (2026-08-04):** the joint between ch5's 68 k summing resistor and its
+  phase-switch center lug was OPEN (dead since before the firmware project — the origin of
+  the v1.0.1 'slider 5 = dead analog path' finding). Bridged; channel restored. Every DMM
+  continuity/resistance test had passed because the break sat between the two verified
+  stretches; a live injection walk (oscillator backwards into the un-normalled tap jack)
+  localized it in four probe touches.

@@ -453,6 +453,15 @@ better engine; add new features/controls/modulation only *after* the clone is na
   exported to claude_trix (7 tricks: fw-isr-starvation-self-latch, fw-realtime-burst-
   amortize, fw-dsp-table-switch-morph, fw-dsp-modulation-special-cases, fw-telemetry-
   latch-vs-copy, hw-dmm-continuity-vs-signal, hw-gpio-edge-bleed-audio).
+- **SLIDER 5 REPAIRED (2026-08-04) — the oldest hardware item CLOSED.** Root cause: an OPEN
+  joint between ch5's ~68 k summing resistor and its phase-switch center lug on PCB1 (dead
+  since before the project; the origin of v1.0.1's 'slider 5 = dead analog path'). Found by
+  the backwards-injection live walk after every DC measurement passed; bridged, channel
+  restored. Full traced mixer topology now in re/notes/hardware.md (fader lug map, 4.99 k
+  taper loads, 68 k -> phase-switch(center=MUTE) -> bus -> 4.7 k -> dual-TL072 sum, mix out
+  = pin 7 via 470 R; tap jacks NOT normalled; the two fader ground groups sit at different
+  DC — don't bridge). Firmware kept identity slot mapping throughout, so no code change
+  needed; the v1.0.1 debug scaffolding (g_dac_solo etc.) stays — it carried this hunt.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
