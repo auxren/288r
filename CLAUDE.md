@@ -453,6 +453,11 @@ better engine; add new features/controls/modulation only *after* the clone is na
   exported to claude_trix (7 tricks: fw-isr-starvation-self-latch, fw-realtime-burst-
   amortize, fw-dsp-table-switch-morph, fw-dsp-modulation-special-cases, fw-telemetry-
   latch-vs-copy, hw-dmm-continuity-vs-signal, hw-gpio-edge-bleed-audio).
+- **v1.3.0 FLASHED LOCALLY + DEEP-RAMP GATE PASSED (2026-08-04):** reference unit now runs
+  release content. Forced ratio ramp 1.0->2.5->1.0 in pitch mode: flat 88-90% isr_pk through
+  every AA band-edge crossing both directions (edges invisible in the load profile = the
+  morph working); worst 94% at the engage crossfade window; zero overruns. Local half of the
+  #24 verification complete — RECLee's 281e ear verdict is the remaining field half.
 - **SLIDER 5 REPAIRED (2026-08-04) — the oldest hardware item CLOSED.** Root cause: an OPEN
   joint between ch5's ~68 k summing resistor and its phase-switch center lug on PCB1 (dead
   since before the project; the origin of v1.0.1's 'slider 5 = dead analog path'). Found by
