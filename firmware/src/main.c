@@ -135,6 +135,8 @@ static float g_fm_env = 0.0f;
 /* SWD live A/B: poke 1 to hard-mute the signal-in FM path (diagnosis:
  * separating 'FM by a patched source / bleed' from everything else). */
 volatile uint8_t g_fm_mute = 0;
+/* expander knee (FS envelope units) — SWD-pokeable for live feel cal */
+volatile float g_fm_knee = TIME_FM_GATE;
 
 /* chain-clip indicator (PA0 repurposed, LED_INPUT_CLIP_MODE): block count until
  * which the LED stays lit, + an event counter for SWD verification. */
@@ -308,15 +310,20 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
          * (grain read offset -> vibrato/FM). */
         {
             float fms = audio_in_to_f(in[f * TDM_SLOTS + TIME_FM_SLOT]);
-            /* presence gate (rc4 field regression: idle noise/bleed on the
-             * jack wobbled the taps continuously). Envelope-follow slot 2;
-             * FM engages smoothly only above a real-signal floor. */
+            /* SMOOTH DOWNWARD EXPANDER (owner taper report 2026-08-04: the
+             * trim knob felt dead / cliff / flat — the old hard threshold +
+             * 4x ramp stacked on the log pot). g = env^2/(env^2 + knee^2):
+             * still ~zero for bleed-level signals (the rc4 anti-noise
+             * property), but engages GRADUALLY from just above the floor —
+             * -6 dB at the knee, ~unity by 4x knee. g_fm_knee is SWD-
+             * pokeable for live feel calibration. */
             float afm = (fms < 0.0f) ? -fms : fms;
             g_fm_env += (afm - g_fm_env) * 0.002f;
-            float gate = (g_fm_env - TIME_FM_GATE) * (4.0f / TIME_FM_GATE);
-            if (gate < 0.0f) gate = 0.0f;
-            if (gate > 1.0f) gate = 1.0f;
-            fms *= gate;
+            {
+                float e2 = g_fm_env * g_fm_env;
+                float k2 = g_fm_knee * g_fm_knee;
+                fms *= e2 / (e2 + k2);
+            }
             if (g_fm_mute) fms = 0.0f;
             g_engine.time_fm = fms * TIME_FM_SPAN;
 #if PITCH_VOICE_ENABLE

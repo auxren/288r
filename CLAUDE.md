@@ -467,6 +467,23 @@ better engine; add new features/controls/modulation only *after* the clone is na
   = pin 7 via 470 R; tap jacks NOT normalled; the two fader ground groups sit at different
   DC — don't bridge). Firmware kept identity slot mapping throughout, so no code change
   needed; the v1.0.1 debug scaffolding (g_dac_solo etc.) stays — it carried this hunt.
+- **SIGNAL-IN MYSTERY REOPENED (2026-08-04, parked by owner — "I'll live with the trim"):**
+  instrumented facts that don't currently reconcile: (a) slot-2 env read a constant 0.66
+  with a source patched, INVARIANT to the trim knob at every position (the knob above the
+  signal-in jack, modulation section); (b) later the same session slot-2 read ZERO while the
+  owner clearly heard trim-scaled FM depth; (c) the trim moved NOTHING observable (slot-2
+  env, control-ADC ch0-3, tc.mult). Leading hypothesis: signal-in mirrors the SENS design —
+  a PRE-POT parallel pickup feeds slot 2 (explains trim-invariance; possibly now an
+  intermittent joint, explaining 0.66-then-zero) while the POT scales a separate ANALOG
+  branch (the original 2026-07 'analog Time-CV net' theory may have been half-right all
+  along) whose destination + audibility path is unidentified — the owner's audible FM
+  happened with tc.mult FROZEN, so it is NOT delay-time modulation through the firmware.
+  Carrier/patch state during the observation was never pinned down (coordination). NEXT
+  TIME: pin the patch state FIRST, then one 30s window (trim low/high/sweep) streaming
+  slot-2 env + input-A env + tc.mult + all 4 SPI channels simultaneously; also DMM the
+  slot-2 pickup joint (R157 area) for intermittence. The FM-depth EXPANDER (g = e2/(e2+k2),
+  g_fm_knee SWD-pokeable, replaced the rc4 hard gate) is flashed + kept — correct for the
+  digital path regardless. NOT yet committed to a release; lives on main.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
