@@ -444,6 +444,15 @@ better engine; add new features/controls/modulation only *after* the clone is na
   flash + forced-deep-ramp isr_pk check on next power-on); slider-5 mix-dead hunt paused at
   the signal-injection test (see rc6 entry). Roadmap: split-tap loop+live, stereo master,
   knob-steered feedback (needs the 4051 mux bench session).
+- **Post-1.3 feature slate DRAFTED (2026-08-04, owner brainstorm):** see DESIGN.md
+  "Post-v1.3.0 feature slate" — next-cycle trio = ducked delay (sens knob in all-sounds,
+  currently unused there), micropitch spread #23 (rear DIP4 + per-preset), reverse loop
+  (hold-write-2s in-loop); wow/flutter rides the vintage DIP; longer arc = harmonizer regen
+  -> FDN wash -> shimmer (the knob-steered-feedback trilogy, needs the 4051-mux bench
+  session); config-layer gesture (write+recirc hold) held in reserve. Session learnings
+  exported to claude_trix (7 tricks: fw-isr-starvation-self-latch, fw-realtime-burst-
+  amortize, fw-dsp-table-switch-morph, fw-dsp-modulation-special-cases, fw-telemetry-
+  latch-vs-copy, hw-dmm-continuity-vs-signal, hw-gpio-edge-bleed-audio).
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
