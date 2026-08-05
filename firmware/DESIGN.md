@@ -578,3 +578,38 @@ Then proceed down Phase A (steps 4–7) while the bench session is scheduled; Ph
 ---
 
 Files to create/extend (absolute): new under `/Users/oren/Documents/GitHub/288r/firmware/src/dsp/` — `pitch_tap.{h,c}`, `audio_buffer.{h,c}`, `tone.{h,c}`, `sat.{h,c}`, `wow.{h,c}`, `dither.h`; extend `delay_line.{h,c}`, `crossfade.{h,c}`, `engine.{h,c}`, `mixer.{h,c}`. New under `/Users/oren/Documents/GitHub/288r/firmware/src/app/` — `panel_input`, `led`, `flash_store`, `store_hal`, `storage.h`, `pinning`, `calib`, `settings`, `ui_mode`, `params`, `panel`. New `/Users/oren/Documents/GitHub/288r/firmware/src/bsp/` StdPeriph layer. Matching suites under `/Users/oren/Documents/GitHub/288r/firmware/test/`.
+
+## Post-v1.3.0 feature slate (drafted 2026-08-04, owner brainstorm — Eventide-inspired)
+
+**Constraint recap:** ISR headroom ~24% free in TIME, less in pitch; panel is full —
+features enter via gestures, rear DIPs, presets, and context-unused controls (the
+string-mode pattern). Clone-first semantics stay intact: every no-new-UI home below
+leaves the panel legend true.
+
+### Next-cycle trio (fits current budget, no panel changes)
+
+| Feature | Eventide lineage | UI home | Notes |
+|---|---|---|---|
+| **Ducked delay** | TimeFactor ducking | **sens. knob in *all sounds*** (currently unused there; CCW = off = today) | Envelope followers already run; one multiply/sample. Continuous control, zero toggles. |
+| **Micropitch spread (#23)** | H3000 Micropitch | **rear DIP 4**, state stored per-preset | ±5–20 cent per-tap detune across the 8 taps; 8 physical outs = micropitch across a speaker array. |
+| **Reverse loop** | Crystals (reverse shards) | **hold write ~2 s while a loop plays** (save gesture is free in-loop) | Negative-rate read head + existing splice machinery; "flip the tape over" metaphor; twinkle confirms. |
+
+Also cheap when adjacent code is open: **wow/flutter** (internal slow LFO+noise via the
+existing FM path) folded into the rear-DIP vintage voice (DIP 3, or DIP 2 gains it).
+
+### Longer arc (the feedback trilogy)
+1. **Internal harmonizer regen** (H910/H949 spirals patchless) — first use of the
+   knob-steered internal feedback; needs the 4051-mux bench session for its control.
+2. **FDN reverb-ish wash** (Blackhole direction) — the 8 taps + a feedback *matrix* +
+   cheap diffusion; structurally half-built by the multitap.
+3. **Shimmer** — pitch voice inside that feedback path. Falls out of 1+2.
+
+### Parked ideas
+Band delays (per-tap filters — budget check first; cheap version = fixed tone tilt
+across taps), diatonic CV quantize (trivial math, UI home unclear).
+
+### Extensible config layer (hold in reserve)
+When features outnumber straps: **hold write+recirc together ~2 s** = config mode
+(A/B/C selector pages settings, existing controls edit, flash-persisted, twinkle
+in/out) — the H9-style function layer, zero panel real estate. Not needed for the
+trio above; adopt only when a feature has no natural home.
