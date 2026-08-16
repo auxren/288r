@@ -69,6 +69,17 @@ to the selected A/B/C preset slot — see [Presets](06-presets-taps-mixers.md).
   - **AUTO CONTROL LED** — lights only while incoming audio is above the threshold set by the
     **sens.** knob; it is the same comparison that fires the automatic capture. With sens. fully
     CCW the LED stays dark and auto triggering is disabled.
+  - **READY LED** — means two different things depending on what the transport is doing, and
+    both are intentional:
+    - **Armed and waiting** (steady on) — the looper is ready to capture on the next onset.
+    - **Dark for exactly one write pass** — that pass *is* the loop being recorded, so the
+      LED going out and coming back tells you the loop length.
+    - **A short blink at every wrap while a loop plays** — this is the **end-of-cycle**
+      indicator, not a fault. During playback the looper hands this lamp to the cycle
+      marker, so the blink rate is the loop length: it is how you see the loop's tempo
+      without listening for the seam. The lamp does **not** sit steadily on while a loop
+      recirculates.
+    - **Breathing** — String mode is active (see the hold gesture above).
 
 > **Note on "no menu."** There is no menu system. On the stock firmware the presets were *physical* —
 > trimmers and DIP switches read live every scan, with nothing to save or recall. The community

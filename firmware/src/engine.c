@@ -224,6 +224,13 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
      * the 8 SDRAM reads entirely (control, write, recirc all ran above). */
     if (e->skip_tap_reads) {
         for (int i = 0; i < NUM_TAPS; i++) chan[i] = 0.0f;
+        /* Keep the declick consistent with what is actually leaving here (zero),
+         * and let an armed fade expire rather than lurk: without this, a
+         * transport change made while the pitch/string voice owns the outputs
+         * would fire its fade from a stale held value on the way back to the
+         * delay taps. */
+        for (int i = 0; i < NUM_TAPS; i++) e->declick_hold[i] = 0.0f;
+        if (e->declick_n) e->declick_n--;
         return 0.0f;
     }
 
