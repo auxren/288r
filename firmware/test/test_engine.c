@@ -42,6 +42,12 @@ int main(void)
     const int P = 300;
     for (int k = 0; k < P; k++) engine_process(&e, sinf((float)k * 0.3f), 0.5f); /* record */
     engine_recirc(&e);                                        /* loop = [0, head=P] */
+    /* Let the transport declick finish before comparing passes: entering RECIRC
+     * crossfades the read jump over DECLICK_FADE samples, which is deliberately
+     * LONGER than this 300-sample test loop, so the first passes are still
+     * fading. Periodicity is a claim about steady state, not about the
+     * transition. */
+    for (uint32_t s = 0; s < DECLICK_FADE + (uint32_t)P; s++) engine_process(&e, 0.0f, 0.5f);
     float first[P], second[P];
     for (int k = 0; k < P; k++) first[k]  = engine_process(&e, 0.0f, 0.5f);
     for (int k = 0; k < P; k++) second[k] = engine_process(&e, 0.0f, 0.5f);

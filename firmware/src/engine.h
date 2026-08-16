@@ -24,6 +24,37 @@
  * loop capture (see dl_loop_splice). */
 #define LOOP_SPLICE_FADE 960u
 
+/* TRANSPORT DECLICK (field #27/#28/#29/#30/#31 - five reports, one family).
+ *
+ * Every transport change moves the read positions discontinuously: entering
+ * RECIRC teleports the head (dl.wpos = loop_start) and window-maps the reads,
+ * leaving it drops that mapping. All 8 taps therefore jump to unrelated content
+ * in a single sample - "a click that propagates through the taps".
+ *
+ * DECLICK_FADE crossfades the tap outputs across the jump; the outgoing side is
+ * the held pre-switch value rather than a second set of reads, so the cost is
+ * two multiplies per tap for the duration and the ISR budget is untouched (a
+ * real dual-read crossfade would double the tap SDRAM loads exactly when the
+ * looper is already busy).
+ *
+ * WR_SEAM_FADE covers the other half: when writing RESUMES it lands mid-buffer
+ * on old content, so without a blend the step is recorded into the material and
+ * heard on every later pass (field #28: "clicks that are recorded into the next
+ * loop"). It reads as a punch-in crossfade, not as a fade.
+ *
+ * Both lengths were swept against the measured discontinuity (test_declick):
+ * the transition residual falls as 1/DECLICK_FADE until it reaches the test
+ * signal's own slope, and the write-resume residual bottoms out at ~576. Longer
+ * buys nothing; shorter is audibly an edge. */
+/* 10 ms @96k: output crossfade across a transport transition. */
+#ifndef DECLICK_FADE
+#define DECLICK_FADE   960u
+#endif
+/* 6 ms @96k: buffer blend where writing resumes. */
+#ifndef WR_SEAM_FADE
+#define WR_SEAM_FADE   576u
+#endif
+
 typedef struct {
     delay_line_t dl;
     taps_t       taps;
@@ -51,6 +82,9 @@ typedef struct {
     float        lp_mult_ref;      /* multiplier at loop capture (rate = ref/mult) */
     float        lp_phase;         /* fractional part of the recirc head, [0,1)    */
     float        lp_rate;          /* last applied head rate (telemetry/debug)     */
+    uint32_t     declick_n;        /* transport declick: samples remaining      */
+    float        declick_hold[NUM_TAPS];  /* tap values held from before the switch */
+    uint32_t     wr_seam_n;        /* write-resume blend: samples remaining      */
     float        time_fm;          /* per-sample delay-time FM term (signal-in slot
                                       2 x depth, ISR-written): tap distances scale
                                       by (1 + time_fm) AFTER the control slews —

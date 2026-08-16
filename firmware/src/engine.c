@@ -22,6 +22,9 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->lp_phase = 0.0f;
     e->lp_rate = 1.0f;
     e->time_fm = 0.0f;
+    e->declick_n = 0u;
+    e->wr_seam_n = 0u;
+    for (int i = 0; i < NUM_TAPS; i++) e->declick_hold[i] = 0.0f;
     for (int i = 0; i < NUM_TAPS; i++) e->fm_off[i] = 0.0f;
     e->od_active = 0;
     e->od_decay = 0.95f;
@@ -123,6 +126,14 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
             e->dith ^= e->dith << 13; e->dith ^= e->dith >> 17; e->dith ^= e->dith << 5;
             float tp = ((float)(r1 >> 8) + (float)(e->dith >> 8)) * (1.0f / 16777216.0f) - 1.0f;
             x = dl_vintage_quantize(x, e->vintage_bits, tp);
+        }
+        if (e->wr_seam_n) {
+            /* Blend from what is already at this position into the new input,
+             * so the buffer has no step for later passes to reproduce (#28). */
+            float w = 1.0f - (float)e->wr_seam_n / (float)WR_SEAM_FADE;
+            float old = e->dl.buf[e->dl.wpos];
+            x = old + (x - old) * w;
+            e->wr_seam_n--;
         }
         dl_write(&e->dl, x);
     } else {
@@ -275,7 +286,19 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
                          : dl_read_frac(&e->dl, d_int, d_frac, itp);
     }
 
-    /* 4. mix: 8 per-tap DAC channels + the summed ("mixed") output */
+    /* 4. transport declick: crossfade the read jump away (#27-#31). Idle, this
+     * just tracks the last tap values so an arm has somewhere continuous to
+     * start from. */
+    if (e->declick_n) {
+        float w = 1.0f - (float)e->declick_n / (float)DECLICK_FADE;
+        for (int i = 0; i < NUM_TAPS; i++)
+            taps[i] = e->declick_hold[i] + (taps[i] - e->declick_hold[i]) * w;
+        e->declick_n--;
+    } else {
+        for (int i = 0; i < NUM_TAPS; i++) e->declick_hold[i] = taps[i];
+    }
+
+    /* 5. mix: 8 per-tap DAC channels + the summed ("mixed") output */
     mixer_channels(&e->mix, taps, chan);
     return mixer_sum(&e->mix, taps, e->auto_correction);
 }
@@ -286,13 +309,27 @@ float engine_process(engine_t *e, float input, float time_raw01)
     return engine_process_multi(e, input, time_raw01, chan);
 }
 
-void engine_write(engine_t *e)  { transport_begin_write(&e->xport, e->dl.wpos); }
+/* Arm the output crossfade. declick_hold[] already carries the previous
+ * sample's tap values (tracked every sample the fade is idle), so the outgoing
+ * side starts exactly where the audio was - no step at the start of the fade
+ * either. */
+static void declick_arm(engine_t *e) { e->declick_n = DECLICK_FADE; }
+
+void engine_write(engine_t *e)
+{
+    const int was_recirc = !transport_should_write(&e->xport);
+    transport_begin_write(&e->xport, e->dl.wpos);
+    declick_arm(e);
+    /* Writing resumes mid-buffer on top of old content: blend into it (#28). */
+    if (was_recirc) e->wr_seam_n = WR_SEAM_FADE;
+}
 void engine_recirc(engine_t *e)
 {
     transport_begin_recirc(&e->xport, e->dl.wpos);
     splice_arm(e, e->xport.loop_start, e->xport.loop_end, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
+    declick_arm(e);
 }
 
 void engine_recirc_window(engine_t *e, uint32_t window)
@@ -312,6 +349,7 @@ void engine_recirc_window(engine_t *e, uint32_t window)
     splice_arm(e, start, e->xport.loop_end, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
+    declick_arm(e);
 }
 
 void engine_recirc_span(engine_t *e, uint32_t start, uint32_t end)
@@ -326,6 +364,7 @@ void engine_recirc_span(engine_t *e, uint32_t start, uint32_t end)
     splice_arm(e, start, end, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
+    declick_arm(e);
 }
 
 void engine_recirc_between(engine_t *e, uint32_t start)
@@ -340,4 +379,5 @@ void engine_recirc_between(engine_t *e, uint32_t start)
     splice_arm(e, start, head, LOOP_SPLICE_FADE);
     e->lp_mult_ref = e->time.mult;   /* varispeed rate reference (#9) */
     e->lp_phase = 0.0f;
+    declick_arm(e);
 }
