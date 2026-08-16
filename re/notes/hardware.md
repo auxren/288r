@@ -40,6 +40,12 @@ Live SWD read of the running unit (`re/notes/bench-session-1.md`): **I²C1 is en
 not the codec. That settles the earlier ambiguity (static analysis couldn't isolate the I²C address —
 it's computed/runtime, not a catchable immediate). Still open: the exact codec **I²C address +
 register values** (needs an I²C sniff at power-up — SWD can't sniff the bus).
+- **Codec package pins (CS42448 64-LQFP, datasheet DS648F5): SCL = pin 63, SDA = pin 64**
+  (top edge, at the pin-1 corner; pin 1 = AD0/CS). **Pin 4 = VLC (control-port power) —
+  measured 3.3 V on the board (owner DMM, 2026-08-13)** → the codec's I²C pins are 3.3 V-only:
+  any 200e-bus attachment (5 V) MUST go through a level shifter (see firmware/DESIGN.md
+  "200e preset-bus attachment"). Prefer tapping the net at the pull-up resistors or MCU
+  PB8/PB9, not the 0.5 mm codec legs.
 
 ### Audio: it's **SAI1** (not SAI2), TDM 8×32-bit / 24-bit — RESOLVED (bench)
 Correction: the SAI @ `0x40015800` is **SAI1** (F429 has only SAI1). Live regs: Block A = Master RX

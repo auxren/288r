@@ -484,6 +484,15 @@ better engine; add new features/controls/modulation only *after* the clone is na
   slot-2 pickup joint (R157 area) for intermittence. The FM-depth EXPANDER (g = e2/(e2+k2),
   g_fm_knee SWD-pokeable, replaced the rc4 hard gate) is flashed + kept — correct for the
   digital path regardless. NOT yet committed to a release; lives on main.
+- **200e PRESET-BUS attachment DESIGNED (2026-08-13, owner ready to wire):** the 200e preset
+  bus = multi-master I²C @100 kHz on EDAC power pins 8 (SCL)/9 (SDA); protocol fully public in
+  github.com/studiohsoftware/2WIRELESS (commands = general-call 0x00 writes, storage cards =
+  EEPROM-style slaves at 0x50–0x5F, preset blobs opaque per-module → our storage.h records drop
+  in). No free I²C pin pair on this board (I2C2 = PB10/11 rear DIPs + FMC; I2C3 SCL = PA8 LED
+  family) → **share I2C1 with the codec via a BSS138 level shifter** (codec 0x49 never collides
+  with bus addresses; 200e side is ~5 V — do NOT wire copper-to-copper). Full spec + wire-up
+  checklist + firmware plan (`bus200e.c`, ENGC slave RX, ARLO-retry on codec ops,
+  BUS200E_ENABLE gate) in DESIGN.md "200e preset-bus attachment". Not yet wired/implemented.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts

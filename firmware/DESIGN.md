@@ -613,3 +613,130 @@ When features outnumber straps: **hold write+recirc together ~2 s** = config mod
 (A/B/C selector pages settings, existing controls edit, flash-persisted, twinkle
 in/out) — the H9-style function layer, zero panel real estate. Not needed for the
 trio above; adopt only when a feature has no natural home.
+
+## 200e preset-bus attachment (designed 2026-08-13, owner go — wire-up pending)
+
+Goal: the 288r joins the Buchla 200e preset bus — presets save/recall from a
+225e/206e Preset Manager alongside real 200e modules, and (phase 2) the module
+hears bus MIDI (note/clock) for the pitch/KS voices.
+
+### The bus (established facts)
+
+- Physically **plain multi-master I²C @ 100 kHz** on the EDAC power connector:
+  **pin 8 = SCL (yellow), pin 9 = SDA (green)** (pins 1–6 = grounds/rails, 7/10 n.c.).
+  Systems bridge it case-to-case with a straight cable; bus lockups in large systems
+  are a known failure mode — design for recovery, not for a clean bus.
+- Protocol is public in **github.com/studiohsoftware/2WIRELESS** (Studio H Wireless
+  Preset Manager — a working third-party bus participant; STM32F2 + modified
+  StdPeriph-style I²C HAL, directly portable experience). Key files:
+  `Firmware/photon/2Wireless/src/2Wireless.cpp` (all message builders),
+  `Firmware/PresetSwimlanes.docx` (sequences), `Firmware/presets/*.json` (blob shapes).
+
+### Wire-level protocol (extracted from 2WIRELESS source)
+
+Two framings exist; the 225e "PRIMO" firmware uses the compact one, pre-PRIMO the
+long one. **Support RX of both** (they're trivially distinguishable by first byte).
+
+**Commands = I²C write to GENERAL CALL address 0x00.** Module identity is payload,
+not the wire address. PRIMO framing:
+
+| Cmd | Payload | Meaning |
+|---|---|---|
+| `0x00` | preset (0–29) | recall preset N (all remote-enabled modules) |
+| `0x01` | preset (0–29) | save current state as preset N |
+| `0x14` / `0x15` | — | remote enable / disable (broadcast) |
+| `0x2D` | modAddr, memLSB, memMSB, cardLo | module → dump all presets to card |
+| `0x2E` | modAddr, memLSB, memMSB, cardLo | module → restore all presets from card |
+| `0x80/0x90\|busmask` | note, velo | MIDI note off/on (mask 0x8=bus A, 0x4=bus B) |
+| `0xB0\|busmask` | cc, val | MIDI CC (0x1F = fine tune) |
+| `0xF8/0xFA/0xFC` | — | MIDI clock / start / stop |
+
+Pre-PRIMO framing wraps the same ops: `[nBytes, 0x00, 0x22, subcmd, args…]` with
+subcmds 0x16/0x17 = enable/disable, 0x02 = save, 0x01 = recall, 0x04/0x05 =
+backup/restore, 0x0F = MIDI passthrough.
+
+**Storage cards slave at `0x50 | cardLo` (0x50–0x5F) and behave exactly like a
+24xx-series I²C EEPROM**: master writes a 2–3-byte big-endian memory offset, then
+sequential-reads (restore) or streams bytes (backup). On `0x2D`/`0x2E` addressed to
+us, *the module becomes bus master* and performs that EEPROM-style transfer itself.
+Blob size/format is **per-module and opaque to the card** (292e = 8 B/preset,
+291e = 253 B, 251e > 2 KB) → our blob = our existing versioned/CRC `storage.h`
+preset record, verbatim. Known module payload addresses: 0x28 = 259, 0x44 = 291e
+(full roster unlisted — see open items).
+
+### Hardware attachment (the wire-up)
+
+No free I²C pin pair exists on this board (I2C2 = PB10/PB11 rear DIPs + PF0/PF1
+FMC; I2C3 SCL = PA8, LED/pulse family) → **share I2C1 (PB8/PB9) with the CS42448**.
+Collision check passes: bus traffic uses wire addresses 0x00 + 0x50–0x5F only;
+codec is 0x49 and never ACKs either. Multi-master arbitration is what I²C is for.
+
+**Do not wire the buses copper-to-copper.** Our codec net pulls up to 3V3; the 200e
+bus almost certainly pulls to +5 (vintage-MCU era). Paralleled pull-ups to two rails
+would float the "high" level to ~4 V — fine for the F429's FT pins, **not safe for
+the codec: VLC (control-port power, CS42448 pin 4) measured 3.3 V on the board
+(owner DMM 2026-08-13) → the codec's I²C pins are 3.3 V-only and the shifter is
+MANDATORY**. Use a **2-ch BSS138-style bidirectional level shifter** (generic I²C
+level-shifter breakout): LV side → PB8/PB9 net + 3V3, HV side → EDAC pins 8/9 + the
++5 rail (EDAC pin 5), common ground. The shifter also buys galvanic sanity: a
+shorted/locked 200e bus can't yank the codec net below the shifter's LV pull-ups.
+
+Wire-up checklist (in order):
+1. [ ] Confirm the case busboard actually carries pins 8/9 to the 288r's connector
+   position (clone module in a Buchla-format case — pins may be unrouted at that slot).
+2. [ ] DMM the case bus first: pins 8/9 idle voltage (expect ~5 V high via pull-ups;
+   if it reads 3V3, the shifter HV rail follows suit).
+3. [ ] Find the tap points: PB8/PB9 at the MCU or the codec-side SCL/SDA pull-up
+   resistors (easier pads) — note which was used in re/notes/hardware.md.
+4. [ ] Mount shifter, flywires: LV→tap points + 3V3 + GND; HV→EDAC 8/9 + 5 V.
+5. [ ] Power on with stock-behavior firmware (BUS200E_ENABLE=0): verify codec init
+   still passes (the 15/15 reboot torture standard) with the shifter attached and
+   the case bus connected — proves the passive attachment doesn't load either bus.
+
+### Firmware plan (`src/bus200e.c` + bsp I²C1 extension)
+
+- **bsp**: I2C1 gains slave capability — ENGC set (ACK general call), ev/err
+  interrupts at NVIC priority *below* SAI audio (100 kHz slave RX ≈ one interrupt
+  per ~90 µs worst case; negligible vs the audio ISR). Codec master ops gain
+  **ARLO (arbitration-lost) retry** — they can now lose the bus mid-transfer to a
+  225e; existing bus-recover + verify-retry ×5 machinery is the right backstop and
+  must treat ARLO as retriable, not fatal.
+- **bus200e.c** (host-testable state machine, BSP-free like looper.c): general-call
+  RX byte-stream parser (both framings) → dispatch; `remote_enabled` state honoring
+  0x14/0x15 (default-enabled at boot, verify real-225e etiquette on the bench);
+  save/recall N → storage records; `0x2D`/`0x2E` addressed to our module address →
+  kick a superloop job that masters the EEPROM-style card transfer (never transfer
+  inside the I²C ISR). Card transfers use our whole preset bank as one blob.
+- **Preset mapping decision**: bus presets are 0–29; panel exposes 3 (A/B/C).
+  Recommended: widen the storage bank to 30 slots (sector 7 has room; records are
+  small), panel selector = slots 0–2, bus = all 30. Panel behavior unchanged.
+- **Module payload address**: needs one that no shipped 200e module uses. Roster is
+  not public in one place — harvest from 2WIRELESS presets JSONs + ask in the MW
+  thread; the 225e shows each module's address on remote-enable hold, so the
+  owner's/testers' systems can enumerate empirically. Config as `BUS200E_MODULE_ADDR`
+  in board.h, `[BENCH]` until confirmed collision-free.
+- **Gating (STABILITY rule)**: everything behind `BUS200E_ENABLE` (default 0) until
+  wire-proven; first enabled build is RX-log-only (commands land in a `g_dbg_bus`
+  SWD ring, no actions) → then save/recall live → then card transfers.
+- **Phase 2 (after presets work)**: bus MIDI RX — note on/off → KS voice / pitch
+  voice (a 225e-connected keyboard plays the string mode with zero patching), clock
+  → tempo-sync candidates. Free at the protocol layer; UI/arbitration design TBD.
+
+### Test plan without a 225e
+
+Any I²C master can drive this: a bench Pi/Arduino (or a built 2WIRELESS card, ~$30)
+sends general-call save/recall frames and emulates a card at 0x50 (EEPROM emulation
+= ~40 lines of Arduino Wire slave code). Full protocol coverage before the module
+ever meets a real Buchla case. Host suite covers the parser/state machine; the
+multi-master + codec-share soak needs the wire.
+
+### Open / verify items
+
+- [x] 200e bus level = **5 V (owner-confirmed 2026-08-13)** → shifter HV rail = 5 V (EDAC pin 5).
+- [ ] Does the 288r's case position even route EDAC 8/9 (checklist item 1).
+- [ ] Module address roster / pick `BUS200E_MODULE_ADDR`.
+- [ ] Remote-enable default state etiquette on a real 225e.
+- [ ] PRIMO vs pre-PRIMO: which framing does the target system speak (support both RX).
+- [ ] Codec-share soak: boot torture + preset storms while audio runs.
+- [ ] 206e (the LEM preset manager) quirks — 2WIRELESS has special startup handling
+  ("free 206e when starting up"); read that path before testing against a 206e.
