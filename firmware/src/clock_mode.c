@@ -35,7 +35,7 @@ int cm_update(clockmode_t *cm, int wr_edge, int rc_edge, int clock_lost)
     return cm->engaged ? 1 : 0;
 }
 
-int cm_swallows_transport(const clockmode_t *cm)
+int cm_swallows_pulse_jacks(const clockmode_t *cm)
 {
     return cm->engaged ? 1 : 0;
 }

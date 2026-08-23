@@ -126,7 +126,7 @@ int main(void)
         int on = 0;
         for (unsigned i = 0; i < CM_ENTER_PAIRS; i++) on = cm_update(&cm, 1, 1, 0);
         ck("engages after a run of coincident pairs", on);
-        ck("swallows transport once engaged", cm_swallows_transport(&cm));
+        ck("swallows the pulse JACKS once engaged", cm_swallows_pulse_jacks(&cm));
 
         /* quiet ticks between slow clock pulses must not break the run */
         cm_init(&cm);
@@ -148,10 +148,10 @@ int main(void)
         /* exit is immediate when the clock stops */
         cm_init(&cm);
         for (unsigned i = 0; i < CM_ENTER_PAIRS; i++) cm_update(&cm, 1, 1, 0);
-        ck("engaged before dropout", cm_swallows_transport(&cm));
+        ck("engaged before dropout", cm_swallows_pulse_jacks(&cm));
         on = cm_update(&cm, 0, 0, 1);
         ck("disengages the moment the clock is lost", !on);
-        ck("transport is handed back", !cm_swallows_transport(&cm));
+        ck("jacks are handed back to transport", !cm_swallows_pulse_jacks(&cm));
     }
 
     printf(fails ? "\n%d FAILURES\n" : "\nall clock-follow checks passed\n", fails);

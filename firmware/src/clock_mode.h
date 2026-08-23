@@ -45,10 +45,24 @@ void cm_init(clockmode_t *cm);
  * whose delay knob does nothing. */
 int  cm_update(clockmode_t *cm, int wr_edge, int rc_edge, int clock_lost);
 
-/* True when the transport should IGNORE these pulses because they are the
- * clock rather than transport commands. Once engaged, write/recirc edges are
- * clock ticks; passing them to the looper as well would retrigger capture on
- * every clock. */
-int  cm_swallows_transport(const clockmode_t *cm);
+/* True when the PULSE JACKS should be withheld from the looper, because their
+ * edges are clock ticks rather than transport commands: passing them on would
+ * retrigger capture on every clock.
+ *
+ * SWALLOWS THE JACKS ONLY -- NEVER THE PANEL. main.c combines three sources:
+ *
+ *     wr_act = pc.write_trig | bsp_pulse_in(0) | latched_edge
+ *              ^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ *              red momentary   the jack: swallow THESE
+ *
+ * so the wiring must mask the jack terms and pass pc.write_trig / pc.recirc_trig
+ * straight through. Clocked mode sets the delay's WINDOW LENGTH; it does not
+ * take over the transport. Manual write and recirculate, hold-to-overdub,
+ * hold-write-to-save, the sens auto-capture and the arm jack all keep working
+ * exactly as they do now -- loops are simply sized to the clock grid.
+ *
+ * Getting this wrong would kill the red momentaries whenever a clock is
+ * patched, which is the kind of surprise that reads as a dead module. */
+int  cm_swallows_pulse_jacks(const clockmode_t *cm);
 
 #endif /* CLOCK_MODE_H */

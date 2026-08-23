@@ -826,6 +826,22 @@ window exceeds the buffer, do not lock** — hold the previous ratio and signal
 it (a READY-lamp blink pattern is the obvious channel). Better to say "no" than
 to be a third of the tempo the player expects.
 
+### What clocked mode does NOT take over
+
+It sets the delay's **window length**. It does not touch the transport.
+
+- **The red write/recirc momentaries keep working**, unchanged, including
+  hold-to-overdub and hold-write-to-save. `main.c` builds each transport action
+  as `pc.write_trig | bsp_pulse_in(n) | latched_edge`; clocked mode masks only
+  the JACK terms and passes the panel term straight through. Masking the whole
+  expression would kill the red switches whenever a clock is patched — the kind
+  of surprise that reads as a dead module. `cm_swallows_pulse_jacks()` is named
+  to make that unambiguous at the call site.
+- **The arm jack is untouched**, so pulse-driven capture still works.
+- **Sens auto-capture is untouched.**
+- Loops therefore behave exactly as they do now; they are simply sized to the
+  clock grid, and the preset tap phases become grid subdivisions.
+
 ### Interactions that must be honoured
 
 - **Varispeed owns the multiplier on a playing loop** (tape-motor, #9). Clocked
