@@ -30,4 +30,17 @@ void audio_io_block(engine_t *e, const int32_t *in, int32_t *out,
 float   audio_in_to_f(int32_t codec_word);
 int32_t audio_f_to_out(float x);
 
+/* Was this output word produced by a sample at or beyond full scale? The soft
+ * knee maps |x| = 1.0 to exactly 0.875 FS, so testing the WORD against that
+ * point is the same predicate as |x| >= 1.0 on the float — but it is an
+ * integer compare on a value the caller already has, instead of two float
+ * compares (each a VCMPE plus an FPSCR read on an M4F) per tap per sample.
+ * Diagnostic use only (the clip counter): exact to the 24-bit LSB. */
+#define AUDIO_OVERRANGE_WORD 7340031   /* 0.875 * (2^23 - 1), truncated */
+static inline int audio_word_overrange(int32_t w24)
+{
+    int32_t s = (w24 << 8) >> 8;                  /* sign-extend 24-bit */
+    return (s >= AUDIO_OVERRANGE_WORD) | (s <= -AUDIO_OVERRANGE_WORD);
+}
+
 #endif /* AUDIO_IO_H */

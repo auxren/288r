@@ -31,6 +31,8 @@ void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n);
 #include "fast_math.h"
 #include "calibration.h"
 #include "storage.h"
+#include "governor.h"
+#include "blockclock.h"
 #include <stdint.h>
 
 /* Live panel scan (74HC165). Input-only, so acting on a mis-decoded bit can't drop
@@ -130,8 +132,26 @@ static volatile float g_pt_scale = 1.0f;
 static volatile uint8_t g_pulse_latch = 0;   /* bit0=write bit1=recirc bit2=arm */
 static uint8_t g_pulse_prev = 0;
 
-/* signal-in FM presence envelope (ISR-only state) */
+/* signal-in FM presence envelope (ISR-only state) + the expander gain it
+ * produces. The gain is recomputed once per BLOCK in the ISR epilogue and held
+ * for the following block: it is a detector output with a ~10 ms time constant
+ * and a divide in it, so evaluating it per sample bought nothing and cost a
+ * VDIV per sample. The FM SIGNAL itself is still per-sample — only the depth
+ * the expander assigns it is block-rate. */
 static float g_fm_env = 0.0f;
+static float g_fm_gain = 0.0f;
+
+/* ENV_POLE_A is the per-sample envelope pole these detectors were calibrated
+ * with (tau ~10 ms); ENV_BLOCK_A is its exact BLOCK_FRAMES-sample equivalent,
+ * 1-(1-a)^n, which is the closed form for n consecutive one-pole steps — so
+ * running the pole once per block is the same filter, not an approximation of
+ * it. Keep ENV_POLE_A here as the definition the constant below derives from:
+ * change one and the other is wrong. */
+#define ENV_POLE_A   0.002f
+#define ENV_BLOCK_A  0.031524f   /* = 1 - (1 - ENV_POLE_A)^16 */
+#if BLOCK_FRAMES != 16u
+#error "ENV_BLOCK_A is precomputed for BLOCK_FRAMES = 16 — recompute it"
+#endif
 /* SWD live A/B: poke 1 to hard-mute the signal-in FM path (diagnosis:
  * separating 'FM by a patched source / bleed' from everything else). */
 volatile uint8_t g_fm_mute = 0;
@@ -162,8 +182,12 @@ volatile uint8_t  g_dbg_muxscan __attribute__((used)) = 0;
 volatile uint16_t g_dbg_muxpk[8][2] __attribute__((used));
 static float g_att_filt = 2047.0f;   /* c.v. attenuverter (ADC3 parked ch) */
 
-/* Audio-block clock (ISR-incremented, ~6000/s): the loop-pass "tick" rate varies
- * with superloop load, so anything timed (save-hold, blinks) counts blocks. */
+/* Audio-block clock (ISR-incremented): the loop-pass "tick" rate varies with
+ * superloop load, so anything timed (save-hold, blinks) counts blocks. The
+ * rate is MEASURED at 2999/s (blocker #0, see bsp/board.h) — this comment used
+ * to say ~6000/s, which is where half the confusion came from; every
+ * block-counted constant in board.h is written against ~3000/s and they are
+ * the ones that are right. */
 static volatile uint32_t g_blocks = 0;
 
 /* Looper auto-state machine (looper.c — host-tested by test/test_looper.c).
@@ -258,6 +282,19 @@ struct dbg_panel {
                              superloop starving the control path — suspected
                              ps_service search pile-up during pitch sweeps)   */
     uint8_t  eoc;         /* eoc blink counter (nonzero = blinking) */
+    /* BLOCK CLOCK (blocker #0 — see bsp/board.h "THE BLOCK CLOCK"). Read these
+     * three together and the 96k-vs-48k / 16-vs-32 question is answered:
+     * blk_frames is what the DMA actually hands the ISR, blk_hz is measured
+     * against DWT, frame_hz is their product = the true audio frame rate. */
+    uint16_t blk_hz;
+    uint16_t blk_frames;
+    uint32_t frame_hz;
+    /* LOAD GOVERNOR (budget contract C-3c): current quality level, how many
+     * level changes have happened, and how many blocks ever missed the
+     * deadline. gov_over must stay 0 — it is the contract's failure counter. */
+    uint8_t  gov_lvl;
+    uint8_t  gov_trans;
+    uint16_t gov_over;
     float    mult;        /* smoothed multiplier [0,1]            */
     float    base;        /* current taps base_delay (samples)    */
 };
@@ -280,13 +317,38 @@ static volatile uint16_t g_isr_pk = 0;   /* max cycles/block >> 4 */
  * has been silent ~50 ms, the ISR force-releases the overdub itself. */
 static volatile uint32_t g_loop_alive = 0;
 
+/* block-clock self-check state (published to g_dbg_panel by the slow tick) */
+static blkclk_t g_blkclk;
+
 void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 {
     const uint32_t cyc0 = DWT_CYCCNT_REG;
-    const float t = g_time_raw01;
+
+    /* ================= BLOCK PROLOGUE ==================================
+     * Control-rate housekeeping, hoisted out of the frame loop (budget
+     * contract C3). The test something must pass to live up here: its own
+     * time constant is >> one block (0.33 ms) AND no downstream consumer
+     * compares it against a threshold whose calibration depends on the
+     * per-sample statistics. That second half is why the ENVELOPES below
+     * still integrate every sample and only their pole update moves up:
+     * SENS_REF, LP_ONSET_RATIO and the FM knee are ear-calibrated numbers
+     * and a decimated (or peak) detector would silently retune all three.
+     * Panel/mode flags cannot change mid-block by construction — they are
+     * written by the superloop tick, which cannot preempt this ISR. */
+    const float   t        = g_time_raw01;
+    const int8_t  solo     = g_dac_solo;
+    const uint8_t ks_mode  = g_ks_mode;
+    const float   fm_gain  = g_fm_gain;    /* expander depth for this block  */
     int clip = 0;       /* lights the LED: INPUT overload only (field #21)  */
     int clip_evt = 0;   /* SWD counter only: internal pre-limiter overrange */
+    /* per-block |x| integrators feeding the block-rate envelope poles */
+    float acc_in = 0.0f, acc_s1 = 0.0f, acc_s2 = 0.0f;
+#if TIME_FM_ENABLE
+    float acc_fm = 0.0f;
+#endif
 #if PITCH_VOICE_ENABLE
+    const int pitch_mode = g_pitch_mode;
+    const float pt_scale = g_pt_scale;
     /* looper window sync for the pitch voice (#19): reads must window-map in
      * RECIRC or the grains fetch garbage at every wrap (bench: ~100 overrange
      * events/s, silent input). Once per block is plenty — captures/releases
@@ -297,34 +359,64 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
                            g_engine.xport.loop_end, g_engine.dl.len);
     else
         ps_set_loop_window(&g_pv.ps, 0u, 0u, g_engine.dl.len);
+    /* pitch mode NEVER uses the engine's 8 tap outputs (full wet discards
+     * them; the transition sliver's dry leg is a single tap-0 read below)
+     * — skip the 8 SDRAM reads that pushed the ISR into DMA overrun (the
+     * owner's "glitches": 104-110% of block budget, torn output blocks
+     * that the external feedback patch then recirculated). Write/recirc/
+     * control still run inside the engine. */
+    g_engine.skip_tap_reads = (pitch_mode || ks_mode) ? 1 : 0;
+#else
+    g_engine.skip_tap_reads = ks_mode ? 1 : 0;   /* KS replaces channels */
 #endif
     if (g_engine.od_active && (uint32_t)(g_blocks - g_loop_alive) > 150u)
         g_engine.od_active = 0;               /* starvation breaker */
+
+    /* ================= PER-FRAME ======================================= */
     for (unsigned f = 0; f < frames; ++f) {
-        float x = audio_in_to_f(in[f * TDM_SLOTS + AUDIO_IN_SLOT]);
+        const int32_t *fr = &in[f * TDM_SLOTS];
+        float x = audio_in_to_f(fr[AUDIO_IN_SLOT]);
+        /* one abs for the envelope AND the rail test (fm_fabsf is VABS: a
+         * `x<0?-x:x` ternary is not fabs — it keeps -0.0 — so the compiler
+         * must emit a compare + FPSCR read for it, which is why every abs in
+         * this ISR goes through fm_fabsf). */
+        float ax = fm_fabsf(x);
+        acc_in += ax;
+#if LED_INPUT_CLIP_MODE
+        /* INPUT LED (PA0) repurposed: whole-chain clip detector, stage 1 — the
+         * input ADC at the 24-bit rail (information already lost upstream of us;
+         * the fix is the mixer knob, so tell the player). */
+        if (ax >= CLIP_IN_THRESH) clip = 1;
+#else
+        /* INPUT LED (PA0) — decompile-exact: the stock compares each input sample
+         * against +0.5 FS in the tap service and drives PA0 LOW (LED ON) above it:
+         *   if (r5 + 0x400000 > 0x800000) sub_fe0(0); else sub_102c(0);
+         * A per-sample 1-bit envelope PWM: loud input -> more low-time -> brighter.
+         * (PA0/1/7/8/11 are DSP-driven indicator outputs, NOT mux addresses — the
+         * old panel-scan.md label was wrong.) */
+        if (g_blocks >= g_twinkle_until) bsp_panel_strobe(x > 0.5f ? 0 : 1);
+#endif
+        /* sens / "signal in" knob channels (codec slots 1+2). */
+        float s2v = audio_in_to_f(fr[2]);
+        acc_s1 += fm_fabsf(audio_in_to_f(fr[1]));
+        acc_s2 += fm_fabsf(s2v);
 #if TIME_FM_ENABLE
         /* signal-in FM (slot 2, AC-coupled in analog): the front-panel
          * signal-in pot is the depth control, and the modulation targets
          * whatever the multiplier's domain is (owner design): TIME mode =
          * delay time (tap distances); pitch mode = the voice's pitch
-         * (grain read offset -> vibrato/FM). */
+         * (grain read offset -> vibrato/FM).
+         *
+         * The SMOOTH DOWNWARD EXPANDER that sets the depth (g = env^2 /
+         * (env^2 + knee^2); owner taper report 2026-08-04) now runs once per
+         * block in the epilogue — it is a 10 ms detector with a divide in it,
+         * and it was being evaluated 48000 times a second. The modulator
+         * itself stays per-sample: that is the audio path. */
         {
-            float fms = audio_in_to_f(in[f * TDM_SLOTS + TIME_FM_SLOT]);
-            /* SMOOTH DOWNWARD EXPANDER (owner taper report 2026-08-04: the
-             * trim knob felt dead / cliff / flat — the old hard threshold +
-             * 4x ramp stacked on the log pot). g = env^2/(env^2 + knee^2):
-             * still ~zero for bleed-level signals (the rc4 anti-noise
-             * property), but engages GRADUALLY from just above the floor —
-             * -6 dB at the knee, ~unity by 4x knee. g_fm_knee is SWD-
-             * pokeable for live feel calibration. */
-            float afm = (fms < 0.0f) ? -fms : fms;
-            g_fm_env += (afm - g_fm_env) * 0.002f;
-            {
-                float e2 = g_fm_env * g_fm_env;
-                float k2 = g_fm_knee * g_fm_knee;
-                fms *= e2 / (e2 + k2);
-            }
-            if (g_fm_mute) fms = 0.0f;
+            float fms = (TIME_FM_SLOT == 2u) ? s2v
+                                             : audio_in_to_f(fr[TIME_FM_SLOT]);
+            acc_fm += fm_fabsf(fms);
+            fms *= fm_gain;
             /* SNAP TO EXACT ZERO below audibility. The expander is asymptotic:
              * with no signal it settles at ~1e-11 rather than 0, and engine.c
              * gates its per-tap FM offset path on `off != 0.0f`. A denormal-ish
@@ -340,58 +432,19 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 #endif
         }
 #endif
-#if LED_INPUT_CLIP_MODE
-        /* INPUT LED (PA0) repurposed: whole-chain clip detector, stage 1 — the
-         * input ADC at the 24-bit rail (information already lost upstream of us;
-         * the fix is the mixer knob, so tell the player). */
-        { float ax0 = (x < 0.0f) ? -x : x; if (ax0 >= CLIP_IN_THRESH) clip = 1; }
-#else
-        /* INPUT LED (PA0) — decompile-exact: the stock compares each input sample
-         * against +0.5 FS in the tap service and drives PA0 LOW (LED ON) above it:
-         *   if (r5 + 0x400000 > 0x800000) sub_fe0(0); else sub_102c(0);
-         * A per-sample 1-bit envelope PWM: loud input -> more low-time -> brighter.
-         * (PA0/1/7/8/11 are DSP-driven indicator outputs, NOT mux addresses — the
-         * old panel-scan.md label was wrong.) */
-        if (g_blocks >= g_twinkle_until) bsp_panel_strobe(x > 0.5f ? 0 : 1);
-#endif
-        /* input envelope for the AUTO-CONTROL/presence LED (PA11): stock compares
-         * an envelope accumulator (0x200000bc) against 0x200000 = 0.25 FS. */
-        {
-            float ax = (x < 0.0f) ? -x : x;
-            g_env += (ax - g_env) * 0.002f;      /* ~5 ms one-pole @96k */
-        }
-        /* sens / "signal in" knob channels (codec slots 1+2): same one-pole. */
-        {
-            float s1 = audio_in_to_f(in[f * TDM_SLOTS + 1]);
-            float s2 = audio_in_to_f(in[f * TDM_SLOTS + 2]);
-            if (s1 < 0.0f) s1 = -s1;
-            if (s2 < 0.0f) s2 = -s2;
-            g_sens_env[0] += (s1 - g_sens_env[0]) * 0.002f;
-            g_sens_env[1] += (s2 - g_sens_env[1]) * 0.002f;
-        }
         float chan[NUM_TAPS];
-#if PITCH_VOICE_ENABLE
-        /* pitch mode NEVER uses the engine's 8 tap outputs (full wet discards
-         * them; the transition sliver's dry leg is a single tap-0 read below)
-         * — skip the 8 SDRAM reads that pushed the ISR into DMA overrun (the
-         * owner's "glitches": 104-110% of block budget, torn output blocks
-         * that the external feedback patch then recirculated). Write/recirc/
-         * control still run inside the engine. */
-        g_engine.skip_tap_reads = g_pitch_mode ? 1 : 0;
-#endif
-        if (g_ks_mode) g_engine.skip_tap_reads = 1;   /* KS replaces channels */
         (void)engine_process_multi(&g_engine, x, t, chan);
-        if (g_ks_mode) {
+        if (ks_mode) {
             ks_process(&g_ks, x, chan);
         } else {
 #if PITCH_VOICE_ENABLE
-        if (g_pitch_mode) {
+        if (pitch_mode) {
             /* ALWAYS run the voice (pv_process is the only thing that slews
              * g_pv.ratio — gating the call on the ratio deadlocked the voice
              * at unity forever; adversarial-verify blocker #1). Only the MIX is
              * faded by |ratio-1| so pitch mode is transparent at zero CV. */
             float y = pv_process(&g_pv, &g_engine.dl, DL_INTERP_HERMITE);
-            float dev = g_pv.ratio - 1.0f; if (dev < 0.0f) dev = -dev;
+            float dev = fm_fabsf(g_pv.ratio - 1.0f);
             /* #24 final form — TIMESCALE-SEPARATED dry swap. History: a
              * dev-proportional sliver (full wet by 0.5% dev) kept partial
              * mixes from PARKING and beating; rc4 smoothed its crossing.
@@ -424,8 +477,8 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             if (wet < 0.999f) {
                 uint32_t d_int; float d_frac;
                 taps_delay_frac(&g_engine.taps, 0, &d_int, &d_frac);
-                if (g_pt_scale != 1.0f) {          /* #20: dry anchor too */
-                    float dly = ((float)d_int + d_frac) * g_pt_scale;
+                if (pt_scale != 1.0f) {            /* #20: dry anchor too */
+                    float dly = ((float)d_int + d_frac) * pt_scale;
                     d_int = (uint32_t)dly; d_frac = dly - (float)d_int;
                 }
                 if (d_int < 1) { d_int = 1; d_frac = 0.0f; }
@@ -454,8 +507,8 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
                  * stock pitch mode had no extend, and scaling the pinned
                  * minimum made every control change take seconds to be heard
                  * (owner report). The looper window keeps the full length. */
-                if (g_pt_scale != 1.0f) {
-                    float dly = ((float)d_int + d_frac) * g_pt_scale;
+                if (pt_scale != 1.0f) {
+                    float dly = ((float)d_int + d_frac) * pt_scale;
                     d_int = (uint32_t)dly; d_frac = dly - (float)d_int;
                 }
                 float yi = pt_read(&g_pt, d_int, d_frac);
@@ -463,7 +516,7 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             }
         }
 #endif
-        }   /* !g_ks_mode */
+        }   /* !ks_mode */
 #if MASTER_DRY_MODE
         /* SLIDER 0 = DRY OUT (owner norm): slot 4 reaches only the analog
          * master sum (its own slider path is broken), so it carries a hidden
@@ -478,24 +531,60 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
             chan[4] = comp;
         }
 #endif
+        int32_t *o = &out[f * TDM_SLOTS];
+        for (unsigned s = 0; s < (unsigned)NUM_TAPS; ++s) {
+            int32_t w = audio_f_to_out(chan[s]);
 #if LED_INPUT_CLIP_MODE
-        /* stage 2 — internal pre-limiter overrange: COUNTER ONLY as of #21.
-         * Two independent field testers read the lit LED during hot loop
-         * playback as a fault (a rail-recorded loop re-trips it every pass).
-         * The LED is now a true INPUT overload indicator (the 277-style
-         * meaning jimfowler argued for); internal overrange still counts in
-         * clip_q for SWD diagnosis (it is how #19 was caught). */
-        for (unsigned s = 0; s < (unsigned)NUM_TAPS; ++s)
-            if (chan[s] >= 1.0f || chan[s] <= -1.0f) clip_evt = 1;
+            /* stage 2 — internal pre-limiter overrange: COUNTER ONLY as of #21.
+             * Two independent field testers read the lit LED during hot loop
+             * playback as a fault (a rail-recorded loop re-trips it every pass).
+             * The LED is now a true INPUT overload indicator (the 277-style
+             * meaning jimfowler argued for); internal overrange still counts in
+             * clip_q for SWD diagnosis (it is how #19 was caught).
+             * Tested on the OUTPUT WORD, not on chan[]: |chan| >= 1.0 maps
+             * through the soft knee to exactly AUDIO_OVERRANGE_WORD, so this is
+             * the same predicate as the old float scan (to within the 24-bit
+             * LSB of a diagnostic counter) using an integer compare on a value
+             * already in a register, instead of two float compares per tap. */
+            clip_evt |= audio_word_overrange(w);
 #endif
-        for (unsigned s = 0; s < TDM_SLOTS; ++s)
-            out[f * TDM_SLOTS + s] = (s < (unsigned)NUM_TAPS)
-                                     ? audio_f_to_out(chan[s]) : 0;
-        if (g_dac_solo >= 0)                       /* bench slot->slider mapping */
+            o[s] = w;
+        }
+        for (unsigned s = (unsigned)NUM_TAPS; s < TDM_SLOTS; ++s) o[s] = 0;
+        if (solo >= 0)                             /* bench slot->slider mapping */
             for (unsigned s = 0; s < TDM_SLOTS; ++s)
-                if (s != (unsigned)g_dac_solo) out[f * TDM_SLOTS + s] = 0;
+                if (s != (unsigned)solo) o[s] = 0;
     }
+
+    /* ================= BLOCK EPILOGUE ================================== */
     g_blocks++;
+    /* Envelope poles at block rate. The |.| integration above ran every
+     * sample; what is applied here is the block MEAN through the exact
+     * n-sample equivalent pole (ENV_BLOCK_A = 1-(1-a)^n). Mean and not peak
+     * deliberately: every consumer of these three (SENS_REF, LP_ONSET_RATIO,
+     * LP_INPUT_EPS, the FM expander knee, the presence LED) is a threshold
+     * calibrated by ear against an averaging detector, and a peak detector
+     * reads ~4 dB hotter on programme material — it would retune all of them
+     * silently. The only difference from the per-sample filter is an extra
+     * 16-sample boxcar, 3% of the 10 ms pole. */
+    {
+        const float inv_n = 1.0f / (float)frames;
+        g_env += (acc_in * inv_n - g_env) * ENV_BLOCK_A;
+        g_sens_env[0] += (acc_s1 * inv_n - g_sens_env[0]) * ENV_BLOCK_A;
+        g_sens_env[1] += (acc_s2 * inv_n - g_sens_env[1]) * ENV_BLOCK_A;
+#if TIME_FM_ENABLE
+        g_fm_env += (acc_fm * inv_n - g_fm_env) * ENV_BLOCK_A;
+        /* SMOOTH DOWNWARD EXPANDER: g = env^2/(env^2 + knee^2) — still ~zero
+         * for bleed-level signals (the rc4 anti-noise property), engaging
+         * GRADUALLY from just above the floor: -6 dB at the knee, ~unity by
+         * 4x knee. g_fm_knee is SWD-pokeable for live feel calibration. */
+        {
+            float e2 = g_fm_env * g_fm_env;
+            float k2 = g_fm_knee * g_fm_knee;
+            g_fm_gain = g_fm_mute ? 0.0f : e2 / (e2 + k2);
+        }
+#endif
+    }
     {   /* pulse-jack edge latch at block rate (~3 kHz: catches 1 ms pulses) */
         uint8_t now = (uint8_t)((bsp_pulse_in(0) ? 1u : 0u)
                               | (bsp_pulse_in(1) ? 2u : 0u)
@@ -504,9 +593,19 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         g_pulse_prev = now;
     }
     {
-        uint32_t dt = (DWT_CYCCNT_REG - cyc0) >> 4;
+        /* ONE DWT read serves three consumers: the peak telemetry, the load
+         * governor, and the block-clock self-check (which needs the absolute
+         * counter, not the delta — see blockclock.h). */
+        const uint32_t cyc1 = DWT_CYCCNT_REG;
+        const uint32_t cycles = cyc1 - cyc0;
+        uint32_t dt = cycles >> 4;
         if (dt > 0xFFFFu) dt = 0xFFFFu;
         if ((uint16_t)dt > g_isr_pk) g_isr_pk = (uint16_t)dt;
+        /* Budget contract C-3c: this block's cost decides the NEXT block's
+         * quality level. Measure last, act first — the governor is the reason
+         * a single expensive block cannot become a sustained overrun. */
+        gov_report(cycles);
+        (void)bc_tick(&g_blkclk, cyc1, frames);
     }
 #if LED_INPUT_CLIP_MODE
     if (clip) { g_clip_until = g_blocks + CLIP_HOLD_BLOCKS; }
@@ -558,10 +657,15 @@ int main(void)
     extern uint32_t _sccm, _eccm;
     for (uint32_t *p = &_sccm; p < &_eccm; ++p) *p = 0u;
 
-    /* DWT cycle counter on (ISR load telemetry) */
+    /* DWT cycle counter on (ISR load telemetry, load governor, block clock) */
     DEMCR_REG |= (1u << 24);
     DWT_CYCCNT_REG = 0u;
     DWT_CTRL_REG |= 1u;
+
+    /* Both of these must exist before the first audio block: the ISR calls
+     * gov_report()/bc_tick() on every block, including the first. */
+    gov_init();
+    bc_init(&g_blkclk, HCLK_HZ, BLKCLK_WINDOW);
 
     bsp_clock_init();
     bsp_sdram_init();
@@ -931,6 +1035,13 @@ int main(void)
 #endif
             looper_tick(&g_lp, &g_engine, pc.automode, pc.store_end_mode,
                         wr_edge, rc_edge, (int)rc_act, (int)arm_in, lp_sens);
+            /* A transport transition just armed a declick (and possibly a
+             * splice). Transitions are the click-prone class, so the governor
+             * must not hand a quality level BACK inside one — an
+             * un-crossfaded interpolator swap under a fade is exactly the
+             * class of bug #24 was. Drops are unaffected: dropping under a
+             * transition is when it is most needed. */
+            if (g_engine.declick_n) gov_note_transition();
             /* LED intents -> pins (active-low); READY is EOC-owned in loop
              * playback (led_ready < 0) */
             lp_ind(1, g_lp.led_write  ? 0 : 1);
@@ -959,6 +1070,18 @@ int main(void)
             }
             g_dbg_panel.clip_q = g_clip_count;
             g_dbg_panel.isr_pk = g_isr_pk;   /* read+reset over SWD as needed */
+            /* block clock (blocker #0) + governor state: published from the
+             * superloop so the ISR never touches the dbg struct. */
+            g_dbg_panel.blk_hz     = g_blkclk.blk_hz;
+            g_dbg_panel.blk_frames = g_blkclk.frames;
+            g_dbg_panel.frame_hz   = g_blkclk.frame_hz;
+            {
+                const governor_t *gv = gov_state();
+                g_dbg_panel.gov_lvl   = gv->level;
+                g_dbg_panel.gov_trans = (uint8_t)gv->transitions;
+                g_dbg_panel.gov_over  = (uint16_t)((gv->over > 0xFFFFu)
+                                                   ? 0xFFFFu : gv->over);
+            }
             if (g_blocks < g_twinkle_until) {    /* saved! — random sparkle, 1 s */
                 g_twinkle_rng ^= g_twinkle_rng << 13;   /* xorshift32 */
                 g_twinkle_rng ^= g_twinkle_rng >> 17;
@@ -1063,7 +1186,7 @@ int main(void)
 #if PANEL_LED_ENABLE
         /* LED refresh out of the audio ISR (bit-banged 595, ~few us). */
 #if PANEL_LED_WALK
-        if ((g_led_step % 6000u) == 0u)          /* ~1 step/s @ 6000 blocks/s */
+        if ((g_led_step % 6000u) == 0u)          /* ~2 s/step at 2999 blocks/s */
             bsp_panel_out(led_diag_walk(g_led_step / 6000u));
         g_led_step++;
 #else

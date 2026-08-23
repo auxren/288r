@@ -1,0 +1,94 @@
+{
+  "_readme": [
+    "Manifest for tools/wcet.py \u2014 the machine-checkable half of budget",
+    "contract clause C-3. Every entry here is a CLAIM about the code that CI",
+    "re-checks on every build. `loops` is the number of cycles (strongly",
+    "connected components, reducible or not) the compiler emitted for that",
+    "function: it is deliberately brittle, because a change to it means the",
+    "loop structure of the audio ISR changed and a human must look. Bounds are",
+    "read out of each loop's own `cmp rN,#imm` exit test where one exists (see",
+    "infer_bound); `default_bound` covers the rest and needs the justification",
+    "in `why`. A loop with no edge leaving its body is rejected outright."
+  ],
+  "_sdram_note": [
+    "These are the out-of-line readers of the external delay buffer; their",
+    "loads are priced at SDRAM_LOAD rather than SRAM. SDRAM traffic that the",
+    "compiler INLINED into bsp_audio_isr (dl_write, pt_read/pt_write, the",
+    "overdub read-modify-write) is still priced as SRAM \u2014 the model cannot",
+    "tell which pointer an inlined load followed. That underestimate is one of",
+    "the things the calibration ratio K absorbs; it is also why the ratio",
+    "between builds, not the absolute ceiling, is the regression signal."
+  ],
+  "baseline_ceiling": 159939,
+  "baseline_slack": 0.05,
+  "budget_cycles": 56016,
+  "calibration": {
+    "_note": [
+      "K = measured worst-case cycles / modelled ceiling, recorded with",
+      "--calibrate <isr_pk>. The ceiling assumes the most expensive branch",
+      "everywhere at once, so it is larger than any single real path; K says",
+      "by how much, for a build whose real load is known.",
+      "PROVENANCE of this value: the measurement is the lead's, isr_pk 4104 =",
+      "117% of budget in TIME/RECIRC with a loop playing, taken on the image",
+      "BEFORE workstream B's changes; the ceiling it is divided by is the",
+      "image AFTER them, because that is the one this tool can disassemble.",
+      "The two differ, so treat this K as an anchor of the right order and",
+      "re-record it next time the unit is on the bench: build, flash, reset",
+      "g_isr_pk, run the WCC-TIME programme, read isr_pk back, then",
+      "  tools/wcet.py --elf <the flashed elf> --calibrate <isr_pk>"
+    ],
+    "ceiling_at_calibration": 159939,
+    "k": 0.4106,
+    "measured_isr_pk": 4104
+  },
+  "loop_bounds": {
+    "bsp_audio_isr": {
+      "default_bound": 8,
+      "loops": 10,
+      "overrides": {
+        "0": {
+          "bound": 5,
+          "why": "Single-block loop = the varispeed write burst `while (lp_phase >= 1.0f) { advance; lp_phase -= 1; }`. lp_phase gains lp_rate per input sample and lp_rate is clamped to 4.0 in engine.c, so it can never carry more than 4 whole samples plus the sub-sample remainder: 5 iterations is the construction bound. Four copies exist (overdub and plain paths, each specialised twice)."
+        },
+        "1": {
+          "bound": 5,
+          "why": "as loop 0 \u2014 varispeed write burst, bounded by the 0.25..4.0 rate clamp"
+        },
+        "2": {
+          "bound": 5,
+          "why": "as loop 0 \u2014 varispeed write burst, bounded by the 0.25..4.0 rate clamp"
+        },
+        "3": {
+          "bound": 5,
+          "why": "as loop 0 \u2014 varispeed write burst, bounded by the 0.25..4.0 rate clamp"
+        },
+        "9": {
+          "bound": 16,
+          "why": "The frame loop = BLOCK_FRAMES. It contains the entire per-sample engine, so it is the one loop whose bound has to be exact rather than defaulted."
+        }
+      },
+      "why": "Ten loops, in three classes, and the class is legible from the body size. (a) Four SINGLE-BLOCK loops = the varispeed/overdub write bursts, bounded at 5 by the rate clamp \u2014 see the overrides. (b) Five MEDIUM loops (11-26 blocks) = the per-tap / per-slot / per-string work that the compiler inlined into the frame loop: the 8-tap read, the declick and mixer passes, the pitch echo pattern (7), the 8-slot output conversion, the KS string bank (8), the splice chunk (SPLICE_CHUNK 8). Every one of those iterates over NUM_TAPS, TDM_SLOTS, KS_STRINGS or SPLICE_CHUNK, all of which are 8, so 8 is the default and it is a bound, not a guess. The heavier 16- and 32-iteration work (the AA polyphase FIR over AA_TAPS, its streaming-cache refill) is NOT here: it lives out of line in ps_read_bl, which is bounded separately. If a future change inlines that into the ISR, the loop COUNT above changes and the build fails until someone re-justifies this paragraph \u2014 which is exactly what should happen. (c) The 383-block loop is the frame loop; see the override."
+    },
+    "dl_read_loop_frac": {
+      "default_bound": 4,
+      "loops": 0,
+      "why": "Loop-free for the same reason: the loop-window mapping is conditional arithmetic, not a normalisation loop."
+    },
+    "ps_read_bl": {
+      "default_bound": 16,
+      "loops": 1,
+      "why": "The polyphase FIR accumulation over AA_TAPS = 16 coefficients."
+    },
+    "read_frac_at_index": {
+      "default_bound": 4,
+      "loops": 0,
+      "why": "Loop-free, and worth stating explicitly: the `while (r < 0) r += len` / `while (r >= len) r -= len` normalisation loops live in dl_read_at(), the FLOAT-index read, which the audio path does not call. The exact int+frac path the engine actually uses wraps with conditional adds. If a future change routes the ISR through dl_read_at, this count changes and the build fails \u2014 which is the point, because those loops are bounded only by a caller invariant (position within a buffer length of the range), not by construction."
+    }
+  },
+  "projection_limit": 0.9,
+  "sdram_functions": [
+    "read_frac_at_index",
+    "dl_read_loop_frac",
+    "ps_read_bl"
+  ]
+}

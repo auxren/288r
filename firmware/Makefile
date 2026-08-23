@@ -91,5 +91,15 @@ $(FWDIR)/%.hex: $(FWDIR)/%.elf
 $(FWDIR)/%.bin: $(FWDIR)/%.elf
 	$(CROSS)objcopy -O binary $< $@
 
+## ---- WCET / budget contract check ----------------------------------------
+# Static half of budget contract clause C-3: every loop in the audio ISR's
+# call graph bounded, no indirect dispatch, no soft-double helper, and the
+# worst-case path costed against the per-block budget. Reports the projection
+# vs target; add --strict to make that a build failure once it is under the
+# line. See tools/wcet.py for what the numbers mean and do not mean.
+.PHONY: wcet
+wcet: $(FWDIR)/$(TARGET).elf
+	python3 tools/wcet.py --elf $< --objdump $(CROSS)objdump
+
 clean:
 	rm -rf build

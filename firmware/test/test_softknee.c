@@ -49,6 +49,59 @@ int main(void)
     ck("feedback settles below FS", peak < 1.0f);
     ck("no sustained flat-topping", flat < 100);
 
+    /* ---- the CURVE is unchanged by the cheap evaluation -----------------
+     * audio_f_to_out() was rewritten to get the FPU status register out of
+     * the hot path (bitwise abs/sign, an integer knee test, saturating
+     * conversion). That is an implementation change to a field-calibrated
+     * limiter, so it has to be held to the original formula, not to
+     * "sounds the same": every output word must match a direct evaluation of
+     *     y = t + e/(1 + e/(1-t)),  e = |x| - t,  t = 0.75
+     * to the last bit the DAC can carry. */
+    {
+        long worst = 0;
+        for (double xx = -4.0; xx <= 4.0; xx += 0.0007) {
+            float x2 = (float)xx;
+            float ax = fabsf(x2), y = ax;
+            if (ax > 0.75f) {
+                float e = ax - 0.75f;
+                y = 0.75f + e / (1.0f + e * 4.0f);
+            }
+            if (x2 < 0.0f) y = -y;
+            if (y > 1.0f) y = 1.0f;
+            if (y < -1.0f) y = -1.0f;
+            long want = (long)(y * 8388607.0f);
+            long got = ((long)audio_f_to_out(x2) << 40) >> 40;  /* sign-extend */
+            long d = got - want; if (d < 0) d = -d;
+            if (d > worst) worst = d;
+        }
+        printf("    worst deviation from the reference curve: %ld LSB\n", worst);
+        ck("evaluation matches the reference knee to <= 1 LSB", worst <= 1);
+    }
+
+    /* ---- the overrange predicate used by the clip counter --------------- */
+    {
+        int agree = 1;
+        for (double xx = 0.90; xx <= 1.10; xx += 0.0005) {
+            float x2 = (float)xx;
+            int by_word = audio_word_overrange(audio_f_to_out(x2));
+            int by_float = (x2 >= 1.0f);
+            /* they may disagree only within one 24-bit LSB of the boundary */
+            if (by_word != by_float && fabsf(x2 - 1.0f) > 1e-5f) agree = 0;
+        }
+        ck("word-domain overrange == the old float compare", agree);
+        ck("overrange is symmetric", audio_word_overrange(audio_f_to_out(-1.5f)));
+        ck("normal level is not overrange",
+           !audio_word_overrange(audio_f_to_out(0.5f)));
+    }
+
+    /* ---- faults must not become full-scale DC --------------------------- */
+    {
+        float zero = 0.0f;
+        float nan = zero / zero, inf = 1.0f / zero;
+        ck("NaN out is silence, not a rail", audio_f_to_out(nan) == 0);
+        ck("inf out is silence, not a rail", audio_f_to_out(inf) == 0);
+    }
+
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;
 }

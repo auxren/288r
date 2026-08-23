@@ -28,6 +28,13 @@ jobs:
         run: make -C firmware engine
       - name: Build flashable firmware image
         run: make -C firmware firmware
+      # Budget contract clause C-3, static half: every loop in the audio ISR
+      # bounded, no indirect dispatch, no soft-double helper, and the
+      # worst-case path ratcheted against the recorded baseline. Fails the
+      # build on a structural regression; the load number itself is reported,
+      # not gated, until it is under target (see tools/wcet.py).
+      - name: WCET / ISR budget contract
+        run: make -C firmware wcet
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
