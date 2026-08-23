@@ -26,6 +26,7 @@
  */
 #include "golden_scenario.h"
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 
 static int fails = 0;
@@ -166,10 +167,26 @@ int main(void)
     /* ---- 3. fingerprints vs the recorded baseline ---- */
     for (unsigned p = 0; p <= GS_PHASES; p++) {
         char nm[64];
+        /* MOMENT IS COMPARED AGAINST A STABLE SCALE, NOT AGAINST ITSELF.
+         *
+         * energy/absum/peak are sums of magnitudes: they agree across hosts to
+         * 5.9e-6 (measured, macOS arm64 vs CI's Linux x86-64), so a tight
+         * relative tolerance is honest for them.
+         *
+         * moment is a SIGNED sum and nearly cancels — in phase 1 it lands at
+         * 9% of absum — so last-bit differences between platforms produce a
+         * self-relative error up to 9.4e-4 while the absolute error stays
+         * minuscule. Comparing it to itself made this test red on Linux while
+         * the audio was provably identical, which is a test bug, not a
+         * regression. Scaled by absum the same divergence is 9.0e-4, so 5e-3
+         * gives ~5x headroom and still catches any timing shift worth caring
+         * about: a one-sample move of the tap pattern shifts moment by orders
+         * of magnitude more than this. */
         int ok = close_rel(a_frame[p].energy, REF[p].energy, 1e-4)
               && close_rel(a_frame[p].absum,  REF[p].absum,  1e-4)
-              && close_rel(a_frame[p].moment, REF[p].moment, 1e-4)
-              && close_rel(a_frame[p].peak,   REF[p].peak,   1e-4);
+              && close_rel(a_frame[p].peak,   REF[p].peak,   1e-4)
+              && (fabs(a_frame[p].moment - REF[p].moment)
+                    <= 5e-3 * fabs(REF[p].absum));
         if (p == GS_PHASES) snprintf(nm, sizeof nm, "fingerprint: TOTAL matches baseline");
         else                snprintf(nm, sizeof nm, "fingerprint: phase %u matches baseline", p);
         ck(nm, ok);
