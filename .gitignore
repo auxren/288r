@@ -14,3 +14,6 @@ patch.bin
 
 # firmware build outputs
 firmware/build/
+
+# Claude Code worktrees/session state
+.claude/
