@@ -49,14 +49,31 @@
  * theory (32-frame blocks at 96 kHz) requires the DMA to hand over twice what
  * audio_sai.c programmed, which nothing supports.
  *
- * It is NOT settled by argument, so the firmware measures it: bc_tick() in
- * blockclock.c counts blocks against DWT_CYCCNT (a known-rate HCLK counter)
- * and publishes g_dbg_panel.blk_hz / .blk_frames / .frame_hz. `blk_frames` is
- * the DMA's own `frames` argument = ground truth for BLOCK_FRAMES, and
- * blk_hz * blk_frames is the true frame rate. One SWD glance settles it:
- *      blk_hz ~3000, blk_frames 16, frame_hz ~48000  -> 48 kHz (expected)
- *      blk_hz ~6000, blk_frames 16, frame_hz ~96000  -> 96 kHz, budget doubles
- *      blk_frames 32                                 -> audio_sai.c is wrong
+ * WHAT THE FIRMWARE CAN AND CANNOT MEASURE (read this before quoting blk_hz at
+ * anyone). bc_tick() in blockclock.c counts ISR calls against DWT_CYCCNT and
+ * publishes g_dbg_panel.blk_hz / .blk_frames / .frame_hz. Only blk_hz is a
+ * MEASUREMENT. `blk_frames` is the `frames` argument the DMA handler passes,
+ * and audio_sai.c passes AUDIO_BLOCK_FRAMES unconditionally on both the HT and
+ * the TC interrupt — so it echoes this constant back at us and can never read
+ * 32. frame_hz = blk_hz * blk_frames inherits that. The old text here offered
+ * "blk_frames 32 -> audio_sai.c is wrong" as an outcome; it is unreachable.
+ *
+ * What the self-check DOES settle: blk_hz. Combined with the code (rxbuf is
+ * 2 * BLOCK_FRAMES * TDM_SLOTS words, both half-transfer and transfer-complete
+ * are serviced, one ISR call each), blk_hz = frame_rate / BLOCK_FRAMES, and
+ * the measured 2999 gives 47,984 frames/s. The rival "32 frames at 96 kHz"
+ * reading needs the DMA to hand over twice what audio_sai.c programmed, which
+ * would also mean half of every buffer went out unprocessed. A DEFINITIVE
+ * answer needs a scope on MCLK (256*Fs) or a reference tone through the dry
+ * path — not this counter.
+ *
+ * Either way the ISR is called ~2999 times a second and each call must finish
+ * inside ISR_BUDGET_CYCLES, so the budget below is independent of the answer.
+ * What DOES depend on it is every per-FRAME time constant (the list below) —
+ * and, since the ISR applies the envelope pole once per call, the pole is
+ * derived from the runtime `frames` argument in main.c rather than from this
+ * constant, and a mismatch latches a fault flag instead of silently retuning
+ * four ear-calibrated detectors.
  *
  * IF THE ANSWER IS 48 kHz (as predicted) — everything that converts TIME to
  * SAMPLES via SAMPLE_RATE_HZ or a hand-computed "@96k" is out by 2x, i.e. runs
@@ -292,20 +309,51 @@
 #define KNOB_ADC_LO          620u
 #define KNOB_ADC_HI          4080u
 
-/* ---- ISR LOAD GOVERNOR (budget contract C-3c) ---------------------------- */
-/* The governor is the "impossible to exceed" half of the contract: the static
+/* ---- ISR LOAD GOVERNOR (budget contract C-3c) ----------------------------
+ *
+ * The governor is the "impossible to exceed" half of the contract: the static
  * ceiling (`make wcet`) proves the FLOOR level fits, and the governor
- * guarantees we reach the floor level within ONE block of any block that gets
- * close to the edge. Thresholds as fractions of ISR_BUDGET_CYCLES, expressed
- * directly in cycles so the ISR tail does integer compares only. */
+ * guarantees we reach the floor within ONE block of any block that actually
+ * misses the deadline. Thresholds as fractions of ISR_BUDGET_CYCLES, expressed
+ * directly in cycles so the ISR tail does integer compares only.
+ *
+ * EVERY NUMBER HERE IS SET AGAINST THE LEAD'S MEASURED LOADS, because a
+ * threshold that sits inside the normal operating range is not a safety net,
+ * it is a permanent quality cut (see governor.h for the version of this file
+ * that did exactly that). The measurements, in units of budget:
+ *      healthy v1.3.0 image, TIME steady          0.88 - 0.90
+ *      healthy image, worst (AA engage crossfade) 0.94
+ *      idle TIME-recirc                           0.93
+ *      the fault being fixed (TIME/RECIRC loop)   1.10 - 1.17
+ * so: DROP band starts above every healthy reading, RECOVER sits above the
+ * healthy steady state (or recovery would be unreachable and the floor
+ * permanent), and the two are separated by a hysteresis gap. */
 #define GOV_ENABLE           1
-#define GOV_DROP_CYCLES      49294u   /* 0.88 x budget: one block over -> drop  */
-#define GOV_PANIC_CYCLES     56016u   /* >= budget: straight to the floor level */
-#define GOV_RECOVER_CYCLES   33609u   /* 0.60 x budget: quiet enough to climb   */
+#define GOV_DROP_CYCLES      54335u   /* 0.97 x budget: the near-miss band      */
+#define GOV_DROP_STREAK      8u       /* consecutive near-miss blocks (~2.7 ms)
+                                         before a level is spent. One block in
+                                         the band is a wrap/splice/AA-republish
+                                         spike and is NORMAL; eight in a row is
+                                         a load that is not going away.        */
+#define GOV_PANIC_CYCLES     56016u   /* >= budget: a real miss -> floor, now   */
+#define GOV_ABSURD_CYCLES    224064u  /* 4 x budget: not a load, a STALL (flash
+                                         erase, debugger halt) — discarded     */
+#define GOV_RECOVER_CYCLES   51534u   /* 0.92 x budget: above the healthy 0.88-
+                                         0.90 steady state, so recovery is
+                                         actually reachable in TIME mode       */
 #define GOV_RECOVER_BLOCKS   1500u    /* ~0.5 s continuously quiet before a
-                                         level is handed back — slow enough that
-                                         a program-dependent load (a loop wrap,
-                                         a splice) cannot make it oscillate     */
-#define GOV_MAX_LEVEL        2u       /* 0 = full, 1 = reduced, 2 = floor       */
+                                         level is handed back                  */
+#define GOV_HOLD_BLOCKS      6000u    /* ~2 s minimum between level CHANGES: a
+                                         once-per-loop-pass spike cannot make
+                                         the quality flutter at the loop rate  */
+#define GOV_BACKOFF_MAX      4u       /* recovery window doubles per drop, up to
+                                         16x (~8 s): a periodic loop-wrap spike
+                                         converges on "stay one level down"
+                                         instead of flapping at the loop rate  */
+#define GOV_MAX_LEVEL        2u       /* 0 = full, 1 = linear taps, 2 = floor   */
+/* The kernel-swap crossfade that covers a level change is GOV_XFADE_FRAMES in
+ * engine.h — it belongs with the engine's other frame-count constants
+ * (DECLICK_FADE, WR_SEAM_FADE), which is also the only header the host build
+ * sees. Same remedy as #24's AA engage crossfade, for the same reason. */
 
 #endif /* BSP_BOARD_H */

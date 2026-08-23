@@ -25,6 +25,10 @@ typedef struct {
     float  coef[NUM_TAPS];
     float  master;           /* overall output gain (headroom/scaling)      */
 } mixer_t;
+/* COEF IS A CACHE: mixer_set_tap() is the ONLY thing allowed to write gain[] or
+ * phase[]. Anything that writes them directly (a preset recall, a slider path)
+ * leaves coef stale and the audio is silently wrong — with no test able to see
+ * it, because both arrays still read back correct. */
 
 void  mixer_init(mixer_t *m);
 
@@ -39,15 +43,10 @@ void  mixer_channels(const mixer_t *m, const float taps[NUM_TAPS], float out[NUM
  * (The "mixed" output jacks; equals master*(sum of channels)+correction.) */
 float mixer_sum(const mixer_t *m, const float taps[NUM_TAPS], float auto_correction);
 
-/* Same result as mixer_sum(), but from the channel outputs mixer_channels()
- * just produced instead of from the raw taps: the per-tap gain/phase product
- * is already baked into them, so this is 8 adds where mixer_sum() is 8
- * multiply-adds plus 8 coefficient loads. Callers that need both the channels
- * and the sum (the engine does) should use this pair. Bit-exactness caveat:
- * float addition is not associative, so sum-from-channels can differ from
- * mixer_sum() by an ULP — it feeds the analog master jack, not a comparison. */
-float mixer_sum_chan(const mixer_t *m, const float chan[NUM_TAPS],
-                     float auto_correction);
+/* (mixer_sum_chan() lived here: a sum-from-channels variant added for a block
+ * path that then did not compute a sum at all — the "mixed" jacks are an ANALOG
+ * sum on PCB1, so nothing in the firmware consumes one. Deleted rather than
+ * left as a second, subtly-not-bit-equal way to do something no caller wants.) */
 
 /* Simple input mix: signal * gain (+ cv-scaled, placeholder for INPUT MIXER). */
 float mixer_input(float signal, float gain);

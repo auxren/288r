@@ -19,7 +19,36 @@ CROSS   ?= arm-none-eabi-
 CC_HOST ?= cc
 
 MCU     := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
-CFLAGS  := -std=c11 -Wall -Wextra -O3 -flto -ffreestanding -ffunction-sections -fdata-sections
+
+# OPTIMISATION LEVEL FOR THE TARGET IMAGE — a budget decision, not a taste one.
+#
+# The F429 executes from flash at FIVE wait states (168 MHz, clock.c sets
+# LATENCY_5WS + prefetch + the ART's 1 KB instruction cache). Sequential code is
+# fed 128 bits per flash access, so a stream of 32-bit Thumb-2/VFP instructions
+# cannot go faster than ~1.5 cycles each however simple they are, and anything
+# that does not fit the 1 KB cache re-fetches it every block. The audio ISR is
+# ~14 KB of fully inlined code executed 2999 times a second: its instruction
+# FETCH is a first-order cost, and the field has already measured that directly
+# — an edit that only shifted inlining topology (-4 KB of text) moved the ISR
+# load from 93% to 76% of budget, ~4 points per KB.
+#
+#   -O3  bsp_audio_isr 13936 B (pre-restructure), total text 46500 B
+#   -O2  bsp_audio_isr  8824 B, total text 35460 B     <- default
+#   -Os  bsp_audio_isr  5876 B, total text 28664 B
+#
+# -O2 keeps every optimisation that matters here and drops the aggressive
+# unrolling/peeling that -O3 spends code size on. It CANNOT change behaviour:
+# no -ffast-math is used anywhere, so float order and rounding are fixed by the
+# source at every level, and `make cachecheck` + the golden fixture pin the
+# audio independently.
+#
+# THIS IS THE ONE CHANGE ON THIS BRANCH THAT IS INFERRED RATHER THAN MEASURED.
+# The bench A/B is one flag and two SWD reads:
+#     make firmware FW_OPT=-O3   # flash, reset g_isr_pk, play WCC-TIME, read it
+#     make firmware              # (-O2) same programme, same read
+# If -O3 wins, change the default back here and say so.
+FW_OPT  ?= -O2
+CFLAGS  := -std=c11 -Wall -Wextra $(FW_OPT) -flto -ffreestanding -ffunction-sections -fdata-sections
 INC     := -Isrc
 
 # LIB_SRC = the hardware-independent, host-testable engine (excludes the app main).
@@ -105,7 +134,7 @@ FW_OBJ  := $(addprefix $(FWDIR)/,$(notdir $(FW_CSRC:.c=.o))) \
 vpath %.c src src/bsp $(CMSIS_DEV)/Source
 vpath %.s $(CMSIS_DEV)/Source
 
-FW_LDFLAGS := $(MCU) -O3 -flto -nostdlib -T STM32F429.ld -Wl,--gc-sections -Wl,-Map=$(FWDIR)/$(TARGET).map
+FW_LDFLAGS := $(MCU) $(FW_OPT) -flto -nostdlib -T STM32F429.ld -Wl,--gc-sections -Wl,-Map=$(FWDIR)/$(TARGET).map
 
 firmware: $(FWDIR)/$(TARGET).hex $(FWDIR)/$(TARGET).bin
 	@$(CROSS)size $(FWDIR)/$(TARGET).elf

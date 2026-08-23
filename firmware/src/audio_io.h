@@ -39,7 +39,12 @@ int32_t audio_f_to_out(float x);
 #define AUDIO_OVERRANGE_WORD 7340031   /* 0.875 * (2^23 - 1), truncated */
 static inline int audio_word_overrange(int32_t w24)
 {
-    int32_t s = (w24 << 8) >> 8;                  /* sign-extend 24-bit */
+    /* Sign-extend from bit 23. The shift is done in UNSIGNED — `w24 << 8` on a
+     * signed int is overflow (undefined) for exactly the words this exists to
+     * detect, i.e. every w24 >= 0x00800000. Works on today's gcc/clang; it is
+     * the one line in this path a UBSan host build trips on, and "works today"
+     * is not a property worth relying on for a one-token change. */
+    int32_t s = (int32_t)((uint32_t)w24 << 8) >> 8;
     return (s >= AUDIO_OVERRANGE_WORD) | (s <= -AUDIO_OVERRANGE_WORD);
 }
 

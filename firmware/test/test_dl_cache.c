@@ -13,6 +13,7 @@
  * write-head clearance rule that keeps a live line out of the writer's way.
  */
 #include "dl_cache.h"
+#include "bsp/board.h"   /* BLOCK_FRAMES: the burst ceiling is per BLOCK */
 #include "delay_line.h"
 #include <stdio.h>
 
@@ -208,17 +209,97 @@ int main(void)
         ck("expiry path still returns correct words", ok);
     }
 
-    /* ---- 7. off = disabled, existing lines stay coherent ---- */
+    /* ---- 7. OFF MEANS OFF, including for lines that are already valid ----
+     * `enable` is the coherence kill switch (rule 3): the caller is saying
+     * "something else is writing where the taps read". A cached line is exactly
+     * what must NOT be served then.
+     *
+     * The previous version of this case called dc_invalidate() BEFORE
+     * dc_block_begin(&c, 0, 1) and then asserted that nothing was served — so
+     * it tested the invalidate, not the disable, and could not fail. It could
+     * not see that dc_stencil's hit test ran before its `on` check and happily
+     * handed back a stale line from a disabled cache. Establish a line, mutate
+     * the buffer underneath it, disable, and demand the fresh value. */
     {
         int ok = 1;
         dc_init(&c);
         dc_block_begin(&c, 1, 1u);
         (void)probe(2000u, DEEP, &ok);
-        dc_invalidate(&c);
+        ck("precondition: the line is live and serving", 
+           dc_stencil(&c, 0u, buf, LEN, 2000u, DEEP) != 0);
+        float save = buf[2000u];
+        buf[2000u] = -999.0f;                 /* a foreign writer */
         dc_block_begin(&c, 0, 1u);
-        ck("disabled + invalidated: nothing is served",
+        ck("disabled: a valid line is not served",
            dc_stencil(&c, 0u, buf, LEN, 2000u, DEEP) == 0);
+        dc_block_begin(&c, 1, 1u);
+        {   /* and it is not resurrected when the cache comes back on */
+            const float *p = dc_stencil(&c, 0u, buf, LEN, 2000u, DEEP);
+            ck("re-enabled: no stale line survives the disable",
+               p == 0 || p[2] == -999.0f);
+        }
+        buf[2000u] = save;
         ck("disabled path words correct", ok);
+    }
+
+    /* ---- 9. RULE A: a lane that cannot hold a line goes direct ----------
+     * The bound the cache claims rests on this: a fill costs DC_W words and is
+     * only worth issuing if the line survives DC_W/4 frames of service. Drag a
+     * lane's read position fast enough that no line survives, and the lane must
+     * stop refilling (bar the cheap periodic re-probe) instead of paying for a
+     * new line every DC_MIN_SPAN frames on top of the direct reads it is doing
+     * anyway. That "on top of" is the arithmetic the first version of this
+     * module got wrong. */
+    {
+        int ok = 1;
+        dc_init(&c);
+        uint32_t a0 = 1000u;
+        unsigned fills = 0;
+        for (uint32_t f = 0; f < DC_REPROBE - 1u; f++) {
+            dc_block_begin(&c, 1, 1u);
+            a0 += DC_W;                       /* one whole line every frame */
+            if (a0 > LEN - DC_W - 8u) a0 = 1000u;
+            uint32_t f0 = c.fill;
+            const float *p = dc_stencil(&c, 0u, buf, LEN, a0, DEEP);
+            if (p && !words_match(p, a0)) ok = 0;
+            fills += (c.fill != f0);
+        }
+        printf("    dragged lane: %u fills in %u frames (rate-limit alone would"
+               " allow %u)\n", fills, DC_REPROBE - 1u,
+               (DC_REPROBE - 1u) / DC_MIN_SPAN);
+        ck("a lane that cannot hold a line stops refilling", fills <= 2u);
+        ck("...and still returns correct words while it does", ok);
+    }
+
+    /* ---- 10. RULE B: the per-block refill burst is capped ---------------
+     * Every transport entry invalidates all eight lanes at once, so without a
+     * ceiling they re-phase onto the same frame: 8 x DC_W = 768 SDRAM words in
+     * ONE frame, 21% of a whole block budget in refills. The deadline is per
+     * block, so this is the bound that matters. */
+    {
+        dc_init(&c);
+        dc_block_begin(&c, 1, 1u);
+        dc_invalidate(&c);
+        uint32_t f0 = c.fill;
+        for (unsigned l = 0; l < DC_LANES; l++)
+            (void)dc_stencil(&c, l, buf, LEN, 2000u + l * 500u, DEEP);
+        printf("    8 lanes re-phased onto one frame: %u fills\n", c.fill - f0);
+        ck("no more than the token bucket allows can refill in one frame",
+           c.fill - f0 <= 1u + DC_FILL_BURST / DC_FILL_COST);
+        {   /* and over a whole block */
+            unsigned tot = c.fill - f0;
+            for (unsigned f = 1; f < BLOCK_FRAMES; f++) {
+                dc_block_begin(&c, 1, 1u);
+                for (unsigned l = 0; l < DC_LANES; l++)
+                    (void)dc_stencil(&c, l, buf, LEN, 2000u + l * 500u + f, DEEP);
+            }
+            tot = c.fill - f0;
+            printf("    over one %u-frame block: %u fills (ceiling %u)\n",
+                   (unsigned)BLOCK_FRAMES, tot,
+                   (DC_FILL_BURST + BLOCK_FRAMES) / DC_FILL_COST);
+            ck("the per-block refill ceiling holds",
+               tot <= (DC_FILL_BURST + BLOCK_FRAMES) / DC_FILL_COST);
+        }
     }
 
     /* ---- 8. lanes are independent ---- */

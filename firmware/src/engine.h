@@ -66,6 +66,14 @@
 #ifndef WR_SEAM_FADE
 #define WR_SEAM_FADE   576u
 #endif
+/* Frames over which a GOVERNOR level change crossfades the interpolation
+ * kernel. ~5 ms at either candidate frame rate. A hard swap steps every tap at
+ * once — measured -0.29 dB at 4 kHz rising to -3.33 dB at 20 kHz on bright
+ * material — which is the same class of un-crossfaded table swap as #24 layer 2,
+ * and the fix there was the same: hysteresis (governor.c) plus a ~5 ms ramp. */
+#ifndef GOV_XFADE_FRAMES
+#define GOV_XFADE_FRAMES 256u
+#endif
 
 typedef struct {
     delay_line_t dl;
@@ -149,12 +157,22 @@ typedef struct {
      * services 8 samples per process() call: same result in ~1.3 ms,
      * bounded ~2% ISR cost, no burst. */
     uint8_t      spl_active;
-    uint8_t      spl_quota;        /* RMWs per FRAME, sized at arm time from the
-                                      window and the varispeed rate clamp so the
-                                      job finishes before the head wraps through
-                                      the seam. 1 for any musical loop length;
-                                      the old flat 8/sample was 24 SDRAM
-                                      accesses a sample for no reason.        */
+    uint8_t      spl_quota;        /* RMWs per FRAME while the seam splice job
+                                      runs. Derived at arm time (splice_arm)
+                                      from the exposure rule and the varispeed
+                                      head-travel rule, then clamped to
+                                      SPLICE_CHUNK. WITH THE SHIPPED CONSTANTS
+                                      THE DERIVATION ALWAYS YIELDS 8 — every
+                                      caller passes fade = LOOP_SPLICE_FADE =
+                                      DECLICK_FADE, so the exposure term is
+                                      exactly SPL_EXPOSURE_NUM. It is written as
+                                      a derivation so it TRACKS those constants,
+                                      not because it currently reduces anything:
+                                      the measured sweep in splice_arm says 8 is
+                                      the first quota with margin against
+                                      test_declick, so the quota cannot be cut.
+                                      The saving in that commit was the two
+                                      UDIVs removed from the inner loop.      */
     uint32_t     spl_start, spl_end, spl_fade, spl_idx;
 #if DL_CACHE_ENABLE
     dl_cache_t   dc;               /* per-tap CCM window cache over the SDRAM
@@ -162,6 +180,14 @@ typedef struct {
                                       the engine so it moves into CCM with it
                                       (main.c puts g_engine in .ccmram).     */
 #endif
+    /* ---- governor-driven quality state (see eng_blk_begin) ---------------- */
+    float        kx_w;             /* weight of the Hermite result, 0..1: the
+                                      crossfade that covers a level change    */
+    float        kx_target;        /* where kx_w is heading (block invariant)  */
+    uint8_t      hr_phase;         /* FLOOR level: tap-read decimation phase   */
+    uint8_t      hr_last;          /* 1 = the frame just processed was HELD    */
+    uint32_t     hr_mask;          /* block API: bit k = frame k was held, so
+                                      the ISR's output stage can hold too     */
     float        od_lp1, od_lp2;   /* 2-pole ~10 kHz lowpass on the LAYERED
                                       INPUT only: breaks ultrasonic feedback
                                       modes through the sound-on-sound loop

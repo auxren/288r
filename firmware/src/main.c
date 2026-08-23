@@ -142,16 +142,35 @@ static float g_fm_env = 0.0f;
 static float g_fm_gain = 0.0f;
 
 /* ENV_POLE_A is the per-sample envelope pole these detectors were calibrated
- * with (tau ~10 ms); ENV_BLOCK_A is its exact BLOCK_FRAMES-sample equivalent,
- * 1-(1-a)^n, which is the closed form for n consecutive one-pole steps — so
- * running the pole once per block is the same filter, not an approximation of
- * it. Keep ENV_POLE_A here as the definition the constant below derives from:
- * change one and the other is wrong. */
+ * with (tau ~10 ms). The ISR applies it once per block, using the exact n-step
+ * equivalent 1-(1-a)^n — the closed form for n consecutive one-pole steps, so
+ * this is the same filter and not an approximation of it.
+ *
+ * n IS THE RUNTIME `frames` ARGUMENT, not BLOCK_FRAMES. The constant is what
+ * audio_sai.c programs; the argument is what the DMA actually hands over, and
+ * those are only the same thing as long as nobody changes the DMA setup. The
+ * old form hard-coded 1-(1-a)^16 and guarded it with `#if BLOCK_FRAMES != 16`,
+ * which tests the constant, not the value the pole is applied per — if the real
+ * block were 32 frames the guard would pass and all four detectors (g_env, both
+ * sens envelopes, the FM expander) would silently run at half their calibrated
+ * speed, retuning SENS_REF, LP_ONSET_RATIO, LP_INPUT_EPS and the FM knee behind
+ * everyone's back. env_block_a() caches the power so the cost is one compare
+ * per block. ENV_BLOCK_A stays as the documented 16-frame value and as the
+ * static check that the derivation still agrees with it. */
 #define ENV_POLE_A   0.002f
 #define ENV_BLOCK_A  0.031524f   /* = 1 - (1 - ENV_POLE_A)^16 */
-#if BLOCK_FRAMES != 16u
-#error "ENV_BLOCK_A is precomputed for BLOCK_FRAMES = 16 — recompute it"
-#endif
+static float env_block_a(unsigned n)
+{
+    static unsigned cached_n = 0u;
+    static float    cached_a = ENV_BLOCK_A;
+    if (n != cached_n) {
+        float keep = 1.0f - ENV_POLE_A, p = 1.0f;
+        for (unsigned k = 0; k < n; k++) p *= keep;
+        cached_a = 1.0f - p;
+        cached_n = n;
+    }
+    return cached_a;
+}
 /* SWD live A/B: poke 1 to hard-mute the signal-in FM path (diagnosis:
  * separating 'FM by a patched source / bleed' from everything else). */
 volatile uint8_t g_fm_mute = 0;
@@ -282,6 +301,12 @@ struct dbg_panel {
                              superloop starving the control path — suspected
                              ps_service search pile-up during pitch sweeps)   */
     uint8_t  eoc;         /* eoc blink counter (nonzero = blinking) */
+    uint8_t  frame_fault; /* 0 = every ISR call so far received exactly
+                             BLOCK_FRAMES frames. Nonzero = the count the DMA
+                             actually handed over, which would mean audio_sai.c
+                             and the DMA disagree — and that every per-frame
+                             time constant in the machine is out by that ratio
+                             (see bsp/board.h "THE BLOCK CLOCK").          */
     /* BLOCK CLOCK (blocker #0 — see bsp/board.h "THE BLOCK CLOCK"). Read these
      * three together and the 96k-vs-48k / 16-vs-32 question is answered:
      * blk_frames is what the DMA actually hands the ISR, blk_hz is measured
@@ -319,6 +344,25 @@ static volatile uint32_t g_loop_alive = 0;
 
 /* block-clock self-check state (published to g_dbg_panel by the slow tick) */
 static blkclk_t g_blkclk;
+
+/* ---- audio-block scratch ------------------------------------------------
+ * One DMA half-block of gathered input, FM terms and channel outputs. In CCM:
+ * zero-wait-state core-coupled RAM with no DMA on it, so none of this contends
+ * with the SAI buffers in SRAM. File-scope rather than on the ISR stack because
+ * a fixed address is one literal per access instead of an sp chain, and because
+ * 1.4 KB of stack inside an interrupt is a thing worth not doing. Not reentrant
+ * — neither is the ISR (single DMA IRQ, no nesting).
+ * Sized for twice BLOCK_FRAMES so a DMA that ever hands over more than
+ * audio_sai.c programmed is a latched fault, not an overrun. */
+#define ISR_MAX_FRAMES (2u * BLOCK_FRAMES)
+static float g_in_blk[ISR_MAX_FRAMES]                 __attribute__((section(".ccmram")));
+#if TIME_FM_ENABLE
+static float g_fm_blk[ISR_MAX_FRAMES]                 __attribute__((section(".ccmram")));
+#if PITCH_VOICE_ENABLE
+static float g_fmv_blk[ISR_MAX_FRAMES]                __attribute__((section(".ccmram")));
+#endif
+#endif
+static float g_chan_blk[ISR_MAX_FRAMES][NUM_TAPS]     __attribute__((section(".ccmram")));
 
 void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
 {
@@ -372,7 +416,29 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
     if (g_engine.od_active && (uint32_t)(g_blocks - g_loop_alive) > 150u)
         g_engine.od_active = 0;               /* starvation breaker */
 
-    /* ================= PER-FRAME ======================================= */
+    /* ================= PASS 1 — GATHER ==================================
+     * Everything that reads the INPUT side of the frame and depends on nothing
+     * downstream: the codec word conversions, the three |.| integrators, the
+     * input-rail LED test, and the signal-in FM term. Splitting the ISR into
+     * three passes over the block is not cosmetic — see the note above pass 2.
+     * The arithmetic per frame is identical to the single-loop version it
+     * replaces, in the same order, on the same values. */
+    if (frames != BLOCK_FRAMES) {
+        /* CANNOT HAPPEN: audio_sai.c passes AUDIO_BLOCK_FRAMES to both the HT
+         * and the TC handler, and the DMA halves are sized from the same
+         * constant. Latched rather than trusted, because the whole 48-vs-96 kHz
+         * question (bsp/board.h "THE BLOCK CLOCK") turns on what the DMA really
+         * hands over, and finding out by silent misbehaviour would be the worst
+         * possible way. If it ever fires, the machine is in a configuration
+         * where every per-frame time constant is wrong anyway; process the
+         * number of frames everything else is built for, flag it, and let the
+         * bench see the flag. The scratch arrays are sized for twice
+         * BLOCK_FRAMES regardless, so nothing can overrun while that is sorted
+         * out. */
+        g_dbg_panel.frame_fault = (uint8_t)frames;
+        if (frames > BLOCK_FRAMES) frames = BLOCK_FRAMES;
+        if (frames == 0u) return;      /* nothing to do, and 1/frames follows */
+    }
     for (unsigned f = 0; f < frames; ++f) {
         const int32_t *fr = &in[f * TDM_SLOTS];
         float x = audio_in_to_f(fr[AUDIO_IN_SLOT]);
@@ -426,13 +492,66 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
              * replaced produced exact zero, which is why the cost appeared only
              * after it landed. */
             if (fms > -FM_EPS && fms < FM_EPS) fms = 0.0f;
-            g_engine.time_fm = fms * TIME_FM_SPAN;
+            g_fm_blk[f] = fms * TIME_FM_SPAN;
 #if PITCH_VOICE_ENABLE
-            g_pv.ps.fm_in = fms * TIME_FM_VOICE_SPAN;
+            g_fmv_blk[f] = fms * TIME_FM_VOICE_SPAN;
 #endif
         }
 #endif
-        float chan[NUM_TAPS];
+        g_in_blk[f] = x;
+    }
+
+    /* ================= PASS 2 — THE ENGINE ==============================
+     * WHY THREE PASSES. The block API (engine_process_block) exists precisely
+     * so the per-block invariants — transport mode, loop-window geometry,
+     * interpolation kernel, governor level, cache bookkeeping — are computed
+     * ONCE instead of once per frame, and it was dead code: nothing outside the
+     * host tests called it, so every hoisting optimisation on this branch
+     * delivered exactly nothing on the unit. It cannot be called from inside a
+     * per-frame loop, hence the split. The other half of the win is locality:
+     * this ISR is one 14 KB inlined function and the flash it executes from
+     * costs 5 wait states per 128-bit line, so a frame loop that carries the
+     * pitch voice, the string bank and the output stage all interleaved pays
+     * fetch stalls for code it branches around. Three short loops, each doing
+     * one thing, is measurably less code on the executed path (and the field
+     * already saw 17 points of ISR load move on an inlining-topology change of
+     * this kind).
+     *
+     * TIME mode takes the block path. Pitch and string modes keep the per-frame
+     * path unchanged, because the voice reads the same SDRAM buffer BETWEEN the
+     * engine's frames (issue #19) — that ordering is load-bearing and is not
+     * something to restructure without a bench.
+     *
+     * BIT-EXACTNESS: test_golden asserts engine_process_block == the per-frame
+     * loop, output and delay buffer, over a 200k-frame scripted scenario at
+     * n = 1, 7, 16 and 32. */
+#if TIME_FM_ENABLE
+    const float *fm_blk = g_fm_blk;
+#else
+    const float *fm_blk = 0;
+#endif
+    const int fast_time = !ks_mode
+#if PITCH_VOICE_ENABLE
+                       && !pitch_mode
+#endif
+                          ;
+    if (fast_time) {
+        engine_process_block(&g_engine, g_in_blk, t, fm_blk, g_chan_blk, frames);
+#if TIME_FM_ENABLE && PITCH_VOICE_ENABLE
+        /* the voice is idle in this mode; keep its FM input current for the
+         * frame it might be enabled on (one store instead of `frames`). */
+        g_pv.ps.fm_in = g_fmv_blk[frames - 1u];
+#endif
+    } else {
+    for (unsigned f = 0; f < frames; ++f) {
+        const float x = g_in_blk[f];
+        float *chan = g_chan_blk[f];
+#if TIME_FM_ENABLE
+        g_engine.time_fm = g_fm_blk[f];
+#if PITCH_VOICE_ENABLE
+        g_pv.ps.fm_in = g_fmv_blk[f];
+#endif
+#endif
         (void)engine_process_multi(&g_engine, x, t, chan);
         if (ks_mode) {
             ks_process(&g_ks, x, chan);
@@ -517,6 +636,21 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         }
 #endif
         }   /* !ks_mode */
+    }
+    }   /* !fast_time */
+
+    /* ================= PASS 3 — OUTPUT =================================
+     * The soft-knee output stage, eight times a frame. At the governor's FLOOR
+     * level the engine holds its tap reads on alternate frames (e->hr_mask),
+     * and a held frame's channel values are BIT-IDENTICAL to the previous
+     * frame's — so the 24-bit words are too, and copying them is exact. That is
+     * the point of the floor level: it sheds whole frames of work rather than
+     * shaving a kernel, which is the only kind of saving that can rescue a
+     * block that is already over the deadline. Frame 0 always converts (the
+     * previous frame's words live in the OTHER DMA half). */
+    const uint32_t hold_mask = fast_time ? g_engine.hr_mask : 0u;
+    for (unsigned f = 0; f < frames; ++f) {
+        float *chan = g_chan_blk[f];
 #if MASTER_DRY_MODE
         /* SLIDER 0 = DRY OUT (owner norm): slot 4 reaches only the analog
          * master sum (its own slider path is broken), so it carries a hidden
@@ -525,15 +659,16 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
          * both modes (pitch mode: slider 0 = the dry anchor under the
          * transposed echoes). See board.h MASTER_DRY_MODE. */
         {
-            float comp = x;
+            float comp = g_in_blk[f];
             for (unsigned s2 = 0; s2 < (unsigned)NUM_TAPS; ++s2)
                 if (s2 != 4u) comp -= chan[s2];
             chan[4] = comp;
         }
 #endif
         int32_t *o = &out[f * TDM_SLOTS];
+        const int held = (f > 0u) && ((hold_mask >> f) & 1u);
         for (unsigned s = 0; s < (unsigned)NUM_TAPS; ++s) {
-            int32_t w = audio_f_to_out(chan[s]);
+            int32_t w = held ? o[(int)s - (int)TDM_SLOTS] : audio_f_to_out(chan[s]);
 #if LED_INPUT_CLIP_MODE
             /* stage 2 — internal pre-limiter overrange: COUNTER ONLY as of #21.
              * Two independent field testers read the lit LED during hot loop
@@ -569,11 +704,12 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
      * 16-sample boxcar, 3% of the 10 ms pole. */
     {
         const float inv_n = 1.0f / (float)frames;
-        g_env += (acc_in * inv_n - g_env) * ENV_BLOCK_A;
-        g_sens_env[0] += (acc_s1 * inv_n - g_sens_env[0]) * ENV_BLOCK_A;
-        g_sens_env[1] += (acc_s2 * inv_n - g_sens_env[1]) * ENV_BLOCK_A;
+        const float env_a = env_block_a(frames);   /* NOT ENV_BLOCK_A — see above */
+        g_env += (acc_in * inv_n - g_env) * env_a;
+        g_sens_env[0] += (acc_s1 * inv_n - g_sens_env[0]) * env_a;
+        g_sens_env[1] += (acc_s2 * inv_n - g_sens_env[1]) * env_a;
 #if TIME_FM_ENABLE
-        g_fm_env += (acc_fm * inv_n - g_fm_env) * ENV_BLOCK_A;
+        g_fm_env += (acc_fm * inv_n - g_fm_env) * env_a;
         /* SMOOTH DOWNWARD EXPANDER: g = env^2/(env^2 + knee^2) — still ~zero
          * for bleed-level signals (the rc4 anti-noise property), engaging
          * GRADUALLY from just above the floor: -6 dB at the knee, ~unity by

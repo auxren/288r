@@ -49,24 +49,67 @@
  *  5. WRAP.  A stencil or a fill run that would cross the end of the buffer is
  *     never served from cache; it falls back to the general path.
  *
- * WHAT MAKES IT BOUNDED (contract clause C-3a).  A lane may not refill again
- * until DC_MIN_SPAN frames after its last fill; until then it reads SDRAM
- * directly.  So the refill traffic is at most DC_W/DC_MIN_SPAN = 3 words per
- * frame per lane, which is BELOW the 4 words the direct path costs — the cache
- * cannot be worse than no cache, however hard a tap's read position is being
- * dragged (a preset recall, a hard multiplier sweep, varispeed at the 4.0 rail).
- * That bound is per FRAME and holds for both entry points, so it does not
- * depend on the still-unsettled block size (contract blocker #0).
+ * WHAT MAKES IT BOUNDED (contract clause C-3a).  The first cut argued this from
+ * the per-lane refill rate limit alone: "at most DC_W/DC_MIN_SPAN = 3 words per
+ * frame per lane, below the 4 the direct path costs, so the cache can never be
+ * worse".  THAT ARGUMENT WAS WRONG, and an adversarial review measured it wrong
+ * at exactly the place it named (varispeed at the 4.0 rail, 1.00 words/read; a
+ * preset-recall slam, 1.66; both against 4.00 for the direct path it is supposed
+ * to be beating -- i.e. no saving at the rail).  The hole: a rate-limited lane
+ * still pays the FULL 4-word direct stencil on every frame it cannot serve, and
+ * the two costs ADD.  Refill traffic is not substitutive unless the line it
+ * bought actually gets used.
+ *
+ * So the bound is now made of two rules that are each true on their own:
+ *
+ *  A. SELF-FINANCING (steady state).  A fill costs DC_W words and replaces 4
+ *     words per frame of service, so it only pays for itself if the line lives
+ *     at least DC_W/4 = DC_PAYBACK frames.  A lane may only refill if its
+ *     PREVIOUS line lasted that long (L->life, recorded when a line stops
+ *     serving).  A lane whose read position is being dragged too fast to hold a
+ *     line therefore goes direct and STAYS direct -- which is the correct
+ *     behaviour at the varispeed rail, where the cache has nothing to offer.
+ *     Every lane gets one speculative fill after an invalidate (there is no
+ *     history then), and re-probes once every DC_REPROBE frames so a lane that
+ *     went direct during a sweep comes back when the sweep stops.  The re-probe
+ *     costs DC_W words per DC_REPROBE frames per lane = 0.02 words/frame.
+ *
+ *  B. BURST CEILING (the block deadline).  The deadline is per BLOCK, and rule A
+ *     is an average.  Eight lanes are free to re-phase onto the same frame (every
+ *     transport entry invalidates all eight at once), which is 8 x DC_W = 768
+ *     SDRAM words in ONE frame -- 21% of a whole block budget in refills alone.
+ *     A token bucket now caps that: +1 token per frame, cap DC_FILL_BURST, and a
+ *     fill costs DC_FILL_COST.  Worst case for an n-frame block is therefore
+ *     (DC_FILL_BURST + n) / DC_FILL_COST fills, = 3 fills = 288 words for n = 16,
+ *     and it is a compile-time bound that `make wcet` can use.
+ *
+ * The honest claim, then: SUSTAINED traffic is strictly below the direct path
+ * (rule A), and the WORST BLOCK is bounded above it by a known, small constant
+ * (rule B).  Not "can never be worse" -- that was never true.
+ *
+ * THE FILL MUST BE WORD-GRANULAR.  It is written through a may_alias uint32_t
+ * pointer, four words at a time, and that is not a stylistic choice: with
+ * -flto the __builtin_memcpy this used to call bound to the freestanding
+ * BYTE-LOOP memcpy (bsp/freestanding.c) in one of the two inlined copies of the
+ * tap loop, and gcc unrolled it as 16 x ldrb/strb per 16 bytes.  That is 384
+ * byte reads off the FMC per fill instead of 96 word reads -- verified in
+ * objdump on the -O3 image (bsp_audio_isr+0x26bc), and it is the kind of thing
+ * that only ever shows up as "the cache made it slower".  Word loads also let
+ * the FMC read burst (RBURST in SDCR1) stream.
  *
  * NOT YET MEASURED ON HARDWARE.  The saving depends on the FMC's real word
- * latency and on whether the compiler turns the fill into multi-word bursts.
- * DL_CACHE_ENABLE flips the whole thing (including the allocation) in one
- * define; the bench gate is isr_pk with it on vs off in TIME/RECIRC.
+ * latency.  DL_CACHE_ENABLE flips the whole thing (including the allocation) in
+ * one define; the bench gate is isr_pk with it on vs off in TIME/RECIRC.
  */
 #ifndef DL_CACHE_H
 #define DL_CACHE_H
 
 #include <stdint.h>
+
+/* The fill's transfer unit. may_alias because the delay buffer is float and the
+ * copy is a bit move; without it -O3 is entitled to assume the loads and the
+ * float stores elsewhere in the frame cannot touch the same memory. */
+typedef uint32_t dc_word_t __attribute__((may_alias));
 
 /* ONE DEFINE REVERTS IT (the deal made with the bench): 0 = every read goes
  * straight to SDRAM exactly as before, and the struct is not even allocated. */
@@ -103,16 +146,39 @@
 #ifndef DC_LIFE
 #define DC_LIFE 256u
 #endif
+/* Rule A: a fill of DC_W words replaces 4 words/frame, so it breaks even after
+ * DC_W/4 frames of service. A lane may not refill unless its previous line
+ * lasted at least this long. */
+#ifndef DC_PAYBACK
+#define DC_PAYBACK (DC_W / 4u)
+#endif
+/* Rule A, re-probe: a lane that went direct tries once more this often, so a
+ * lane parked direct by a sweep comes back when the sweep stops. DC_W words per
+ * DC_REPROBE frames per lane = 0.023 words/frame — three orders below the
+ * traffic it is trying to recover. */
+#ifndef DC_REPROBE
+#define DC_REPROBE 4096u
+#endif
+/* Rule B, the burst ceiling: +1 token/frame, a fill costs DC_FILL_COST, bucket
+ * cap DC_FILL_BURST. Fills in an n-frame block <= (BURST + n)/COST. */
+#ifndef DC_FILL_COST
+#define DC_FILL_COST 8u
+#endif
+#ifndef DC_FILL_BURST
+#define DC_FILL_BURST 8u
+#endif
 
 typedef struct {
     uint32_t base;              /* buffer index of line[0]                     */
     uint32_t age;               /* frames since fill (rule 2)                  */
+    uint32_t life;              /* frames the PREVIOUS line served (rule A)    */
     uint8_t  valid;
     float    line[DC_W];
 } dl_line_t;
 
 typedef struct {
     dl_line_t lane[DC_LANES];
+    uint32_t  tokens;           /* rule B refill-burst bucket                  */
     uint8_t   on;               /* off = every read goes straight to SDRAM     */
     /* Telemetry counted on the MISS path only — a counter on the hit path would
      * be three instructions x 8 taps x every sample, ~1.4% of the block budget
@@ -129,15 +195,26 @@ static inline void dc_init(dl_cache_t *c)
         c->lane[i].valid  = 0u;
         c->lane[i].base   = 0u;
         c->lane[i].age    = DC_MIN_SPAN;
+        c->lane[i].life   = DC_PAYBACK;   /* one speculative fill per lane */
     }
+    c->tokens = DC_FILL_BURST;
     c->on = 1u;
     c->miss = c->fill = 0u;
 }
 
-/* Drop every line (rules 3 and 4). */
+/* Drop every line (rules 3 and 4).
+ *
+ * This is also where every lane gets its one speculative fill back: after a
+ * transport transition nothing is known about how long a line will survive, and
+ * refusing to cache until a line has proven itself would mean never caching
+ * again. The burst bucket (rule B) is what keeps the eight of them from landing
+ * on the same frame, so it is deliberately NOT refilled here. */
 static inline void dc_invalidate(dl_cache_t *c)
 {
-    for (unsigned i = 0; i < DC_LANES; i++) c->lane[i].valid = 0u;
+    for (unsigned i = 0; i < DC_LANES; i++) {
+        c->lane[i].valid = 0u;
+        c->lane[i].life  = DC_PAYBACK;
+    }
 }
 
 /* Start of a run of `frames` frames: age the lines and expire the old ones.
@@ -147,11 +224,29 @@ static inline void dc_invalidate(dl_cache_t *c)
  * from the per-sample API, n from the block API. */
 static inline void dc_block_begin(dl_cache_t *c, int enable, unsigned frames)
 {
-    c->on = (uint8_t)(enable ? 1 : 0);
+    if (!enable) {
+        if (!c->on) return;           /* already off: nothing to drop */
+        /* `enable` is the COHERENCE kill switch (rule 3), not a refill switch:
+         * a line that is still marked valid would keep being served out of CCM
+         * while a foreign writer moves the buffer underneath it. Turning the
+         * cache off has to drop the lines, or "off" does not mean off. (It did
+         * not: dc_stencil's hit test ran before the `on` check, so a disabled
+         * cache still served stale words — the test that claimed to cover this
+         * invalidated first and could never see it.) */
+        c->on = 0u;
+        dc_invalidate(c);
+        return;
+    }
+    c->on = 1u;
+    c->tokens += frames;                              /* rule B: +1 per frame */
+    if (c->tokens > DC_FILL_BURST) c->tokens = DC_FILL_BURST;
     for (unsigned i = 0; i < DC_LANES; i++) {
         dl_line_t *L = &c->lane[i];
         if (L->age < 0xFFFF0000u) L->age += frames;   /* saturate, never wrap */
-        if (L->age > DC_LIFE) L->valid = 0u;
+        if (L->age > DC_LIFE && L->valid) {
+            L->life  = L->age;      /* it served to expiry: it paid for itself */
+            L->valid = 0u;
+        }
     }
 }
 
@@ -163,6 +258,7 @@ static inline const float *dc_stencil(dl_cache_t *c, unsigned lane,
                                       uint32_t a0, uint32_t d_int)
 {
     dl_line_t *L = &c->lane[lane];
+    if (!c->on) return 0;             /* OFF MEANS OFF — before the hit test  */
     if (a0 < 2u || a0 + 1u >= len) return 0;           /* rule 5              */
     {
         /* HIT TEST, four instructions: unsigned wraparound turns "below the
@@ -178,36 +274,44 @@ static inline const float *dc_stencil(dl_cache_t *c, unsigned lane,
         if (L->valid && off <= DC_W - 4u) return &L->line[off];
     }
     c->miss++;
-    if (!c->on)                             return 0;
+    /* The line (if there was one) has stopped serving: record how long it did,
+     * which is what rule A spends. */
+    if (L->valid) { L->life = L->age; L->valid = 0u; }
     if (L->age < DC_MIN_SPAN)               return 0;  /* refill rate limit   */
+    /* RULE A, self-financing: refill only if the previous line lived long
+     * enough to pay for its own DC_W words, or if enough frames have passed to
+     * be worth one cheap re-probe. */
+    if (L->life < DC_PAYBACK && L->age < DC_REPROBE) return 0;
+    if (c->tokens < DC_FILL_COST)           return 0;  /* rule B, burst cap   */
     if (d_int <= DC_W + 8u)                 return 0;  /* rule 1, near end    */
     if (d_int + DC_LIFE + 8u >= len)        return 0;  /* rule 1, far end     */
     {
         uint32_t src = a0 - 2u;
         if (src + DC_W > len) return 0;                /* rule 5: fill would wrap */
-        /* Sequential fill in 16-byte chunks. Written as __builtin_memcpy of a
-         * constant 16 bytes rather than four float assignments SPECIFICALLY to
-         * get the codegen right, verified with objdump:
-         *   - four float assignments -> gcc interleaves ldr/str through one
-         *     scratch register, so every SDRAM read is an isolated NONSEQ
-         *     transfer;
-         *   - one memcpy of the whole 384 bytes -> a CALL to memcpy, which in
-         *     this freestanding build (bsp/freestanding.c) is a BYTE loop.
-         *     384 byte-reads off the FMC would be a catastrophe;
-         *   - 16 bytes at a time -> four back-to-back sequential ldr then four
-         *     str, which is what lets the FMC's read burst (RBURST is set in
-         *     SDCR1, bsp/sdram.c) actually stream.
-         * If this ever needs more, the next step is inline LDM/STM asm — but
-         * that is only worth doing against a bench measurement. */
+        /* Sequential fill, FOUR WORDS AT A TIME, through a may_alias 32-bit
+         * pointer. The four loads are issued before the four stores, so the FMC
+         * sees four back-to-back sequential reads and its read burst (RBURST in
+         * SDCR1, bsp/sdram.c) can stream them.
+         *
+         * This used to be __builtin_memcpy of a constant 16 bytes, with a
+         * comment saying objdump had confirmed word transfers. It had — for ONE
+         * of the two inlined copies of the tap loop. In the other, -flto bound
+         * the builtin to the freestanding BYTE-LOOP memcpy and unrolled it as
+         * 16 x ldrb/strb per 16 bytes: 384 single-byte FMC reads per fill.
+         * Never write a hot copy as memcpy in a -nostdlib image; the compiler is
+         * allowed to call whatever memcpy the link provides. */
         {
-            const float *s = buf + src;
-            float *d = L->line;
-            for (unsigned k = 0; k < DC_W; k += 4u)
-                __builtin_memcpy(&d[k], &s[k], 4u * sizeof(float));
+            const dc_word_t *s = (const dc_word_t *)(const void *)(buf + src);
+            dc_word_t *d = (dc_word_t *)(void *)L->line;
+            for (unsigned k = 0; k < DC_W; k += 4u) {
+                dc_word_t w0 = s[k], w1 = s[k + 1u], w2 = s[k + 2u], w3 = s[k + 3u];
+                d[k] = w0; d[k + 1u] = w1; d[k + 2u] = w2; d[k + 3u] = w3;
+            }
         }
         L->base  = src;
         L->age   = 0u;
         L->valid = 1u;
+        c->tokens -= DC_FILL_COST;
         c->fill++;
         return &L->line[0];
     }

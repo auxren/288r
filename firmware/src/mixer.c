@@ -33,15 +33,6 @@ float mixer_sum(const mixer_t *m, const float taps[NUM_TAPS], float auto_correct
     return (acc + auto_correction) * m->master;
 }
 
-float mixer_sum_chan(const mixer_t *m, const float chan[NUM_TAPS],
-                     float auto_correction)
-{
-    float acc = 0.0f;
-    for (int i = 0; i < NUM_TAPS; i++)
-        acc += chan[i];               /* gain*phase already applied */
-    return (acc + auto_correction) * m->master;
-}
-
 float mixer_input(float signal, float gain)
 {
     return signal * gain;

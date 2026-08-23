@@ -42,6 +42,11 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->spl_active = 0;
     e->spl_start = e->spl_end = e->spl_fade = e->spl_idx = 0;
     e->spl_quota = 1u;
+    e->kx_w = 1.0f;              /* start ON the rail: no ramp-in at boot */
+    e->kx_target = 1.0f;
+    e->hr_phase = 0u;
+    e->hr_last = 0u;
+    e->hr_mask = 0u;
 #if DL_CACHE_ENABLE
     dc_init(&e->dc);
 #endif
@@ -194,6 +199,8 @@ typedef struct {
     uint32_t     ls, le;
     int          recirc;
     dl_interp_t  interp;    /* e->interp, after the governor's quality level    */
+    int          half;      /* governor FLOOR: service the tap reads at half
+                               rate and hold between (see eng_frame)            */
 } eng_blk_t;
 
 static void eng_blk_begin(engine_t *e, eng_blk_t *bk, unsigned frames)
@@ -214,16 +221,45 @@ static void eng_blk_begin(engine_t *e, eng_blk_t *bk, unsigned frames)
     }
     /* LOAD GOVERNOR (workstream B): read ONCE per block. A level change inside
      * a block would swap the interpolation kernel mid-buffer — the same
-     * un-crossfaded discontinuity class as #24's AA engage. */
-    bk->interp = e->interp;
-    if (gov_level() >= GOV_LEVEL_LINEAR) bk->interp = DL_INTERP_LINEAR;
+     * un-crossfaded discontinuity class as #24's AA engage.
+     *
+     * WHAT EACH LEVEL COSTS THE AUDIO, and why there are two of them:
+     *   0 FULL   Hermite taps, window cache live. Nothing is given up.
+     *   1 LINEAR 2-point taps: half the SDRAM words per read and 13 fewer
+     *            flops, at ~0.5 dB of HF droop near Nyquist (measured 10.4% of
+     *            block budget on the unit). The cache goes off with it: its
+     *            self-financing rule (dl_cache.h) is sized against the 4-word
+     *            Hermite stencil, and a level drop is a moment to stop
+     *            speculating, not to speculate harder.
+     *   2 FLOOR  the tap READ path — position math, FM fold, window map, the
+     *            SDRAM stencil, the interpolation — runs on alternate frames
+     *            and holds in between. This is the level that has to actually
+     *            FIT, so it sheds work in proportion rather than shaving a
+     *            kernel: the fixed remainder of this ISR is far larger than the
+     *            tap reads, and no choice of interpolator can rescue a block
+     *            that is over the deadline. It is audible (the tap outputs get
+     *            a 1-sample zero-order hold, i.e. a mild lowpass with images);
+     *            it is also strictly better than a torn DMA buffer, which is
+     *            the only thing it is ever traded against.
+     * The 0->1 kernel change is CROSSFADED over GOV_XFADE_FRAMES in the frame
+     * loop below — swapping interpolators hard on a block boundary steps every
+     * tap at once (measured -0.3 dB at 4 kHz to -3.3 dB at 20 kHz on bright
+     * material), which is exactly the failure #24 layer 2 was. */
+    {
+        unsigned lvl = gov_level();
+        bk->interp = e->interp;
+        if (lvl >= GOV_LEVEL_LINEAR) bk->interp = DL_INTERP_LINEAR;
+        bk->half   = (lvl >= GOV_LEVEL_FLOOR);
+        e->kx_target = (bk->interp == DL_INTERP_LINEAR) ? 0.0f : 1.0f;
 #if DL_CACHE_ENABLE
-    /* Window cache: age the lines (lifetime + refill rate limit). The
-     * foreign-writer verdict (rule 3) is re-evaluated per FRAME below, because
-     * both the overdub ramp and the splice job can change state inside a
-     * block; this is only the per-block bookkeeping. */
-    dc_block_begin(&e->dc, 1, frames ? frames : 1u);
+        /* Window cache: age the lines (lifetime + refill budget). The
+         * foreign-writer verdict (rule 3) is re-evaluated per FRAME below,
+         * because both the overdub ramp and the splice job can change state
+         * inside a block; this is only the per-block bookkeeping. */
+        dc_block_begin(&e->dc, lvl == GOV_LEVEL_FULL, frames ? frames : 1u);
 #endif
+    }
+    e->hr_mask = 0u;
 }
 
 /* One frame. `bk` carries the block invariants; `want_sum` is folded away by the
@@ -366,6 +402,16 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
         }
     }
 
+    /* GOVERNOR FLOOR: hold the tap reads on alternate frames (see eng_blk_begin).
+     * The phase is engine state, not a loop index, so both entry points decimate
+     * identically; engine_process_block publishes which frames were held in
+     * e->hr_mask so the ISR's output stage can hold with it (the channel values
+     * are unchanged, so the 24-bit words are too — reusing them is bit-exact and
+     * skips eight soft-knee evaluations). */
+    const int hold_frame = bk->half && (e->hr_phase != 0u);
+    e->hr_phase ^= 1u;
+    e->hr_last = (uint8_t)hold_frame;
+
     /* pitch mode at full wet: the crossfade discards the tap outputs, so skip
      * the 8 SDRAM reads entirely (control, write, recirc all ran above). */
     if (e->skip_tap_reads) {
@@ -422,7 +468,31 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
      * Hoisted to the loop head so the kernel choice is one branch per frame
      * instead of one per tap, and so each kernel inlines with the polynomial
      * fully specialised. */
-    const int herm = (e->od_gain <= 0.0f) && (bk->interp != DL_INTERP_LINEAR);
+    /* KERNEL SELECTION, and the governor crossfade.
+     *
+     * kx_w is the weight of the Hermite result; it ramps toward kx_target (set
+     * once per block from the governor's level) at 1/GOV_XFADE_FRAMES per frame.
+     * While it is strictly between the rails BOTH kernels are evaluated — from
+     * the SAME four words, so the crossfade costs 13 flops a tap and not a
+     * single extra SDRAM access — and mixed. At the rails exactly one kernel
+     * runs and the code is bit-identical to what it was before this existed,
+     * which is why every fixture in test/ is unaffected while the governor sits
+     * at level 0.
+     *
+     * The overdub override is deliberately NOT crossfaded and deliberately not
+     * routed through kx_w: it is pre-existing shipped behaviour (od's own ~10 ms
+     * input ramp is what covers it), and re-timing it would change the audio of
+     * a feature the owner has signed off. */
+    const int herm_ok = (e->od_gain <= 0.0f) && (e->interp != DL_INTERP_LINEAR);
+    float kxw = e->kx_w;
+    if (kxw != e->kx_target) {
+        const float step = 1.0f / (float)GOV_XFADE_FRAMES;
+        if (kxw < e->kx_target) { kxw += step; if (kxw > e->kx_target) kxw = e->kx_target; }
+        else                    { kxw -= step; if (kxw < e->kx_target) kxw = e->kx_target; }
+        e->kx_w = kxw;
+    }
+    const int herm = herm_ok && (kxw >= 1.0f);
+    const int mixk = herm_ok && (kxw > 0.0f) && (kxw < 1.0f);
 #if DL_CACHE_ENABLE
     /* dl_cache.h rule 3, per frame: while the overdub loop or the splice job is
      * writing into the buffer, no line may be trusted OR kept. Dropping them
@@ -432,6 +502,17 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
     if (!dc_ok) dc_invalidate(&e->dc);
 #endif
     float taps[NUM_TAPS];
+    if (hold_frame) {
+        /* FLOOR level: reuse what actually left here last frame. declick_last
+         * is already the post-declick, post-hold value, so the fade below must
+         * not be applied twice — it is skipped on held frames and its counters
+         * still advance, keeping every transition the same length in TIME. */
+        for (int i = 0; i < NUM_TAPS; i++) taps[i] = e->declick_last[i];
+        if (e->declick_since < 0x7FFFFFFFu) e->declick_since++;
+        if (e->declick_n) e->declick_n--;
+        mixer_channels(&e->mix, taps, chan);
+        return want_sum ? mixer_sum(&e->mix, taps, e->auto_correction) : 0.0f;
+    }
     for (int i = 0; i < NUM_TAPS; i++) {
         uint32_t d_int; float d_frac;
         taps_delay_frac(&e->taps, i, &d_int, &d_frac);
@@ -481,10 +562,25 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
             if (dc_ok) p = dc_stencil(&e->dc, (unsigned)i, map.buf, map.len,
                                       a0, d_int);
 #endif
-            if (p) taps[i] = herm ? dl_stencil4_hermite(p, d_frac)
-                                  : dl_stencil4_linear (p, d_frac);
-            else   taps[i] = herm ? dl_stencil_hermite(map.buf, map.len, a0, d_frac)
-                                  : dl_stencil_linear (map.buf, map.len, a0, d_frac);
+            if (!p && a0 >= 2u && a0 + 1u < map.len) p = &map.buf[a0 - 2u];
+            if (p) {
+                if (mixk) {
+                    /* both kernels, ONE stencil: the crossfade is arithmetic */
+                    float h = dl_stencil4_hermite(p, d_frac);
+                    float l = dl_stencil4_linear (p, d_frac);
+                    taps[i] = l + (h - l) * kxw;
+                } else {
+                    taps[i] = herm ? dl_stencil4_hermite(p, d_frac)
+                                   : dl_stencil4_linear (p, d_frac);
+                }
+            } else if (mixk) {          /* wrapped stencil (rare) */
+                float h = dl_stencil_hermite(map.buf, map.len, a0, d_frac);
+                float l = dl_stencil_linear (map.buf, map.len, a0, d_frac);
+                taps[i] = l + (h - l) * kxw;
+            } else {
+                taps[i] = herm ? dl_stencil_hermite(map.buf, map.len, a0, d_frac)
+                               : dl_stencil_linear (map.buf, map.len, a0, d_frac);
+            }
         }
     }
 
@@ -550,6 +646,7 @@ void engine_process_block(engine_t *e, const float *in, float time_raw01,
         /* WRITE PATH STAYS PER FRAME (see engine.h): the pitch voice reads this
          * same buffer between our frames. Only the READ geometry is batched. */
         (void)eng_frame(e, in[k], time_raw01, chan_out[k], &bk, /*want_sum*/ 0);
+        if (e->hr_last && k < 32u) e->hr_mask |= (uint32_t)1u << k;
     }
 }
 

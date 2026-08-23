@@ -24,6 +24,17 @@
 
 typedef struct {
     float   phase[NUM_TAPS]; /* per-tap PHASE SELECT position, 0..PHASE_FULLSCALE */
+    float   phase_n[NUM_TAPS]; /* phase[i]/PHASE_FULLSCALE, folded at SET time.
+                                * taps_target() is evaluated 8x every time the
+                                * control moves — i.e. every sample while a knob
+                                * or a CV is moving, which is the case this
+                                * engine exists for — and gcc cannot turn a
+                                * divide by 160.0f into a multiply without
+                                * -ffast-math, so that was EIGHT VDIVs (~14
+                                * cycles each on the M4F) per frame. Folding it
+                                * here is bit-exact: the same division, done
+                                * once per phase change instead of once per
+                                * sample, and the multiply order is unchanged. */
     int64_t cur_q[NUM_TAPS]; /* current (slewing) delay, Q32.32 samples — fixed
                                 point so the slew resolves 2^-32 samples at ANY
                                 delay (a float stalls at 1/8 sample near 2M)     */
@@ -62,7 +73,16 @@ void  taps_update(taps_t *t, float time_mult);
 float taps_delay(const taps_t *t, int i);
 
 /* Current (slewed) delay as integer samples + fraction in [0,1) — the exact
- * view; pass straight to dl_read_frac()/ab_read_frac(). */
+ * view; pass straight to dl_read_frac()/ab_read_frac().
+ *
+ * REGIME WARNING. These two read cur_q, which after taps_update() is the
+ * position for THIS sample — but after taps_update_block() is the position at
+ * the END of the block (taps_delay_frac_at() is the intra-block view). Anything
+ * that anchors to a tap per FRAME (main.c's pitch dry anchor and pt-ring reads
+ * do) would silently read up to a whole block ahead of the tap it is anchoring
+ * if it kept calling these under the block regime. The two regimes are not
+ * mixed today — the block path uses taps_update() per frame — and this is the
+ * note that has to be re-read before that changes. */
 void  taps_delay_frac(const taps_t *t, int i, uint32_t *d_int, float *d_frac);
 
 /* ---- BLOCK-RATE tap control (budget contract C3) -------------------------

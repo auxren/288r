@@ -10,7 +10,9 @@ float audio_in_to_f(int32_t codec_word)
     /* SAI DR presents 24-bit data RIGHT-aligned in bits [23:0], zero-extended.
      * Sign-extend from bit 23, then scale. (Confirmed on hardware from the CS42888
      * ADC stream: e.g. 0x00C522F3 -> -0.46, not a tiny value.) */
-    int32_t s = (codec_word << 8) >> 8;                /* sign-extend 24-bit */
+    /* sign-extend 24-bit; shift in unsigned (a signed << that overflows is UB —
+     * see audio_word_overrange) */
+    int32_t s = (int32_t)((uint32_t)codec_word << 8) >> 8;
     return (float)s * (1.0f / FS24);
 }
 
@@ -59,6 +61,15 @@ int32_t audio_f_to_out(float x)
      *    made by the saturating conversion in f_to_i24(), which also covers the
      *    two cases the float clamps did NOT (inf and NaN both used to reach the
      *    cast as garbage).
+     *
+     * ONE BEHAVIOUR CHANGE CAME WITH THAT REWRITE, and it belongs in the
+     * release notes rather than only in a diff: audio_f_to_out(inf) now returns
+     * 0 (silence) where the old float clamps returned full scale. An infinity
+     * reaches the knee, e/(1 + e*4) evaluates to NaN, and f_to_i24 maps NaN to
+     * 0 exactly as the target's VCVT does. Neither answer is "right" — nothing
+     * upstream can produce an infinity without a fault already having happened —
+     * but "a fault becomes silence rather than a rail" is a decision about the
+     * output stage, and test_softknee asserts it so it stays a decision.
      *
      * The single VDIV stays. A Newton-Raphson reciprocal (bit-trick seed + 3
      * iterations) is ~6 dependent FPU ops at 3-cycle latency each and measures

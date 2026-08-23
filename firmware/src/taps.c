@@ -47,6 +47,7 @@ void taps_init(taps_t *t, float base_delay, float slew)
     for (int i = 0; i < NUM_TAPS; i++) {
         /* faithful default preset: evenly spaced 20,40,..,160 */
         t->phase[i] = 20.0f * (float)(i + 1);
+        t->phase_n[i] = t->phase[i] / PHASE_FULLSCALE;
         t->cur_q[i] = 0;
         t->base_q[i] = 0;
         t->step_q[i] = 0;
@@ -55,7 +56,10 @@ void taps_init(taps_t *t, float base_delay, float slew)
 
 void taps_set_phase(taps_t *t, const float phase[NUM_TAPS])
 {
-    for (int i = 0; i < NUM_TAPS; i++) t->phase[i] = phase[i];
+    for (int i = 0; i < NUM_TAPS; i++) {
+        t->phase[i] = phase[i];
+        t->phase_n[i] = phase[i] / PHASE_FULLSCALE;   /* see taps.h: folded here */
+    }
     t->targets_dirty = 1;
 }
 
@@ -67,7 +71,10 @@ void taps_set_base_delay(taps_t *t, float base_delay)
 
 float taps_target(const taps_t *t, int i, float time_mult)
 {
-    return t->base_delay * (t->phase[i] / PHASE_FULLSCALE) * time_mult;
+    /* Bit-identical to base_delay * (phase[i]/PHASE_FULLSCALE) * time_mult:
+     * same operands, same left-to-right association, the divide just happened
+     * at phase-set time (taps.h). */
+    return t->base_delay * t->phase_n[i] * time_mult;
 }
 
 void taps_update(taps_t *t, float time_mult)
