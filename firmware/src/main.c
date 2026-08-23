@@ -325,6 +325,15 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
                 fms *= e2 / (e2 + k2);
             }
             if (g_fm_mute) fms = 0.0f;
+            /* SNAP TO EXACT ZERO below audibility. The expander is asymptotic:
+             * with no signal it settles at ~1e-11 rather than 0, and engine.c
+             * gates its per-tap FM offset path on `off != 0.0f`. A denormal-ish
+             * residue therefore keeps that path live for all 8 taps on every
+             * sample forever -- measured on the unit at 4.3% of the ISR budget
+             * for a modulation nobody can hear. The rc4 hard gate this expander
+             * replaced produced exact zero, which is why the cost appeared only
+             * after it landed. */
+            if (fms > -FM_EPS && fms < FM_EPS) fms = 0.0f;
             g_engine.time_fm = fms * TIME_FM_SPAN;
 #if PITCH_VOICE_ENABLE
             g_pv.ps.fm_in = fms * TIME_FM_VOICE_SPAN;

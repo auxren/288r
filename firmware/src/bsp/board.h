@@ -78,6 +78,10 @@
                                      fixed full-scale span. Injected post-slew
                                      into the tap positions (engine.time_fm). */
 #define TIME_FM_SLOT      2       /* proven: signal-in = codec RX slot 2       */
+/* Below this the FM term snaps to exact zero: keeps engine.c's per-tap offset
+ * path (gated on `off != 0.0f`) from running forever on expander residue.
+ * 1e-6 of full-scale drive is ~120 dB down -- inaudible by any measure. */
+#define FM_EPS            1e-6f
 #define TIME_FM_SPAN      0.10f   /* tap-distance swing at full pot + 0 dBFS:
                                      +/-10%% of each tap's delay [feel-cal]    */
 #define TIME_FM_GATE      0.01f   /* FM presence floor (~-40 dBFS): below this
