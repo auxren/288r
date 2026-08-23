@@ -32,7 +32,61 @@
 #define TDM_SLOTS         8u             /* confirmed: 8 slots                     */
 #define TDM_SLOT_BITS     32u            /* confirmed: 32-bit slot                 */
 #define TDM_DATA_BITS     24u            /* confirmed: 24-bit data                 */
-#define AUDIO_BLOCK_FRAMES 16u           /* DMA half-block size in frames          */
+
+/* ---- THE BLOCK CLOCK (blocker #0) ---------------------------------------
+ * ONE constant for "frames handed to bsp_audio_isr() per call". audio_sai.c
+ * sizes the DMA halves from it and the ISR is called once per half, so
+ *      blocks/s = frame_rate / BLOCK_FRAMES
+ * and every cycle budget below is per BLOCK. Do not spell 16 anywhere else.
+ *
+ * WHY THIS WAS A BLOCKER. The lead counted 2999 ISR calls/s on the unit. With
+ * BLOCK_FRAMES = 16 that is 47,984 frames/s — i.e. the SAI is running at
+ * 48 kHz, NOT the 96 kHz that SAMPLE_RATE_HZ claims. That is exactly what the
+ * configured clock chain produces: PLLSAI gives SAI_CK = 24.571 MHz, and the
+ * F4 SAI divides it by (MCKDIV * 2) = 2 for MCLK = 12.286 MHz; with NODIV = 0
+ * the SAI holds MCLK = 256 * Fs, so Fs = 12.286e6 / 256 = 47,983 Hz. The
+ * measurement, the divider chain and BLOCK_FRAMES = 16 all agree. The rival
+ * theory (32-frame blocks at 96 kHz) requires the DMA to hand over twice what
+ * audio_sai.c programmed, which nothing supports.
+ *
+ * It is NOT settled by argument, so the firmware measures it: bc_tick() in
+ * blockclock.c counts blocks against DWT_CYCCNT (a known-rate HCLK counter)
+ * and publishes g_dbg_panel.blk_hz / .blk_frames / .frame_hz. `blk_frames` is
+ * the DMA's own `frames` argument = ground truth for BLOCK_FRAMES, and
+ * blk_hz * blk_frames is the true frame rate. One SWD glance settles it:
+ *      blk_hz ~3000, blk_frames 16, frame_hz ~48000  -> 48 kHz (expected)
+ *      blk_hz ~6000, blk_frames 16, frame_hz ~96000  -> 96 kHz, budget doubles
+ *      blk_frames 32                                 -> audio_sai.c is wrong
+ *
+ * IF THE ANSWER IS 48 kHz (as predicted) — everything that converts TIME to
+ * SAMPLES via SAMPLE_RATE_HZ or a hand-computed "@96k" is out by 2x, i.e. runs
+ * TWICE AS LONG as its comment claims. Nothing here is broken (the unit has
+ * been played and calibrated in this state — these are the values the owner's
+ * ear signed off on), so DO NOT "fix" them by editing SAMPLE_RATE_HZ: that
+ * would silently retime the whole instrument. The list, so the retiming is a
+ * deliberate decision and not a discovery:
+ *   base window   = SAMPLE_RATE_HZ samples in main() -> "1 s" cycle is 2 s
+ *   DECLICK_FADE, WR_SEAM_FADE, LOOP_SPLICE_FADE     (engine.h, in samples)
+ *   AUTO_RELEASE_SAMP / AUTO_MIN_LOOP_SAMP           (looper window, samples)
+ *   PITCH_WINDOW_SAMPLES, PITCH_BASE_SAMPLES, TIME_FM_VOICE_SPAN
+ *   PITCH_RATIO_SLEW, taps slew 0.001, envelope poles 0.002, od poles,
+ *   OD_LP_A / bwlimit cutoffs (BANDWIDTH_LIMIT_HZ lands at 5.5 kHz, not 11)
+ *   KS_BASE_PERIOD (string tuning) and the 1.2 V/oct maps that ride it
+ * Block-COUNTED timers (LED_DWELL_BLOCKS, CLIP_HOLD_BLOCKS,
+ * PRESET_SAVE_HOLD_BLOCKS, looper release_ticks) are already correct at
+ * 3000 blocks/s — their comments say "~3 kHz", which is the 48 kHz answer. */
+#define BLOCK_FRAMES       16u
+#define AUDIO_BLOCK_FRAMES BLOCK_FRAMES  /* legacy spelling used by audio_sai.c */
+
+/* Measured block rate (lead, on the unit: 2999 calls/s counted over 10 s) and
+ * the cycle budget that follows from it. The ISR telemetry unit is cycles>>4,
+ * so a load of 1.00 = ISR_BUDGET_UNITS. */
+#define BLOCK_RATE_HZ      2999u
+#define ISR_BUDGET_CYCLES  56016u                    /* 168e6 / 2999, ratified */
+#define ISR_BUDGET_UNITS   (ISR_BUDGET_CYCLES >> 4)  /* 3501 */
+/* Self-check window: 1024 blocks (~1/3 s) — a power of two so blocks/s needs
+ * one shift and one 32-bit UDIV, never a 64-bit divide, in the ISR tail. */
+#define BLKCLK_WINDOW      1024u
 
 /* SAI kernel clock target: MCLK = 256*Fs = 24.576 MHz for 96 kHz.
  * [BENCH] PLLSAI chain below yields ~24.571 MHz (-0.02%). CONFIRM on the bench
@@ -237,5 +291,21 @@
  * power-up calibration routine will replace these with per-unit values. */
 #define KNOB_ADC_LO          620u
 #define KNOB_ADC_HI          4080u
+
+/* ---- ISR LOAD GOVERNOR (budget contract C-3c) ---------------------------- */
+/* The governor is the "impossible to exceed" half of the contract: the static
+ * ceiling (`make wcet`) proves the FLOOR level fits, and the governor
+ * guarantees we reach the floor level within ONE block of any block that gets
+ * close to the edge. Thresholds as fractions of ISR_BUDGET_CYCLES, expressed
+ * directly in cycles so the ISR tail does integer compares only. */
+#define GOV_ENABLE           1
+#define GOV_DROP_CYCLES      49294u   /* 0.88 x budget: one block over -> drop  */
+#define GOV_PANIC_CYCLES     56016u   /* >= budget: straight to the floor level */
+#define GOV_RECOVER_CYCLES   33609u   /* 0.60 x budget: quiet enough to climb   */
+#define GOV_RECOVER_BLOCKS   1500u    /* ~0.5 s continuously quiet before a
+                                         level is handed back — slow enough that
+                                         a program-dependent load (a loop wrap,
+                                         a splice) cannot make it oscillate     */
+#define GOV_MAX_LEVEL        2u       /* 0 = full, 1 = reduced, 2 = floor       */
 
 #endif /* BSP_BOARD_H */

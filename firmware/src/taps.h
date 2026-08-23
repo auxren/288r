@@ -28,10 +28,18 @@ typedef struct {
                                 point so the slew resolves 2^-32 samples at ANY
                                 delay (a float stalls at 1/8 sample near 2M)     */
     int64_t tgt_q[NUM_TAPS]; /* cached Q32.32 targets (recomputed on mult change)  */
+    /* block-rate ramp (taps_update_block): base_q = the position at the START of
+     * the block, step_q = the per-sample increment. cur_q holds the END. */
+    int64_t base_q[NUM_TAPS];
+    int64_t step_q[NUM_TAPS];
     float last_mult;         /* control value the cache was built for              */
     int   targets_dirty;     /* set by base/phase changes -> recompute targets     */
     float base_delay;        /* samples at phase=fullscale, time_mult=1 (cycle len)*/
     float slew;              /* one-pole coeff per update, (0,1]; 1 = instant      */
+    /* cached n-step slew constants (recomputed only when n or slew changes) */
+    unsigned blk_n;          /* frames the cached constants are valid for         */
+    float    blk_slew;       /* slew the cached constants were built from         */
+    float    blk_step;       /* (1-(1-slew)^n)/n — the per-sample ramp slope      */
 } taps_t;
 
 /* base_delay: cycle length in samples (SHORT/FULL). slew in (0,1]. */
@@ -56,5 +64,39 @@ float taps_delay(const taps_t *t, int i);
 /* Current (slewed) delay as integer samples + fraction in [0,1) — the exact
  * view; pass straight to dl_read_frac()/ab_read_frac(). */
 void  taps_delay_frac(const taps_t *t, int i, uint32_t *d_int, float *d_frac);
+
+/* ---- BLOCK-RATE tap control (budget contract C3) -------------------------
+ * taps_update() is a per-SAMPLE control update: 8 lanes of int64 compare,
+ * two Q32.32<->float conversions, a multiply and an int64 add, every sample.
+ * Measured statically at ~160 cycles/frame = 4.5% of the whole block budget,
+ * spent recomputing a one-pole whose time constant is ~10 ms — three orders of
+ * magnitude slower than the rate it is being evaluated at.
+ *
+ * taps_update_block() does the same slew ONCE per block, analytically: n steps
+ * of a one-pole is a single step with coefficient 1-(1-slew)^n, which is EXACT
+ * (a geometric series, not an approximation), and publishes a per-sample linear
+ * ramp between the block's start and end positions. The ramp is carried in the
+ * same Q32.32 the per-sample path used, so the sub-ULP precision property that
+ * this whole module exists for is untouched: step_q is a true Q32.32 increment
+ * and base_q + k*step_q is exact integer arithmetic.
+ *
+ * What differs from the per-sample path: within a block the trajectory is a
+ * straight line instead of an exponential. Over 16 samples of a 10 ms pole the
+ * chord-vs-arc error is bounded by (n*slew)^2/8 of the remaining delta —
+ * 3.2e-5 of it at n=16, slew=0.001. At a 2M-sample delay that is 0.06 samples
+ * WORST CASE on a full-scale control jump, and it is a smooth error (no
+ * discontinuity at the block boundary, because the endpoints are exact), so it
+ * cannot produce the stair-step this engine exists to remove.
+ *
+ * Call ORDER contract, so the engine and the taps agree on phase: call
+ * taps_update_block(t, mult, n) once at the top of the block, then read sample
+ * k (0-based) with taps_delay_frac_at(t, i, k). Sample k gets the position the
+ * per-sample path would have had after k+1 updates. */
+void  taps_update_block(taps_t *t, float time_mult, unsigned n);
+
+/* Tap i's delay at intra-block sample k, exact int+frac (see the ORDER
+ * contract above). Valid only after taps_update_block() for this block. */
+void  taps_delay_frac_at(const taps_t *t, int i, unsigned k,
+                         uint32_t *d_int, float *d_frac);
 
 #endif /* TAPS_H */

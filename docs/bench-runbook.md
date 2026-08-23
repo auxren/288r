@@ -93,6 +93,30 @@ slot→slider mapping and for re-verifying the dead slider-5 analog path after r
 exact image flashed (`arm-none-eabi-nm build/fw/b288-community.elf | grep -E 'g_dbg_panel|g_dac_solo'`);
 gdb with the matching ELF resolves them for you.
 
+### Settling the block clock — one read, first thing on the bench
+
+`g_dbg_panel` carries three fields that end the "96 kHz or 48 kHz, 16 frames or 32" argument
+(`src/blockclock.c` measures the block rate against DWT_CYCCNT, and `blk_frames` is the frame
+count the DMA itself hands the ISR). Read them once, before anything else, because every cycle
+budget and every ms-denominated constant in `board.h` depends on the answer:
+
+| `blk_hz` | `blk_frames` | `frame_hz` | verdict |
+|---|---|---|---|
+| ~3000 | 16 | ~48000 | **48 kHz** — the predicted answer (SAI MCKDIV=1 gives MCLK 12.29 MHz = 256×48 k) |
+| ~6000 | 16 | ~96000 | 96 kHz — `SAMPLE_RATE_HZ` is right and the budget is half what we assumed |
+| ~3000 | 32 | ~96000 | 96 kHz with 32-frame blocks — `audio_sai.c` is not doing what it says |
+
+If the answer is 48 kHz, do **not** "fix" `SAMPLE_RATE_HZ`: the instrument was calibrated by ear in
+this state, and changing it retimes every delay, fade, envelope and string period at once. The
+affected constants are listed in `src/bsp/board.h` under "THE BLOCK CLOCK"; retiming is a separate,
+deliberate decision.
+
+The same struct now also reports the ISR load governor: `gov_lvl` (0 = full quality, rising =
+cheaper), `gov_trans` (level changes since boot) and `gov_over` (**blocks that missed the
+deadline — this must read 0**). A `gov_lvl` that sits above 0 in normal playing means the engine is
+running below full quality to stay inside the budget; `gov_trans` climbing steadily means it is
+hunting, and the thresholds in `board.h` want a look.
+
 **Even better for the shift-register chains — capture with the Saleae and self-label:** probe the
 165 (PA4/5/6) and SPI2 (PB12/13/14 + MOSI) buses, export a Logic 2 digital CSV, and run
 `python3 re/scripts/saleae_decode.py 165 cap.csv --latch 0 --clk 1 --data 2 --changes` (toggle one
