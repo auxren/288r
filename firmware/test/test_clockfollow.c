@@ -159,6 +159,18 @@ int main(void)
         on = cm_update(&cm, 1, 1, 0);
         ck("a lone transport press breaks the run", !on);
 
+        /* The jacks must be withheld from the FIRST pair, before engagement:
+         * otherwise patching a clock in fires write+recirc as transport and
+         * captures a loop before clocked mode takes over (seen on hardware). */
+        cm_init(&cm);
+        cm_update(&cm, 1, 1, 0);
+        ck("jacks withheld from the very first coincident pair",
+           cm_swallows_pulse_jacks(&cm));
+        ck("but not engaged yet after one pair", !cm.engaged);
+        cm_init(&cm);
+        cm_update(&cm, 1, 0, 0);
+        ck("a lone transport press is NOT swallowed", !cm_swallows_pulse_jacks(&cm));
+
         /* ---- UNPLUGGING ONE JACK ---- the case the first design got wrong.
          * The clock keeps running into the surviving jack, so no pairs arrive.
          * Without unpaired-run detection the module sits engaged for the whole

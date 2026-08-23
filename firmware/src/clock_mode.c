@@ -51,5 +51,18 @@ int cm_update(clockmode_t *cm, int wr_edge, int rc_edge, int clock_lost)
 
 int cm_swallows_pulse_jacks(const clockmode_t *cm)
 {
-    return cm->engaged ? 1 : 0;
+    /* Swallow from the FIRST coincident pair, not from engagement.
+     *
+     * Engagement deliberately needs a run of pairs, but the jacks must be
+     * withheld before that or patching the clock in disturbs the transport on
+     * the way: the first pulses arrive as simultaneous write AND recirc, which
+     * captures a loop. Observed on hardware -- the module went to RECIRC on a
+     * silent window and played dry only, because everything wet was reading
+     * that capture.
+     *
+     * One coincident pair is already proof of intent (the pair is
+     * contradictory as transport and nobody patches it deliberately), so it is
+     * safe to withhold immediately while still requiring the run before the
+     * delay window starts following the clock. */
+    return (cm->engaged || cm->pairs > 0u) ? 1 : 0;
 }

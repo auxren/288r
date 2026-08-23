@@ -1226,7 +1226,15 @@ int main(void)
                 const int lost = !cf_tick(&g_cf, (uint32_t)(BLOCK_FRAMES * 15u));
                 const int engaged = cm_update(&g_cm, jack_w, jack_r, lost);
 
-                if (engaged && g_cf.period) {
+                /* TIME MODE ONLY (DESIGN.md). In pitch mode the multiplier knob
+                 * is the pitch-down DEPTH and in string mode it is damping, so
+                 * reading it as a clock ratio there would have two features
+                 * fighting over one control. The clock still TRACKS while in
+                 * those modes -- it just does not drive the window -- so
+                 * switching back to TIME is already locked. */
+                const int clocked_now = engaged && !g_pitch_mode && !g_ks_mode;
+
+                if (clocked_now && g_cf.period) {
                     /* The multiplier becomes an INTEGER ratio, anchored to the
                      * printed legend (x1 sits on the printed "1"). */
                     g_cf.ratio = cf_ratio_from_legend(cal_knob_panel_mult(g_cf_knob_raw), g_cf.ratio);
@@ -1245,7 +1253,7 @@ int main(void)
                         if (d > cur * 0.002f + 1.0f)
                             taps_set_base_delay(&g_engine.taps, (float)want);
                     }
-                } else if (g_cf_base_free > 0.0f) {
+                } else if (g_cf_base_free > 0.0f && !clocked_now) {
                     /* Back to knob control. This is a base-delay change like any
                      * other, so it goes through taps_set_base_delay and the
                      * transport declick rather than a bare assignment. */

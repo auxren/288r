@@ -81,6 +81,8 @@ int  cm_update(clockmode_t *cm, int wr_edge, int rc_edge, int clock_lost);
  *
  * Getting this wrong would kill the red momentaries whenever a clock is
  * patched, which is the kind of surprise that reads as a dead module. */
+/* NOTE: true from the FIRST coincident pair, before engagement. Waiting for
+ * engagement let the first pulses through as transport and captured a loop. */
 int  cm_swallows_pulse_jacks(const clockmode_t *cm);
 
 #endif /* CLOCK_MODE_H */
