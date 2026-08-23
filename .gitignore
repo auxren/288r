@@ -14,3 +14,4 @@ patch.bin
 
 # firmware build outputs
 firmware/build/
+firmware/rt.sh

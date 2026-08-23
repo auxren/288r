@@ -16,10 +16,22 @@
  * NOTE: sector erase (~0.5 s max) stalls flash reads, and the code executes from
  * flash — expect a brief audio hiccup during a save. The save-confirmation LED
  * twinkle covers it; the stock has no save feature at all, so no parity concern.
+ *
+ * AND THE HICCUP IS NOT THE ONLY CONSEQUENCE. The audio ISR keeps running (it
+ * has to: the DMA does not stop), and it keeps measuring itself with DWT. A
+ * block that spans the erase reads tens of millions of cycles, which the load
+ * governor would take as a catastrophic overrun and answer by dropping to its
+ * floor quality level — permanently, since nothing ever hands those levels back
+ * quickly. Saving a preset would degrade the instrument until the next power
+ * cycle. Both writers therefore bracket themselves with gov_suspend()/
+ * gov_resume(); governor.c ALSO discards any block above GOV_ABSURD_CYCLES, so
+ * a stall nobody remembered to bracket (a debugger halt, a future bus hog) is
+ * still not mistaken for DSP load. Two independent defences, deliberately.
  */
 #include "stm32f429xx.h"
 #include "bsp.h"
 #include "preset_store.h"   /* PRESET_SLOTS, PRESET_SLOT_BYTES (-Isrc) */
+#include "governor.h"       /* gov_suspend/gov_resume around the stall */
 
 #define PRESET_FLASH_BASE  0x08060000u   /* sector 7, 128 KB (top) */
 #define PRESET_SECTOR      7u
@@ -60,12 +72,13 @@ int bsp_preset_flash_write(unsigned slot, const uint8_t *blob, unsigned len)
     for (unsigned i = len; i < PRESET_SLOT_BYTES; i++)
         cache[slot * PRESET_SLOT_BYTES + i] = 0xFFu;
 
+    gov_suspend();               /* the ISR is about to be stalled, not busy */
     flash_unlock();
     flash_wait();
     FLASH->SR = FLASH_SR_EOP | FLASH_SR_SOP | FLASH_SR_WRPERR |
                 FLASH_SR_PGAERR | FLASH_SR_PGPERR | FLASH_SR_PGSERR;
 
-    /* erase sector 3 (PSIZE = x32: VDD is 3.3 V) */
+    /* erase the preset sector (PSIZE = x32: VDD is 3.3 V) */
     FLASH->CR = (FLASH->CR & ~(FLASH_CR_PSIZE | FLASH_CR_SNB)) |
                 FLASH_CR_PSIZE_1 | (PRESET_SECTOR << FLASH_CR_SNB_Pos) |
                 FLASH_CR_SER;
@@ -83,6 +96,7 @@ int bsp_preset_flash_write(unsigned slot, const uint8_t *blob, unsigned len)
     }
     FLASH->CR &= ~FLASH_CR_PG;
     FLASH->CR |= FLASH_CR_LOCK;
+    gov_resume();
 
     /* verify */
     for (unsigned i = 0; i < PRESET_REGION; i++)
@@ -109,6 +123,7 @@ void bsp_preset_flash_migrate(void)
     }
     if (old_blank) return;
 
+    gov_suspend();
     flash_unlock();
     flash_wait();
     FLASH->SR = FLASH_SR_EOP | FLASH_SR_SOP | FLASH_SR_WRPERR |
@@ -128,4 +143,5 @@ void bsp_preset_flash_migrate(void)
     }
     FLASH->CR &= ~FLASH_CR_PG;
     FLASH->CR |= FLASH_CR_LOCK;
+    gov_resume();
 }

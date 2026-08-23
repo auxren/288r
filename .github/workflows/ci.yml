@@ -15,6 +15,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Host unit tests
         run: make -C firmware test
+      # QA gate: the CCM window cache may change WHERE the delay-line words
+      # come from and nothing else. Builds the 200k-frame golden scenario and
+      # the worst-case scenarios (wrapped windows, rate-4 varispeed, overdub,
+      # FM, crush, splice in flight) with DL_CACHE_ENABLE 1 and 0 and requires
+      # identical output and buffer hashes. This is the only check that can see
+      # a coherence rule being weakened — a stale word changes the audio and
+      # leaves no other trace.
+      - name: dl_cache equivalence (cache on == cache off)
+        run: make -C firmware cachecheck
 
   firmware:
     runs-on: ubuntu-latest
@@ -28,6 +37,13 @@ jobs:
         run: make -C firmware engine
       - name: Build flashable firmware image
         run: make -C firmware firmware
+      # Budget contract clause C-3, static half: every loop in the audio ISR
+      # bounded, no indirect dispatch, no soft-double helper, and the
+      # worst-case path ratcheted against the recorded baseline. Fails the
+      # build on a structural regression; the load number itself is reported,
+      # not gated, until it is under target (see tools/wcet.py).
+      - name: WCET / ISR budget contract
+        run: make -C firmware wcet
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
