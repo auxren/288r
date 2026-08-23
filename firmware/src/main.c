@@ -145,6 +145,9 @@ static volatile float g_pt_scale = 1.0f;
  * 281e/251e pulses ignored, envelopes worked; issue #1). */
 static volatile uint8_t g_pulse_latch = 0;   /* bit0=write bit1=recirc bit2=arm */
 static uint8_t g_pulse_prev = 0;
+/* coincident write+recirc rising edge, stamped in the ISR (see above) */
+static volatile uint32_t g_cf_edge_blk = 0;
+static volatile uint8_t  g_cf_edge_seq = 0;
 
 /* signal-in FM presence envelope (ISR-only state) + the expander gain it
  * produces. The gain is recomputed once per BLOCK in the ISR epilogue and held
@@ -739,7 +742,18 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         uint8_t now = (uint8_t)((bsp_pulse_in(0) ? 1u : 0u)
                               | (bsp_pulse_in(1) ? 2u : 0u)
                               | (bsp_pulse_in(2) ? 4u : 0u));
-        g_pulse_latch |= (uint8_t)(now & (uint8_t)~g_pulse_prev);
+        const uint8_t rise = (uint8_t)(now & (uint8_t)~g_pulse_prev);
+        g_pulse_latch |= rise;
+        /* CLOCKED MODE needs the pulse TIME, not just that one happened. The
+         * panel tick runs every 15 blocks, so timing clock edges there
+         * quantises the period to 5 ms and — worse — a wide gate reads as a
+         * fresh pulse on every tick it stays high. Stamp the coincident RISING
+         * edge here instead: block resolution (0.33 ms), and an edge is an edge
+         * however long the gate is. */
+        if ((rise & 0x3u) == 0x3u) {          /* write AND recirc rose together */
+            g_cf_edge_blk = g_blocks;
+            g_cf_edge_seq++;
+        }
         g_pulse_prev = now;
     }
     {
@@ -1191,15 +1205,21 @@ int main(void)
              * the red momentaries and must keep working while clocked, or
              * patching a clock would kill the panel switches. */
             {
-                const int jack_w = (int)((unsigned)bsp_pulse_in(0) | ((pl >> 0) & 1u));
-                const int jack_r = (int)((unsigned)bsp_pulse_in(1) | ((pl >> 1) & 1u));
-                const uint32_t now = g_blocks;
-                const uint32_t elapsed = (now - g_cf_last_blocks) * BLOCK_FRAMES;
-
-                /* A coincident pair is a clock tick; feed the period tracker. */
-                if (jack_w && jack_r) {
-                    if (g_cf_last_blocks != 0u) (void)cf_pulse(&g_cf, elapsed);
-                    g_cf_last_blocks = now;
+                /* EDGES ONLY, and timed in the ISR. Using the live level here
+                 * made a wide gate read as a fresh pulse every tick, so the
+                 * measured period jumped between 1920 and 7424 samples and the
+                 * window chased it — audible as delay-time modulation rather
+                 * than a lock. */
+                static uint8_t  cf_seq_prev = 0;
+                const uint8_t   seq = g_cf_edge_seq;
+                const int       new_edge = (seq != cf_seq_prev);
+                const uint32_t  stamp = g_cf_edge_blk;
+                const int jack_w = new_edge, jack_r = new_edge;
+                if (new_edge) {
+                    if (g_cf_last_blocks != 0u)
+                        (void)cf_pulse(&g_cf, (stamp - g_cf_last_blocks) * BLOCK_FRAMES);
+                    g_cf_last_blocks = stamp;
+                    cf_seq_prev = seq;
                 }
                 /* One panel tick is 15 blocks (see the slow-tick gate above),
                  * so that many frames have elapsed since the last call. */
@@ -1216,7 +1236,14 @@ int main(void)
                      * asked-for tempo is worse than not locking at all. */
                     if (want && (float)want <= capped + 0.5f) {
                         if (g_cf_base_free <= 0.0f) g_cf_base_free = g_engine.taps.base_delay;
-                        taps_set_base_delay(&g_engine.taps, (float)want);
+                        /* Only when it MOVED. Re-targeting every panel tick is a
+                         * modulation source in its own right: the taps glide to
+                         * the new value, so a period wobbling by a few samples
+                         * becomes continuous audible drift. */
+                        float cur = g_engine.taps.base_delay;
+                        float d = (float)want - cur; if (d < 0.0f) d = -d;
+                        if (d > cur * 0.002f + 1.0f)
+                            taps_set_base_delay(&g_engine.taps, (float)want);
                     }
                 } else if (g_cf_base_free > 0.0f) {
                     /* Back to knob control. This is a base-delay change like any
