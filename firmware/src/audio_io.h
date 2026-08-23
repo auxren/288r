@@ -30,4 +30,22 @@ void audio_io_block(engine_t *e, const int32_t *in, int32_t *out,
 float   audio_in_to_f(int32_t codec_word);
 int32_t audio_f_to_out(float x);
 
+/* Was this output word produced by a sample at or beyond full scale? The soft
+ * knee maps |x| = 1.0 to exactly 0.875 FS, so testing the WORD against that
+ * point is the same predicate as |x| >= 1.0 on the float — but it is an
+ * integer compare on a value the caller already has, instead of two float
+ * compares (each a VCMPE plus an FPSCR read on an M4F) per tap per sample.
+ * Diagnostic use only (the clip counter): exact to the 24-bit LSB. */
+#define AUDIO_OVERRANGE_WORD 7340031   /* 0.875 * (2^23 - 1), truncated */
+static inline int audio_word_overrange(int32_t w24)
+{
+    /* Sign-extend from bit 23. The shift is done in UNSIGNED — `w24 << 8` on a
+     * signed int is overflow (undefined) for exactly the words this exists to
+     * detect, i.e. every w24 >= 0x00800000. Works on today's gcc/clang; it is
+     * the one line in this path a UBSan host build trips on, and "works today"
+     * is not a property worth relying on for a one-token change. */
+    int32_t s = (int32_t)((uint32_t)w24 << 8) >> 8;
+    return (s >= AUDIO_OVERRANGE_WORD) | (s <= -AUDIO_OVERRANGE_WORD);
+}
+
 #endif /* AUDIO_IO_H */

@@ -88,6 +88,136 @@ void dl_advance_loop(delay_line_t *d, uint32_t loop_start, uint32_t loop_end);
  * splice completes. */
 void dl_loop_splice(delay_line_t *d, uint32_t start, uint32_t end, uint32_t fade);
 
+/* ---- inlinable read kernel + window mapping (ISR-budget work, 2026-08) -----
+ *
+ * These are the same arithmetic as read_frac_at_index() / dl_read_loop_frac()
+ * above, factored so the ENGINE can inline them into its 8-tap loop instead of
+ * paying a call (plus a second nested call) eight times per sample, and so the
+ * parts of the window mapping that do not change from tap to tap can be lifted
+ * out of that loop.  read_frac_at_index() is now a thin wrapper over
+ * dl_stencil(), so there is still exactly ONE copy of the interpolation
+ * polynomial to keep in lockstep with dl_read_at() and audio_buffer.c.
+ *
+ * Everything here is bit-exact with what it replaces — test_golden.c asserts it
+ * over a 200k-frame run.  That is the whole point: this file is allowed to get
+ * faster, it is not allowed to get different. */
+
+/* The kernel over an already-located CONTIGUOUS stencil: p[0..3] = the samples
+ * at buffer indices a0-2, a0-1, a0, a0+1. Split out from dl_stencil_hermite so
+ * the window cache (dl_cache.h) can hand it four CCM words instead of four
+ * SDRAM words without a second copy of the polynomial existing anywhere. */
+static inline float dl_stencil4_hermite(const float *p, float f)
+{
+    const float x2  = p[0];
+    const float x1  = p[1];
+    const float x0  = p[2];
+    const float xm1 = p[3];
+    const float c1 = 0.5f * (x1 - xm1);
+    const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+    const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+    return ((c3 * f + c2) * f + c1) * f + x0;
+}
+
+static inline float dl_stencil4_linear(const float *p, float f)
+{
+    const float x1 = p[1];
+    const float x0 = p[2];
+    return x0 + (x1 - x0) * f;
+}
+
+/* 4-point Hermite (Catmull-Rom) at buffer index a0 with fraction f toward the
+ * OLDER sample (delay space: x0 = a0, x1 = a0-1, xm1 = a0+1, x2 = a0-2). */
+static inline float dl_stencil_hermite(const float *b, uint32_t len,
+                                       uint32_t a0, float f)
+{
+    /* FAST PATH: when the 4-sample stencil a0-2..a0+1 cannot wrap (the ~always
+     * case on a 2M buffer), index directly — the wrap branches cost real cycles
+     * at 3M fetches/s, and sequential addressing keeps SDRAM row hits. */
+    if (a0 >= 2u && a0 + 1u < len)
+        return dl_stencil4_hermite(&b[a0 - 2], f);
+    {   /* wrapped stencil: each neighbour is at most one length out of range */
+        int32_t i = (int32_t)a0;
+        int32_t im1 = i - 1; if (im1 < 0) im1 += (int32_t)len;
+        int32_t ip1 = i + 1; if ((uint32_t)ip1 >= len) ip1 -= (int32_t)len;
+        int32_t im2 = i - 2; if (im2 < 0) im2 += (int32_t)len;
+        const float x0  = b[a0];
+        const float x1  = b[(uint32_t)im1];
+        const float xm1 = b[(uint32_t)ip1];
+        const float x2  = b[(uint32_t)im2];
+        const float c0 = x0;
+        const float c1 = 0.5f * (x1 - xm1);
+        const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+        const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+        return ((c3 * f + c2) * f + c1) * f + c0;
+    }
+}
+
+static inline float dl_stencil_linear(const float *b, uint32_t len,
+                                      uint32_t a0, float f)
+{
+    if (a0 >= 2u && a0 + 1u < len)
+        return dl_stencil4_linear(&b[a0 - 2], f);
+    {
+        int32_t im1 = (int32_t)a0 - 1; if (im1 < 0) im1 += (int32_t)len;
+        const float x0 = b[a0];
+        const float x1 = b[(uint32_t)im1];
+        return x0 + (x1 - x0) * f;
+    }
+}
+
+static inline float dl_stencil(const float *b, uint32_t len, uint32_t a0,
+                               float f, dl_interp_t interp)
+{
+    return (interp == DL_INTERP_LINEAR) ? dl_stencil_linear(b, len, a0, f)
+                                        : dl_stencil_hermite(b, len, a0, f);
+}
+
+/* Read geometry for one frame, shared by all 8 taps.
+ *
+ * span == 0 selects whole-buffer addressing (WRITE, or a degenerate loop
+ * window); otherwise reads are confined to [base, base+span) exactly as
+ * dl_read_loop_frac() does it.  `pos` is the head: the write index in the
+ * whole-buffer case, the head's offset INSIDE the window in the loop case.
+ *
+ * Splitting it this way is the point of the exercise: span/base/len/buf are
+ * fixed for a whole DMA block, pos moves once per frame, and only d_int moves
+ * per tap.  The old code recomputed all of it eight times a sample, including
+ * a division that no tap needed. */
+typedef struct {
+    const float *buf;
+    uint32_t     len;
+    uint32_t     span;   /* 0 = whole buffer */
+    uint32_t     base;   /* loop_start (span != 0 only) */
+    uint32_t     pos;    /* head (see above) */
+} dl_map_t;
+
+static inline uint32_t dl_map_index(const dl_map_t *m, uint32_t d_int)
+{
+    if (m->span) {
+        uint32_t k = d_int;
+        if (k >= m->span) k %= m->span;      /* tap wraps within the window   */
+        uint32_t r0 = (k <= m->pos) ? m->pos - k : m->pos + m->span - k;
+        uint32_t a0 = m->base + r0;
+        if (a0 >= m->len) a0 -= m->len;
+        return a0;
+    }
+    {
+        uint32_t k = d_int;
+        if (k >= m->len) k %= m->len;
+        return (k <= m->pos) ? m->pos - k : m->pos + m->len - k;
+    }
+}
+
+/* Head position inside the window — the once-per-frame half of the mapping
+ * (this is where the per-tap UDIV used to live: `pos` does not depend on i). */
+static inline uint32_t dl_map_head(uint32_t wpos, uint32_t len,
+                                   uint32_t base, uint32_t span)
+{
+    uint32_t pos = (base <= wpos) ? wpos - base : wpos + len - base;
+    if (pos >= span) pos %= span;
+    return pos;
+}
+
 /* Optional "vintage" quantizer for the write path: reduce to `bits` (e.g. 12) with
  * triangular dither. Apply to the sample before dl_write() when in vintage mode.
  * `dither` is a value in [-1,1] (e.g. from a cheap PRNG); pass 0 for none. */

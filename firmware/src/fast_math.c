@@ -1,7 +1,12 @@
 /* fast_math.c — see fast_math.h. Range-reduced minimax sinf + poly exp2f, no libm. */
 #include "fast_math.h"
 
-float fm_fabsf(float x) { return (x < 0.0f) ? -x : x; }
+/* __builtin_fabsf is one VABS.F32 (and a single AND on the host). The obvious
+ * `(x < 0.0f) ? -x : x` is NOT the same function — it returns -0.0 for -0.0 —
+ * so the compiler is not allowed to fold it into VABS, and emits a float
+ * compare plus an FPSCR->core status transfer instead. That difference costs
+ * ~4 cycles per call, and this is called several times per audio sample. */
+float fm_fabsf(float x) { return __builtin_fabsf(x); }
 
 float fm_sinf(float x)
 {
