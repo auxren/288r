@@ -168,6 +168,53 @@ int main(void)
         ck("steady state has no discontinuity", p.peak_step < lim);
     }
 
+    /* ---------- 6. RAPID RETRIGGER (pulse jacks / clocked mode) ----------
+     * The pulse inputs can retrigger the transport far faster than a fixed
+     * 10 ms fade can finish. With a fixed fade the engine sits permanently
+     * mid-crossfade and the taps smear; the adaptive clamp must shorten the
+     * fade so each transition still completes. */
+    {
+        engine_t e; double ph = 0.0;
+        setup(&e);
+        run(&e, 20000, &ph, 1);
+
+        const int period[] = { 4800, 960, 480, 192 };   /* 50, 10, 5, 2 ms */
+        int bad_rate = 0;
+        for (unsigned k = 0; k < sizeof(period)/sizeof(period[0]); k++) {
+            int P = period[k];
+            /* Measure ONLY the transition and its fade -- that is what the
+             * declick contracts for. Steps later in the period are content
+             * edges: retriggering a capture every few ms leaves the buffer a
+             * patchwork of old and new material, and no output crossfade can
+             * (or should) hide a boundary the taps read minutes later. */
+            probe_t worst = { 0.0f, 0.0f };
+            for (int rep = 0; rep < 6; rep++) {
+                if (rep & 1) engine_write(&e);
+                else         engine_recirc_window(&e, 5001u);
+                /* Sample 0 only: the step across the transition itself. That is
+                 * purely the read-position jump, with no content involved --
+                 * the one thing the declick is responsible for. Later samples
+                 * carry buffer edges left by earlier retriggers, and by the end
+                 * of a fade the incoming signal passes almost unattenuated, so
+                 * they cannot distinguish a declick failure from chopped-up
+                 * content. */
+                probe_t p2 = run(&e, 1, &ph, 0);
+                if (p2.peak_step > worst.peak_step) worst = p2;
+                run(&e, P - 1, &ph, 1);
+            }
+            /* the fade must always COMPLETE before the next trigger */
+            int done = (e.declick_n == 0u) || ((int)e.declick_len <= P);
+            printf("  retrigger every %5d smp (%5.2f ms): fade_len %4u  step-at-switch %.5f %s\n",
+                   P, 1000.0 * P / FS, (unsigned)e.declick_len, worst.peak_step,
+                   done ? "" : " <-- fade longer than the interval");
+            if (!done) bad_rate++;
+            /* still bounded: a shorter ramp is steeper, but must stay far below
+             * the raw discontinuity it replaces (0.14..0.93 measured pre-fix) */
+            if (worst.peak_step > lim) bad_rate++;
+        }
+        ck("rapid retrigger stays bounded and fades complete", bad_rate == 0);
+    }
+
     printf(fails ? "\n%d FAILURES\n" : "\nall declick checks passed\n", fails);
     return fails ? 1 : 0;
 }

@@ -46,9 +46,20 @@
  * the transition residual falls as 1/DECLICK_FADE until it reaches the test
  * signal's own slope, and the write-resume residual bottoms out at ~576. Longer
  * buys nothing; shorter is audibly an edge. */
-/* 10 ms @96k: output crossfade across a transport transition. */
+/* 10 ms @96k: output crossfade across a transport transition.
+ *
+ * ADAPTIVE. The fade is clamped to half the interval since the PREVIOUS
+ * transition, because the pulse jacks (and, soon, clocked mode) can retrigger
+ * the transport faster than a fixed fade can finish. With a fixed 10 ms fade a
+ * 100 Hz pulse train leaves the engine permanently mid-crossfade: the outgoing
+ * hold never decays, and the tap outputs degrade into a rolling smear instead
+ * of clean transitions. Shortening keeps the step covered and stays responsive;
+ * DECLICK_MIN is the floor below which a ramp stops being worth anything. */
 #ifndef DECLICK_FADE
 #define DECLICK_FADE   960u
+#endif
+#ifndef DECLICK_MIN
+#define DECLICK_MIN     64u    /* ~0.67 ms @96k */
 #endif
 /* 6 ms @96k: buffer blend where writing resumes. */
 #ifndef WR_SEAM_FADE
@@ -83,8 +94,12 @@ typedef struct {
     float        lp_phase;         /* fractional part of the recirc head, [0,1)    */
     float        lp_rate;          /* last applied head rate (telemetry/debug)     */
     uint32_t     declick_n;        /* transport declick: samples remaining      */
-    float        declick_hold[NUM_TAPS];  /* tap values held from before the switch */
+    uint32_t     declick_len;      /* length of the fade in flight (adaptive)   */
+    uint32_t     declick_since;    /* samples since the last transition         */
+    float        declick_hold[NUM_TAPS];  /* fade START value, captured at the switch */
+    float        declick_last[NUM_TAPS];  /* last value actually EMITTED, every sample */
     uint32_t     wr_seam_n;        /* write-resume blend: samples remaining      */
+    uint32_t     wr_seam_len;      /* length of that blend (adaptive)            */
     float        time_fm;          /* per-sample delay-time FM term (signal-in slot
                                       2 x depth, ISR-written): tap distances scale
                                       by (1 + time_fm) AFTER the control slews —

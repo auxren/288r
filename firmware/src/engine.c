@@ -23,8 +23,10 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->lp_rate = 1.0f;
     e->time_fm = 0.0f;
     e->declick_n = 0u;
+    e->declick_len = DECLICK_FADE;
+    e->declick_since = DECLICK_FADE * 4u;   /* first transition gets a full fade */
     e->wr_seam_n = 0u;
-    for (int i = 0; i < NUM_TAPS; i++) e->declick_hold[i] = 0.0f;
+    for (int i = 0; i < NUM_TAPS; i++) { e->declick_hold[i] = 0.0f; e->declick_last[i] = 0.0f; }
     for (int i = 0; i < NUM_TAPS; i++) e->fm_off[i] = 0.0f;
     e->od_active = 0;
     e->od_decay = 0.95f;
@@ -130,7 +132,7 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
         if (e->wr_seam_n) {
             /* Blend from what is already at this position into the new input,
              * so the buffer has no step for later passes to reproduce (#28). */
-            float w = 1.0f - (float)e->wr_seam_n / (float)WR_SEAM_FADE;
+            float w = 1.0f - (float)e->wr_seam_n / (float)e->wr_seam_len;
             float old = e->dl.buf[e->dl.wpos];
             x = old + (x - old) * w;
             e->wr_seam_n--;
@@ -229,7 +231,8 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
          * transport change made while the pitch/string voice owns the outputs
          * would fire its fade from a stale held value on the way back to the
          * delay taps. */
-        for (int i = 0; i < NUM_TAPS; i++) e->declick_hold[i] = 0.0f;
+        for (int i = 0; i < NUM_TAPS; i++) e->declick_last[i] = 0.0f;
+        if (e->declick_since < 0x7FFFFFFFu) e->declick_since++;
         if (e->declick_n) e->declick_n--;
         return 0.0f;
     }
@@ -296,14 +299,15 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
     /* 4. transport declick: crossfade the read jump away (#27-#31). Idle, this
      * just tracks the last tap values so an arm has somewhere continuous to
      * start from. */
+    if (e->declick_since < 0x7FFFFFFFu) e->declick_since++;
     if (e->declick_n) {
-        float w = 1.0f - (float)e->declick_n / (float)DECLICK_FADE;
+        float w = 1.0f - (float)e->declick_n / (float)e->declick_len;
         for (int i = 0; i < NUM_TAPS; i++)
             taps[i] = e->declick_hold[i] + (taps[i] - e->declick_hold[i]) * w;
         e->declick_n--;
-    } else {
-        for (int i = 0; i < NUM_TAPS; i++) e->declick_hold[i] = taps[i];
     }
+    /* Always remember what actually left here: it is where the next fade starts. */
+    for (int i = 0; i < NUM_TAPS; i++) e->declick_last[i] = taps[i];
 
     /* 5. mix: 8 per-tap DAC channels + the summed ("mixed") output */
     mixer_channels(&e->mix, taps, chan);
@@ -320,7 +324,24 @@ float engine_process(engine_t *e, float input, float time_raw01)
  * sample's tap values (tracked every sample the fade is idle), so the outgoing
  * side starts exactly where the audio was - no step at the start of the fade
  * either. */
-static void declick_arm(engine_t *e) { e->declick_n = DECLICK_FADE; }
+static void declick_arm(engine_t *e)
+{
+    /* Start the new fade from what was last EMITTED, not from the last value
+     * seen while idle. If a fade is still running (or ended on the very sample
+     * before this trigger) the idle tracker is stale by up to a whole fade, and
+     * starting there reintroduces exactly the step this is here to remove --
+     * which is what rapid retriggering exposed. */
+    for (int i = 0; i < NUM_TAPS; i++) e->declick_hold[i] = e->declick_last[i];
+    /* Never longer than half the gap since the previous transition, so back-to-
+     * back triggers each get a complete fade instead of piling up. */
+    uint32_t len = DECLICK_FADE;
+    uint32_t half = e->declick_since >> 1;
+    if (half < len) len = half;
+    if (len < DECLICK_MIN) len = DECLICK_MIN;
+    e->declick_len   = len;
+    e->declick_n     = len;
+    e->declick_since = 0u;
+}
 
 void engine_write(engine_t *e)
 {
@@ -328,7 +349,12 @@ void engine_write(engine_t *e)
     transport_begin_write(&e->xport, e->dl.wpos);
     declick_arm(e);
     /* Writing resumes mid-buffer on top of old content: blend into it (#28). */
-    if (was_recirc) e->wr_seam_n = WR_SEAM_FADE;
+    if (was_recirc) {
+        uint32_t w = WR_SEAM_FADE;
+        if (e->declick_len < w) w = e->declick_len;   /* same adaptive clamp */
+        e->wr_seam_n = w;
+        e->wr_seam_len = w;
+    }
 }
 void engine_recirc(engine_t *e)
 {
