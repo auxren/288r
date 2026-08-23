@@ -102,6 +102,29 @@ void dl_loop_splice(delay_line_t *d, uint32_t start, uint32_t end, uint32_t fade
  * over a 200k-frame run.  That is the whole point: this file is allowed to get
  * faster, it is not allowed to get different. */
 
+/* The kernel over an already-located CONTIGUOUS stencil: p[0..3] = the samples
+ * at buffer indices a0-2, a0-1, a0, a0+1. Split out from dl_stencil_hermite so
+ * the window cache (dl_cache.h) can hand it four CCM words instead of four
+ * SDRAM words without a second copy of the polynomial existing anywhere. */
+static inline float dl_stencil4_hermite(const float *p, float f)
+{
+    const float x2  = p[0];
+    const float x1  = p[1];
+    const float x0  = p[2];
+    const float xm1 = p[3];
+    const float c1 = 0.5f * (x1 - xm1);
+    const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+    const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+    return ((c3 * f + c2) * f + c1) * f + x0;
+}
+
+static inline float dl_stencil4_linear(const float *p, float f)
+{
+    const float x1 = p[1];
+    const float x0 = p[2];
+    return x0 + (x1 - x0) * f;
+}
+
 /* 4-point Hermite (Catmull-Rom) at buffer index a0 with fraction f toward the
  * OLDER sample (delay space: x0 = a0, x1 = a0-1, xm1 = a0+1, x2 = a0-2). */
 static inline float dl_stencil_hermite(const float *b, uint32_t len,
@@ -110,16 +133,8 @@ static inline float dl_stencil_hermite(const float *b, uint32_t len,
     /* FAST PATH: when the 4-sample stencil a0-2..a0+1 cannot wrap (the ~always
      * case on a 2M buffer), index directly — the wrap branches cost real cycles
      * at 3M fetches/s, and sequential addressing keeps SDRAM row hits. */
-    if (a0 >= 2u && a0 + 1u < len) {
-        const float x2  = b[a0 - 2];
-        const float x1  = b[a0 - 1];
-        const float x0  = b[a0];
-        const float xm1 = b[a0 + 1];
-        const float c1 = 0.5f * (x1 - xm1);
-        const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
-        const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
-        return ((c3 * f + c2) * f + c1) * f + x0;
-    }
+    if (a0 >= 2u && a0 + 1u < len)
+        return dl_stencil4_hermite(&b[a0 - 2], f);
     {   /* wrapped stencil: each neighbour is at most one length out of range */
         int32_t i = (int32_t)a0;
         int32_t im1 = i - 1; if (im1 < 0) im1 += (int32_t)len;
@@ -140,11 +155,8 @@ static inline float dl_stencil_hermite(const float *b, uint32_t len,
 static inline float dl_stencil_linear(const float *b, uint32_t len,
                                       uint32_t a0, float f)
 {
-    if (a0 >= 2u && a0 + 1u < len) {
-        const float x1 = b[a0 - 1];
-        const float x0 = b[a0];
-        return x0 + (x1 - x0) * f;
-    }
+    if (a0 >= 2u && a0 + 1u < len)
+        return dl_stencil4_linear(&b[a0 - 2], f);
     {
         int32_t im1 = (int32_t)a0 - 1; if (im1 < 0) im1 += (int32_t)len;
         const float x0 = b[a0];

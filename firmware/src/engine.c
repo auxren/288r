@@ -40,6 +40,9 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->spl_active = 0;
     e->spl_start = e->spl_end = e->spl_fade = e->spl_idx = 0;
     e->spl_quota = 1u;
+#if DL_CACHE_ENABLE
+    dc_init(&e->dc);
+#endif
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -77,6 +80,9 @@ static void splice_arm(engine_t *e, uint32_t start, uint32_t end, uint32_t fade)
         e->dl.buf[(end + i) % e->dl.len] = e->dl.buf[(start + i) % e->dl.len];
     e->spl_start = start; e->spl_end = end; e->spl_fade = fade;
     e->spl_idx = 0; e->spl_active = 1;
+#if DL_CACHE_ENABLE
+    dc_invalidate(&e->dc);        /* rule 4: guard samples just moved */
+#endif
     /* PER-FRAME QUOTA — and why the old flat 8 turns out to be load-bearing.
      *
      * The job is amortised, so at any moment the tail is part rewritten and part
@@ -188,8 +194,11 @@ typedef struct {
     dl_interp_t  interp;    /* e->interp, after the governor's quality level    */
 } eng_blk_t;
 
-static void eng_blk_begin(engine_t *e, eng_blk_t *bk)
+static void eng_blk_begin(engine_t *e, eng_blk_t *bk, unsigned frames)
 {
+#if !DL_CACHE_ENABLE
+    (void)frames;
+#endif
     bk->len    = e->dl.len;
     bk->recirc = !transport_should_write(&e->xport);
     bk->ls     = e->xport.loop_start;
@@ -206,6 +215,13 @@ static void eng_blk_begin(engine_t *e, eng_blk_t *bk)
      * un-crossfaded discontinuity class as #24's AA engage. */
     bk->interp = e->interp;
     if (gov_level() >= GOV_LEVEL_LINEAR) bk->interp = DL_INTERP_LINEAR;
+#if DL_CACHE_ENABLE
+    /* Window cache: age the lines and refresh the refill budget. The
+     * foreign-writer verdict (rule 3) is re-evaluated per FRAME below, because
+     * both the overdub ramp and the splice job can change state inside a
+     * block; this is only the per-block bookkeeping. */
+    dc_block_begin(&e->dc, 1, frames ? frames : 1u);
+#endif
 }
 
 /* One frame. `bk` carries the block invariants; `want_sum` is folded away by the
@@ -404,6 +420,14 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
      * instead of one per tap, and so each kernel inlines with the polynomial
      * fully specialised. */
     const int herm = (e->od_gain <= 0.0f) && (bk->interp != DL_INTERP_LINEAR);
+#if DL_CACHE_ENABLE
+    /* dl_cache.h rule 3, per frame: while the overdub loop or the splice job is
+     * writing into the buffer, no line may be trusted OR kept. Dropping them
+     * every frame (8 byte stores) rather than on the edge keeps the reasoning
+     * to one line — and both states are rare and already expensive. */
+    const int dc_ok = !e->spl_active && (e->od_gain <= 0.0f);
+    if (!dc_ok) dc_invalidate(&e->dc);
+#endif
     float taps[NUM_TAPS];
     for (int i = 0; i < NUM_TAPS; i++) {
         uint32_t d_int; float d_frac;
@@ -446,8 +470,18 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
         if (d_int < 1) { d_int = 1; d_frac = 0.0f; }   /* keep off the write head */
         {
             uint32_t a0 = dl_map_index(&map, d_int);
-            taps[i] = herm ? dl_stencil_hermite(map.buf, map.len, a0, d_frac)
-                           : dl_stencil_linear (map.buf, map.len, a0, d_frac);
+            const float *p = 0;
+#if DL_CACHE_ENABLE
+            /* CCM window cache. Returns four words identical to the ones the
+             * direct path would load, or NULL — it cannot change the audio,
+             * only where the words came from (dl_cache.h). */
+            if (dc_ok) p = dc_stencil(&e->dc, (unsigned)i, map.buf, map.len,
+                                      a0, d_int);
+#endif
+            if (p) taps[i] = herm ? dl_stencil4_hermite(p, d_frac)
+                                  : dl_stencil4_linear (p, d_frac);
+            else   taps[i] = herm ? dl_stencil_hermite(map.buf, map.len, a0, d_frac)
+                                  : dl_stencil_linear (map.buf, map.len, a0, d_frac);
         }
     }
 
@@ -479,7 +513,7 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
 {
     eng_blk_t bk;
     splice_service(e, 1u);
-    eng_blk_begin(e, &bk);
+    eng_blk_begin(e, &bk, 1u);
     return eng_frame(e, input, time_raw01, chan, &bk, /*want_sum*/ 1);
 }
 
@@ -499,7 +533,7 @@ void engine_process_block(engine_t *e, const float *in, float time_raw01,
                           const float *fm, float (*chan_out)[NUM_TAPS], unsigned n)
 {
     eng_blk_t bk;
-    eng_blk_begin(e, &bk);          /* the whole point: once, not 8x per frame */
+    eng_blk_begin(e, &bk, n);       /* the whole point: once, not 8x per frame */
     for (unsigned k = 0; k < n; k++) {
         /* The splice stays INTERLEAVED rather than batched at the block edge.
          * Two reasons, and they agree: it keeps engine_process_block() bit-equal
@@ -519,7 +553,15 @@ void engine_process_block(engine_t *e, const float *in, float time_raw01,
  * sample's tap values (tracked every sample the fade is idle), so the outgoing
  * side starts exactly where the audio was - no step at the start of the fade
  * either. */
-static void declick_arm(engine_t *e) { e->declick_n = DECLICK_FADE; }
+static void declick_arm(engine_t *e)
+{
+    e->declick_n = DECLICK_FADE;
+#if DL_CACHE_ENABLE
+    /* Every transport entry passes through here, and every one of them moves
+     * the head and/or remaps the window (dl_cache.h rule 4). */
+    dc_invalidate(&e->dc);
+#endif
+}
 
 void engine_write(engine_t *e)
 {

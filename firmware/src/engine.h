@@ -19,6 +19,7 @@
 #include "transport.h"
 #include "mixer.h"
 #include "bwlimit.h"
+#include "dl_cache.h"
 
 /* Loop-seam crossfade length in samples (~10 ms @96 k): applied once at every
  * loop capture (see dl_loop_splice). */
@@ -140,6 +141,12 @@ typedef struct {
                                       the old flat 8/sample was 24 SDRAM
                                       accesses a sample for no reason.        */
     uint32_t     spl_start, spl_end, spl_fade, spl_idx;
+#if DL_CACHE_ENABLE
+    dl_cache_t   dc;               /* per-tap CCM window cache over the SDRAM
+                                      delay buffer — see dl_cache.h. Lives in
+                                      the engine so it moves into CCM with it
+                                      (main.c puts g_engine in .ccmram).     */
+#endif
     float        od_lp1, od_lp2;   /* 2-pole ~10 kHz lowpass on the LAYERED
                                       INPUT only: breaks ultrasonic feedback
                                       modes through the sound-on-sound loop

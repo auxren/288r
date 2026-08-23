@@ -119,6 +119,26 @@ int main(void)
     ck("coverage: both transport states", cov.recirc   > 50000u
                                        && cov.recirc   < GS_SAMPLES - 50000u);
     ck("coverage: bit-crush path",        cov.crush    > 50000u);
+#if DL_CACHE_ENABLE
+    /* SPAN COVERAGE for the CCM window cache. The audio is already proven
+     * unchanged (the hashes below); what this checks is that the thing is
+     * actually EARNING its 3 KB of CCM across the whole scenario — every
+     * transport state, varispeed, FM, overdub and splice included, i.e. with
+     * all its own disable rules firing. If a future change quietly makes it
+     * bypass everything, the audio stays right and only this notices. */
+    {
+        uint32_t reads = GS_SAMPLES * (uint32_t)NUM_TAPS;
+        printf("  dl_cache: %u reads, %u miss (%.1f%% served), %u fills"
+               " (%.2f SDRAM words/read vs 4.00 direct)\n",
+               reads, e.dc.miss, 100.0 * (1.0 - (double)e.dc.miss / reads),
+               e.dc.fill, (double)e.dc.fill * DC_W / reads
+                        + 4.0 * (double)e.dc.miss / reads);
+        ck("dl_cache: majority of reads served from CCM",
+           e.dc.miss * 2u < reads);
+        ck("dl_cache: fewer SDRAM words than the direct path",
+           (double)e.dc.fill * DC_W + 4.0 * (double)e.dc.miss < 4.0 * reads);
+    }
+#endif
 
     printf("  scenario: %u frames, %u ch-samples/phase-total\n",
            GS_SAMPLES, a_frame[GS_PHASES].n);
