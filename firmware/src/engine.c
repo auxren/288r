@@ -26,6 +26,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->wr_seam_n = 0u;
     for (int i = 0; i < NUM_TAPS; i++) e->declick_hold[i] = 0.0f;
     for (int i = 0; i < NUM_TAPS; i++) e->fm_off[i] = 0.0f;
+    e->fm_lanes = 0u;
     e->od_active = 0;
     e->od_decay = 0.95f;
     e->od_gain = 0.0f;
@@ -38,6 +39,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->od_lp2 = 0.0f;
     e->spl_active = 0;
     e->spl_start = e->spl_end = e->spl_fade = e->spl_idx = 0;
+    e->spl_quota = 1u;
     transport_begin_write(&e->xport, e->dl.wpos);
 }
 
@@ -55,6 +57,15 @@ float engine_clamp_base(float base, uint32_t len, float time_hi)
     return (base < max_base) ? base : max_base;
 }
 
+/* WCET bound for the splice job (C-3a/C-4): quota per frame, and the fastest
+ * the recirc head can travel (the varispeed rate clamp in engine_process_multi
+ * is 0.25..4.0 — if that clamp ever moves, this must move with it). */
+#define SPLICE_CHUNK  8u
+#define SPL_HEAD_MAX  4u
+/* Exposure numerator: quota = ceil(N*fade/DECLICK_FADE). N is a QUALITY knob,
+ * not a performance one — see the measured table in splice_arm. */
+#define SPL_EXPOSURE_NUM 8u
+
 /* arm the chunked seam splice: guards written immediately (4 writes), the
  * crossfade amortized into engine_process_multi. Re-arming mid-job simply
  * restarts on the new window. */
@@ -66,24 +77,87 @@ static void splice_arm(engine_t *e, uint32_t start, uint32_t end, uint32_t fade)
         e->dl.buf[(end + i) % e->dl.len] = e->dl.buf[(start + i) % e->dl.len];
     e->spl_start = start; e->spl_end = end; e->spl_fade = fade;
     e->spl_idx = 0; e->spl_active = 1;
+    /* PER-FRAME QUOTA — and why the old flat 8 turns out to be load-bearing.
+     *
+     * The job is amortised, so at any moment the tail is part rewritten and part
+     * original with a FRONTIER between them, and a tap read crossing that
+     * frontier hears a step. The transport declick is simultaneously opening
+     * from 0 to 1 over DECLICK_FADE frames, so what is audible is the product of
+     * the frontier step and the declick weight at the frame the crossing
+     * happens. Finish sooner -> every crossing happens while the declick is
+     * still small.
+     *
+     * This was measured, not modelled. Dropping the quota to 2 to save SDRAM
+     * traffic made test_declick's two CAPTURE cases fail; sweeping the quota and
+     * the fill direction against that test's transition step (threshold 0.01345,
+     * signal slope 0.00448) gives:
+     *
+     *      quota  forward (w rises)        reverse (w falls, seam first)
+     *              W->R      R->R            W->R      R->R
+     *        2    0.0625    0.0359          0.0376    0.0893
+     *        3    0.0369    0.0805          0.0322    0.0620
+     *        4    0.0251    0.0432          0.0248    0.0426
+     *        6    0.0121    0.0165          0.0155    0.0228
+     *        8    0.0072    0.0084          0.0106    0.0139   <- fails at R->R
+     *
+     * So: forward order wins (a closed-form argument said reverse should be 4x
+     * better — it is not; which tap crosses the frontier when is a lottery, not
+     * a smooth law, and the sweep is not even monotonic), and 8 is the first
+     * value with real margin. The quota stays at the shipped schedule; the
+     * saving in this commit comes from the inner loop being half the cost, not
+     * from doing less of it. If anyone is tempted to trade it for ISR headroom
+     * later, that is a QUALITY decision and it belongs in the governor, at a
+     * level where the trade is deliberate.
+     *
+     * Expressed as a derivation rather than a literal 8 so it tracks the two
+     * constants it actually depends on. Second constraint: finish before the
+     * read head laps the window and wraps through an unfinished seam — head
+     * travel is at most SPL_HEAD_MAX per frame (the varispeed clamp); give the
+     * job three quarters of one pass. */
+    {
+        uint32_t qa = (SPL_EXPOSURE_NUM * fade + DECLICK_FADE - 1u) / DECLICK_FADE;
+        uint32_t tgt = win - (win >> 2);              /* 0.75 of one pass      */
+        uint32_t qb = (fade * SPL_HEAD_MAX + tgt - 1u) / tgt;
+        uint32_t q  = (qa > qb) ? qa : qb;
+        if (q < 1u) q = 1u;
+        if (q > SPLICE_CHUNK) q = SPLICE_CHUNK;
+        e->spl_quota = (uint8_t)q;
+    }
 }
 
-#define SPLICE_CHUNK 8u
-static void splice_service(engine_t *e)
+/* Service the splice job for `frames` frames' worth of quota.
+ *
+ * C-4 (no unbounded amortized work): the work done here is exactly
+ * spl_quota * frames RMWs, spl_quota <= SPLICE_CHUNK, so the per-block cost is
+ * a compile-time bound and belongs in the static ceiling.
+ *
+ * Called once per block from engine_process_block (the whole point — the loop
+ * invariants below are computed once instead of 32 times) and with frames=1
+ * from engine_process_multi, which keeps the two paths identical. */
+static void splice_service(engine_t *e, unsigned frames)
 {
     if (!e->spl_active) return;
-    uint32_t len = e->dl.len, fade = e->spl_fade;
-    float inv = 1.0f / (float)fade;
-    uint32_t n = fade - e->spl_idx;
-    if (n > SPLICE_CHUNK) n = SPLICE_CHUNK;
-    for (uint32_t k = 0; k < n; k++) {
-        uint32_t i = e->spl_idx + k;
-        float w = (float)(i + 1u) * inv;
-        uint32_t tail = (e->spl_end   + len - fade + i) % len;
-        uint32_t lead = (e->spl_start + len - fade + i) % len;
-        e->dl.buf[tail] = (1.0f - w) * e->dl.buf[tail] + w * e->dl.buf[lead];
+    const uint32_t len = e->dl.len, fade = e->spl_fade;
+    float *const buf = e->dl.buf;
+    const float inv = 1.0f / (float)fade;
+    uint32_t done = e->spl_idx;                   /* samples already rewritten */
+    uint32_t n = (uint32_t)e->spl_quota * frames;
+    if (n > fade - done) n = fade - done;
+    /* Walking indices instead of two `% len` per iteration: end+len-fade+i and
+     * start+len-fade+i are both < 2*len for every i < fade, so a conditional
+     * subtract is exact — and it replaces two hardware UDIVs (up to 12 cycles
+     * each) in the innermost loop of the busiest moment in the machine. Fill
+     * order is FORWARD and stays forward: see the sweep in splice_arm. */
+    uint32_t i    = done;
+    uint32_t tail = (e->spl_end   + len - fade + done) % len;
+    uint32_t lead = (e->spl_start + len - fade + done) % len;
+    for (uint32_t k = 0; k < n; k++, i++) {
+        float w = (float)(i + 1u) * inv;          /* ..end-1 reaches w=1       */
+        buf[tail] = (1.0f - w) * buf[tail] + w * buf[lead];
+        if (++tail >= len) tail = 0u;
+        if (++lead >= len) lead = 0u;
     }
-    e->spl_idx += n;
+    e->spl_idx = done + n;
     if (e->spl_idx >= fade) e->spl_active = 0;
 }
 
@@ -92,9 +166,56 @@ void engine_resplice(engine_t *e)
     splice_arm(e, e->xport.loop_start, e->xport.loop_end, LOOP_SPLICE_FADE);
 }
 
-float engine_process_multi(engine_t *e, float input, float time_raw01, float chan[NUM_TAPS])
+/* ---- per-block invariants -------------------------------------------------
+ *
+ * Everything in here is fixed for the duration of one DMA half-block. It is
+ * safe to hoist because the only code that can change any of it — engine_write,
+ * engine_recirc*, taps_set_*, the governor — runs in the SUPERLOOP, and the
+ * superloop cannot preempt the audio ISR (it is the other way round). Transport
+ * transitions therefore always land BETWEEN blocks, never inside one.
+ *
+ * What this buys: the window mapping (span, base, and the head's modulo into the
+ * window) used to be recomputed from scratch inside dl_read_loop_frac() for each
+ * of the 8 taps, every sample — 8 copies of a computation that has no `i` in it,
+ * including a UDIV. Now it is computed once per block (span/base) and once per
+ * frame (the head), and the per-tap work is the part that actually varies. */
+typedef struct {
+    uint32_t     len;
+    uint32_t     span;      /* 0 = whole-buffer addressing (WRITE / degenerate) */
+    uint32_t     base;      /* loop_start                                       */
+    uint32_t     ls, le;
+    int          recirc;
+    dl_interp_t  interp;    /* e->interp, after the governor's quality level    */
+} eng_blk_t;
+
+static void eng_blk_begin(engine_t *e, eng_blk_t *bk)
 {
-    splice_service(e);
+    bk->len    = e->dl.len;
+    bk->recirc = !transport_should_write(&e->xport);
+    bk->ls     = e->xport.loop_start;
+    bk->le     = e->xport.loop_end;
+    bk->base   = bk->ls;
+    bk->span   = 0u;
+    if (bk->recirc) {
+        uint32_t s = (bk->le >= bk->ls) ? bk->le - bk->ls
+                                        : bk->len - (bk->ls - bk->le);
+        bk->span = (s < 1u) ? 0u : s;   /* degenerate window -> whole buffer    */
+    }
+    /* LOAD GOVERNOR (workstream B): read ONCE per block. A level change inside
+     * a block would swap the interpolation kernel mid-buffer — the same
+     * un-crossfaded discontinuity class as #24's AA engage. */
+    bk->interp = e->interp;
+    if (gov_level() >= GOV_LEVEL_LINEAR) bk->interp = DL_INTERP_LINEAR;
+}
+
+/* One frame. `bk` carries the block invariants; `want_sum` is folded away by the
+ * inliner at both call sites. Keeping engine_process_multi() and
+ * engine_process_block() on ONE body is what makes their bit-equality a
+ * structural property rather than something to be re-argued after each edit. */
+static inline float eng_frame(engine_t *e, float input, float time_raw01,
+                              float chan[NUM_TAPS], const eng_blk_t *bk,
+                              int want_sum)
+{
     /* 1. delay-time control -> tap positions (continuous, slewed) */
     float mult = tc_update(&e->time, time_raw01);
     /* VARISPEED TAP FREEZE (stock tape model): on the original hardware the
@@ -106,12 +227,11 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
      * loop plays under varispeed, taps hold their capture-time scale; the
      * knob is the motor alone. Live/all-sounds write keeps respacing — that
      * is the chorus/flanger behavior. */
-    float m_taps = (e->varispeed && !transport_should_write(&e->xport))
-                   ? e->lp_mult_ref : mult;
+    const int recirc = bk->recirc;
+    float m_taps = (e->varispeed && recirc) ? e->lp_mult_ref : mult;
     taps_update(&e->taps, m_taps);
 
-    const int recirc = !transport_should_write(&e->xport);
-    const uint32_t ls = e->xport.loop_start, le = e->xport.loop_end;
+    const uint32_t ls = bk->ls, le = bk->le;
 
     /* 2. record or recirculate */
     if (!recirc) {
@@ -177,14 +297,22 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
             e->od_xsum += xo;
             e->od_xn++;
             int nw = (int)e->lp_phase, j = 0;
+            /* WCET (C-3a): nw <= 4 because lp_phase < 1 on entry and the rate is
+             * clamped to 4.0 in the branch above — this while-loop has a
+             * compile-time bound of 4 iterations, and `make wcet` may rely on it.
+             * The reciprocal is computed once instead of a VDIV per write (~14
+             * cycles each on the M4F). Bit-exact for the only values that can
+             * occur here: nw in 2..4, j in 1..nw, so the products are exactly
+             * the halves, thirds and quarters, and j*(1/3) rounds to the same
+             * float as j/3 for j = 1, 2, 3. */
+            const float inv_nw = (nw > 1) ? 1.0f / (float)nw : 0.0f;
             while (e->lp_phase >= 1.0f) {
                 float val;
                 j++;
                 if (nw <= 1) {
                     val = e->od_xsum / (float)e->od_xn;
                 } else {
-                    val = e->od_xprev
-                        + (xo - e->od_xprev) * ((float)j / (float)nw);
+                    val = e->od_xprev + (xo - e->od_xprev) * ((float)j * inv_nw);
                 }
                 float v = e->dl.buf[e->dl.wpos] * e->od_decay + val;
                 /* WRITE LIMITER: peak-hold envelope + a ~5 ms slewed GAIN.
@@ -247,28 +375,62 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
                               the resample ratio inside [0.5, 1.5] — Doppler,
                               never teleporting. Also rounds the corners of a
                               rail-clipped modulator. */
+    /* FM FAST-OUT. With no signal-in patched, fm is EXACTLY zero (main.c snaps
+     * it below FM_EPS for precisely this reason) and every lane has already
+     * decayed to exactly zero — target 0, delta 0, offset 0, nothing happens.
+     * The arithmetic still ran: ~10 instructions x 8 taps x every sample, for a
+     * modulation nobody patched. e->fm_lanes is the bitmask of lanes that are
+     * still non-zero, maintained where the offsets are written, so the whole
+     * block costs one compare when the feature is idle. (Same lesson as the
+     * FM_EPS snap itself, measured at 4.3% of budget in the ISR — an asymptotic
+     * "off" is not off.) */
+    const int fm_idle = (fm == 0.0f) && (e->fm_lanes == 0u);
+    /* Read geometry shared by all 8 taps: the loop window map, or whole-buffer
+     * addressing in WRITE. span/base are block invariants; only `pos` (the head)
+     * moves per frame, and it moved when we wrote/advanced above. */
+    dl_map_t map;
+    map.buf  = e->dl.buf;
+    map.len  = bk->len;
+    map.span = bk->span;
+    map.base = bk->base;
+    map.pos  = bk->span ? dl_map_head(e->dl.wpos, bk->len, bk->base, bk->span)
+                        : e->dl.wpos;
+    /* OD HEADROOM: while overdub is held the write loop costs up to rate x
+     * (RMW + limiter) per sample ON TOP of the ~90% baseline — a ~3x varispeed
+     * overdub SATURATED the ISR and starved the superloop into a freeze (field
+     * 2026-07-29, SWD-captured). Linear interp halves the tap SDRAM loads for
+     * the duration of the hold; Hermite returns the moment od_gain decays out.
+     * Hoisted to the loop head so the kernel choice is one branch per frame
+     * instead of one per tap, and so each kernel inlines with the polynomial
+     * fully specialised. */
+    const int herm = (e->od_gain <= 0.0f) && (bk->interp != DL_INTERP_LINEAR);
     float taps[NUM_TAPS];
     for (int i = 0; i < NUM_TAPS; i++) {
         uint32_t d_int; float d_frac;
         taps_delay_frac(&e->taps, i, &d_int, &d_frac);
-        {
+        if (!fm_idle) {
             float target = ((float)d_int + d_frac) * fm;
             float delta = target - e->fm_off[i];
             if (delta >  FM_MAX_STEP) delta =  FM_MAX_STEP;
             if (delta < -FM_MAX_STEP) delta = -FM_MAX_STEP;
-            e->fm_off[i] += delta;
-        }
-        float off = e->fm_off[i];
-        if (off != 0.0f) {
-            float off_fl = (off >= 0.0f) ? (float)(int32_t)off
-                                         : (float)((int32_t)off - 1);
-            int32_t off_i = (int32_t)off_fl;
-            d_frac += off - off_fl;
-            if (d_frac >= 1.0f) { d_frac -= 1.0f; off_i += 1; }
-            if (off_i >= 0) d_int += (uint32_t)off_i;
-            else {
-                uint32_t mag = (uint32_t)(-off_i);
-                d_int = (d_int > mag) ? d_int - mag : 1u;
+            float off = e->fm_off[i] + delta;
+            e->fm_off[i] = off;
+            /* lane bookkeeping: `off` reaches EXACTLY 0 on the release ramp
+             * (delta = -off once |off| <= FM_MAX_STEP), so the mask clears
+             * cleanly and the fast-out above re-arms. */
+            if (off != 0.0f) e->fm_lanes |=  (uint8_t)(1u << i);
+            else             e->fm_lanes &= (uint8_t)~(1u << i);
+            if (off != 0.0f) {
+                float off_fl = (off >= 0.0f) ? (float)(int32_t)off
+                                             : (float)((int32_t)off - 1);
+                int32_t off_i = (int32_t)off_fl;
+                d_frac += off - off_fl;
+                if (d_frac >= 1.0f) { d_frac -= 1.0f; off_i += 1; }
+                if (off_i >= 0) d_int += (uint32_t)off_i;
+                else {
+                    uint32_t mag = (uint32_t)(-off_i);
+                    d_int = (d_int > mag) ? d_int - mag : 1u;
+                }
             }
         }
         if (recirc) {
@@ -282,15 +444,11 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
             }
         }
         if (d_int < 1) { d_int = 1; d_frac = 0.0f; }   /* keep off the write head */
-        /* OD HEADROOM: while overdub is held the write loop costs up to
-         * rate x (RMW + limiter) per sample ON TOP of the ~90% baseline —
-         * a ~3x varispeed overdub SATURATED the ISR and starved the
-         * superloop into a freeze (field 2026-07-29, SWD-captured). Linear
-         * interp halves the tap SDRAM loads for the duration of the hold;
-         * Hermite returns the moment od_gain decays out. */
-        dl_interp_t itp = (e->od_gain > 0.0f) ? DL_INTERP_LINEAR : e->interp;
-        taps[i] = recirc ? dl_read_loop_frac(&e->dl, d_int, d_frac, ls, le, itp)
-                         : dl_read_frac(&e->dl, d_int, d_frac, itp);
+        {
+            uint32_t a0 = dl_map_index(&map, d_int);
+            taps[i] = herm ? dl_stencil_hermite(map.buf, map.len, a0, d_frac)
+                           : dl_stencil_linear (map.buf, map.len, a0, d_frac);
+        }
     }
 
     /* 4. transport declick: crossfade the read jump away (#27-#31). Idle, this
@@ -305,9 +463,24 @@ float engine_process_multi(engine_t *e, float input, float time_raw01, float cha
         for (int i = 0; i < NUM_TAPS; i++) e->declick_hold[i] = taps[i];
     }
 
-    /* 5. mix: 8 per-tap DAC channels + the summed ("mixed") output */
+    /* 5. mix: 8 per-tap DAC channels + (only if asked) the summed output.
+     *
+     * The "mixed" jacks are an ANALOG sum of the 8 channel outputs on PCB1
+     * (re/notes/hardware.md: 68k -> phase switch -> bus -> 4.7k -> TL072).
+     * Nothing in the firmware consumes mixer_sum()'s result — both ISR call
+     * sites cast it to (void) — so the block path does not compute it. It stays
+     * on the per-sample API because the host tests and engine_process() use it
+     * as a convenient single-number view of the mix. */
     mixer_channels(&e->mix, taps, chan);
-    return mixer_sum(&e->mix, taps, e->auto_correction);
+    return want_sum ? mixer_sum(&e->mix, taps, e->auto_correction) : 0.0f;
+}
+
+float engine_process_multi(engine_t *e, float input, float time_raw01, float chan[NUM_TAPS])
+{
+    eng_blk_t bk;
+    splice_service(e, 1u);
+    eng_blk_begin(e, &bk);
+    return eng_frame(e, input, time_raw01, chan, &bk, /*want_sum*/ 1);
 }
 
 float engine_process(engine_t *e, float input, float time_raw01)
@@ -325,9 +498,20 @@ __attribute__((weak)) unsigned gov_level(void) { return GOV_LEVEL_FULL; }
 void engine_process_block(engine_t *e, const float *in, float time_raw01,
                           const float *fm, float (*chan_out)[NUM_TAPS], unsigned n)
 {
+    eng_blk_t bk;
+    eng_blk_begin(e, &bk);          /* the whole point: once, not 8x per frame */
     for (unsigned k = 0; k < n; k++) {
+        /* The splice stays INTERLEAVED rather than batched at the block edge.
+         * Two reasons, and they agree: it keeps engine_process_block() bit-equal
+         * to the per-frame path (the taps can read the tail the job is
+         * rewriting), and a batch at the block edge would be a miniature of
+         * exactly the burst that chunking exists to remove. The saving is the
+         * quota (8 -> typically 1 per frame), not the batching. */
+        splice_service(e, 1u);
         if (fm) e->time_fm = fm[k];
-        (void)engine_process_multi(e, in[k], time_raw01, chan_out[k]);
+        /* WRITE PATH STAYS PER FRAME (see engine.h): the pitch voice reads this
+         * same buffer between our frames. Only the READ geometry is batched. */
+        (void)eng_frame(e, in[k], time_raw01, chan_out[k], &bk, /*want_sum*/ 0);
     }
 }
 

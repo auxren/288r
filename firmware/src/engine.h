@@ -91,6 +91,11 @@ typedef struct {
                                       injecting before them would low-pass the
                                       modulation to nothing (~16 Hz). Clamped
                                       +/-0.25 at application. 0 = off.          */
+    uint8_t      fm_lanes;         /* bitmask of taps whose fm_off != 0. Lets the
+                                      tap loop skip the whole FM fold when the
+                                      feature is idle — an asymptotic "off" is
+                                      not off, and this path was measured at
+                                      4.3%% of the ISR budget when it was.    */
     float        fm_off[NUM_TAPS]; /* per-tap APPLIED FM offset (samples): slew-
                                       limited to +/-FM_MAX_STEP per sample so
                                       deep taps at audio-rate depth glide
@@ -128,6 +133,12 @@ typedef struct {
      * services 8 samples per process() call: same result in ~1.3 ms,
      * bounded ~2% ISR cost, no burst. */
     uint8_t      spl_active;
+    uint8_t      spl_quota;        /* RMWs per FRAME, sized at arm time from the
+                                      window and the varispeed rate clamp so the
+                                      job finishes before the head wraps through
+                                      the seam. 1 for any musical loop length;
+                                      the old flat 8/sample was 24 SDRAM
+                                      accesses a sample for no reason.        */
     uint32_t     spl_start, spl_end, spl_fade, spl_idx;
     float        od_lp1, od_lp2;   /* 2-pole ~10 kHz lowpass on the LAYERED
                                       INPUT only: breaks ultrasonic feedback

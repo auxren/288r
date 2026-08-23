@@ -76,7 +76,10 @@ static void drv_block(engine_t *e, const float *in, float t, const float *fm,
 
 /* ---- recorded fingerprints ------------------------------------------------
  * Regenerate ONLY when a change is meant to alter the audio, and say why in the
- * commit message. Order: energy, absum, moment, peak. */
+ * commit message. Order: energy, absum, moment, peak.
+ *
+ * CHANGELOG (empty so far: every optimisation in the 2026-08 ISR-budget work
+ * has come out bit-exact, which is the bar it was held to). */
 typedef struct { double energy, absum, moment, peak; } fp_t;
 static const fp_t REF[GS_PHASES + 1] = {
     /* phase 0  WRITE, taps sweeping                */ { 4.076158e+04, 9.289537e+04, 1.070551e+05, 9.464567e-01 },

@@ -117,49 +117,17 @@ float dl_vintage_quantize(float x, int bits, float dither)
  * neighbours at k-1 / k+2. Catmull-Rom is direction-symmetric, so this is the
  * same polynomial dl_read_at evaluates in index space. Kernel kept in lockstep
  * with dl_read_at / audio_buffer.c. */
-static float read_frac_at_index(const float *b, uint32_t len, uint32_t a0,
-                                float f, dl_interp_t interp)
-{
-    /* a0 = buffer index of the sample at integer delay k (delay k+1 is a0-1).
-     * FAST PATH: when the 4-sample stencil a0-2..a0+1 cannot wrap (the ~always
-     * case on a 2M buffer), index directly — the wrap() branches cost real
-     * cycles at 3M fetches/s, and sequential addressing keeps SDRAM row hits. */
-    if (a0 >= 2u && a0 + 1u < len) {
-        const float x2  = b[a0 - 2];
-        const float x1  = b[a0 - 1];
-        const float x0  = b[a0];
-        if (interp == DL_INTERP_LINEAR)
-            return x0 + (x1 - x0) * f;
-        const float xm1 = b[a0 + 1];
-        const float c1 = 0.5f * (x1 - xm1);
-        const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
-        const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
-        return ((c3 * f + c2) * f + c1) * f + x0;
-    }
-    const float x0 = b[a0];
-    const float x1 = b[wrap((int32_t)a0 - 1, len)];
-
-    if (interp == DL_INTERP_LINEAR)
-        return x0 + (x1 - x0) * f;
-
-    const float xm1 = b[wrap((int32_t)a0 + 1, len)];   /* delay k-1 (newer)  */
-    const float x2  = b[wrap((int32_t)a0 - 2, len)];   /* delay k+2 (older)  */
-
-    const float c0 = x0;
-    const float c1 = 0.5f * (x1 - xm1);
-    const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
-    const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
-    return ((c3 * f + c2) * f + c1) * f + c0;
-}
+/* a0 = buffer index of the sample at integer delay k (delay k+1 is a0-1).
+ * The kernel itself now lives in delay_line.h as dl_stencil(), so the ENGINE can
+ * inline it into its 8-tap loop instead of paying two nested calls per tap;
+ * these entry points are the out-of-line view for everybody else. There is still
+ * exactly ONE copy of the polynomial, as this file's header demands. */
 
 float dl_read_frac(const delay_line_t *d, uint32_t d_int, float d_frac,
                    dl_interp_t interp)
 {
-    const uint32_t len = d->len;
-    if (d_int >= len) d_int %= len;
-    const uint32_t a0 = (d_int <= d->wpos) ? d->wpos - d_int
-                                           : d->wpos + len - d_int;
-    return read_frac_at_index(d->buf, len, a0, d_frac, interp);
+    dl_map_t m = { d->buf, d->len, 0u, 0u, d->wpos };
+    return dl_stencil(d->buf, d->len, dl_map_index(&m, d_int), d_frac, interp);
 }
 
 float dl_read_loop_frac(const delay_line_t *d, uint32_t d_int, float d_frac,
@@ -169,20 +137,14 @@ float dl_read_loop_frac(const delay_line_t *d, uint32_t d_int, float d_frac,
     uint32_t span = (loop_end >= loop_start) ? loop_end - loop_start
                                              : len - (loop_start - loop_end);
     if (span < 1) return dl_read_frac(d, d_int, d_frac, interp);
-
-    uint32_t pos = (loop_start <= d->wpos) ? d->wpos - loop_start
-                                           : d->wpos + len - loop_start;
-    if (pos >= span) pos %= span;            /* head inside the window       */
-
-    uint32_t k = d_int;
-    if (k >= span) k %= span;                /* tap wraps within the window  */
-    uint32_t r0 = (k <= pos) ? pos - k : pos + span - k;
-
-    uint32_t a0 = loop_start + r0;           /* absolute buffer index        */
-    if (a0 >= len) a0 -= len;
-    /* neighbours fetch whole-buffer adjacent samples; dl_loop_splice writes
-     * guard samples past loop_end so the stencil stays continuous at the seam */
-    return read_frac_at_index(d->buf, len, a0, d_frac, interp);
+    {
+        /* neighbours fetch whole-buffer adjacent samples; dl_loop_splice writes
+         * guard samples past loop_end so the stencil stays continuous at the
+         * seam (bench 8: fractional rates walk through that zone every wrap) */
+        dl_map_t m = { d->buf, len, span, loop_start,
+                       dl_map_head(d->wpos, len, loop_start, span) };
+        return dl_stencil(d->buf, len, dl_map_index(&m, d_int), d_frac, interp);
+    }
 }
 
 void dl_loop_splice(delay_line_t *d, uint32_t start, uint32_t end, uint32_t fade)
