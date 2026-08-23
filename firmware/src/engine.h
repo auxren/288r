@@ -19,6 +19,7 @@
 #include "transport.h"
 #include "mixer.h"
 #include "bwlimit.h"
+#include "dl_cache.h"
 
 /* Loop-seam crossfade length in samples (~10 ms @96 k): applied once at every
  * loop capture (see dl_loop_splice). */
@@ -106,6 +107,11 @@ typedef struct {
                                       injecting before them would low-pass the
                                       modulation to nothing (~16 Hz). Clamped
                                       +/-0.25 at application. 0 = off.          */
+    uint8_t      fm_lanes;         /* bitmask of taps whose fm_off != 0. Lets the
+                                      tap loop skip the whole FM fold when the
+                                      feature is idle — an asymptotic "off" is
+                                      not off, and this path was measured at
+                                      4.3%% of the ISR budget when it was.    */
     float        fm_off[NUM_TAPS]; /* per-tap APPLIED FM offset (samples): slew-
                                       limited to +/-FM_MAX_STEP per sample so
                                       deep taps at audio-rate depth glide
@@ -143,7 +149,19 @@ typedef struct {
      * services 8 samples per process() call: same result in ~1.3 ms,
      * bounded ~2% ISR cost, no burst. */
     uint8_t      spl_active;
+    uint8_t      spl_quota;        /* RMWs per FRAME, sized at arm time from the
+                                      window and the varispeed rate clamp so the
+                                      job finishes before the head wraps through
+                                      the seam. 1 for any musical loop length;
+                                      the old flat 8/sample was 24 SDRAM
+                                      accesses a sample for no reason.        */
     uint32_t     spl_start, spl_end, spl_fade, spl_idx;
+#if DL_CACHE_ENABLE
+    dl_cache_t   dc;               /* per-tap CCM window cache over the SDRAM
+                                      delay buffer — see dl_cache.h. Lives in
+                                      the engine so it moves into CCM with it
+                                      (main.c puts g_engine in .ccmram).     */
+#endif
     float        od_lp1, od_lp2;   /* 2-pole ~10 kHz lowpass on the LAYERED
                                       INPUT only: breaks ultrasonic feedback
                                       modes through the sound-on-sound loop
@@ -174,6 +192,51 @@ float engine_process(engine_t *e, float input, float time_raw01);
 /* Same, but also fill `chan[NUM_TAPS]` with the 8 per-tap channel outputs (→ the
  * CS42888's 8 DAC channels). Returns the summed output (→ the "mixed" jacks). */
 float engine_process_multi(engine_t *e, float input, float time_raw01, float chan[NUM_TAPS]);
+
+/* ---- BLOCK API — the workstream seam (2026-08 ISR-budget work) -------------
+ *
+ * The ISR receives one DMA half-block of frames at a time.  Everything that is
+ * constant across that block — the transport mode, the loop-window geometry,
+ * the interpolation kernel, the governor's quality level — was being recomputed
+ * eight times per sample inside the per-tap loop.  This entry point is where
+ * that hoisting is allowed to happen: the block owns the invariants, the frame
+ * loop owns what actually moves.
+ *
+ * CONTRACT: engine_process_block(e, in, t, fm, chan, n) is EXACTLY equivalent to
+ *
+ *     for (k = 0; k < n; k++) { e->time_fm = fm[k]; engine_process_multi(...); }
+ *
+ * bit for bit — test_golden.c asserts that on a 200k-sample scripted run through
+ * every transport state.  Any optimisation that cannot hold that line does not
+ * belong in here; it belongs behind the governor, where it is a deliberate,
+ * audible-quality decision rather than a silent drift.
+ *
+ * `fm` may be NULL (use e->time_fm unchanged for the whole block) or an n-element
+ * per-frame delay-time FM array.  The FM SIGNAL IS PER SAMPLE — it is audio off
+ * codec slot 2, and block-rate FM would alias the modulator down to the block
+ * clock.  Only its *invariants* are hoisted.
+ *
+ * WRITE ORDERING (the one place the two workstreams could silently diverge):
+ * the pitch voice reads the same delay buffer the engine writes, so the engine's
+ * WRITE path stays strictly per frame in here — only the tap READ path is
+ * batched.  Do not lift dl_write()/dl_advance_loop() out of the frame loop.
+ *
+ * The mixed ("sum") output is deliberately NOT produced: the 8 channels go to
+ * the 8 DACs and the analog board sums them (re/notes/hardware.md); the firmware
+ * mix was computed every sample and thrown away at both call sites. */
+void engine_process_block(engine_t *e, const float *in, float time_raw01,
+                          const float *fm, float (*chan_out)[NUM_TAPS], unsigned n);
+
+/* ---- load governor hook (workstream B owns the implementation) -------------
+ * Quality level published by governor.c: 0 = full quality, higher = cheaper.
+ * The engine reads it ONCE per block (never per sample: a level change inside a
+ * block would swap the interpolation kernel mid-buffer, which is precisely the
+ * un-crossfaded discontinuity class that produced #24).  engine.c carries a weak
+ * default returning 0 so the image links before governor.c exists. */
+unsigned gov_level(void);
+#define GOV_LEVEL_FULL   0u   /* Hermite taps, prefetch on                     */
+#define GOV_LEVEL_LINEAR 1u   /* linear taps  (measured 10.4% of block budget) */
+#define GOV_LEVEL_FLOOR  2u   /* linear taps, the guaranteed-fit level         */
 
 /* Transport control (driven by panel/pulse layer). */
 void  engine_write(engine_t *e);    /* enter WRITE at current head          */
