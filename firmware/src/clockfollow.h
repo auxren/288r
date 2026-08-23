@@ -25,9 +25,27 @@
  *
  * Ratio encoding: -8..-2 = divide, +1 = unity, +2..+8 = multiply.
  * All periods are in SAMPLES (the MARF's were in 32 kHz AFG ticks).
- */
+ *
+ * PASS THE TRUE FRAME RATE TO cf_init(), NOT SAMPLE_RATE_HZ.
+ *
+ * The module runs at ~47,984 Hz, not the 96,000 that board.h's SAMPLE_RATE_HZ
+ * claims. Measured three independent ways on the unit (2026-08-23): the SAI in
+ * master mode with MCKDIV=1 and NODIV=0 gives MCLK 12.286 MHz => Fs 47,990;
+ * the block rate counted against wall-clock is 2999/s; and the ratio of
+ * dl.wpos to g_blocks is exactly 16.00 samples per block, which needs no
+ * register decoding at all. 2999 x 16 = 47,984.
+ *
+ * That constant is deliberately NOT being corrected -- every ear-calibrated
+ * value in the firmware was tuned against current behaviour, and the owner is
+ * happy with how it sounds. But it means SAMPLE_RATE_HZ is a scaling constant,
+ * not a measurement, and everything here is genuinely time-based: pass it
+ * 96000 and the qualification window silently becomes 40 ms..4 s instead of
+ * 20 ms..2 s, and a clock would take four seconds to drop out instead of two.
+ * Use CF_TRUE_FS_HZ. */
 #ifndef CLOCKFOLLOW_H
 #define CLOCKFOLLOW_H
+
+#define CF_TRUE_FS_HZ  47984.0f
 
 #include <stdint.h>
 
@@ -56,6 +74,10 @@ typedef struct {
     int8_t   ratio;       /* current integer ratio (see encoding above)       */
 } clockfollow_t;
 
+/* fs: the TRUE frame rate -- CF_TRUE_FS_HZ, not SAMPLE_RATE_HZ. Values far
+ * above the measured rate are rejected and replaced with CF_TRUE_FS_HZ, so a
+ * miswiring degrades to correct timing rather than to a silently doubled
+ * window. */
 void cf_init(clockfollow_t *cf, float fs);
 
 /* A clock edge arrived, `dt` samples after the previous one. Returns 1 if the

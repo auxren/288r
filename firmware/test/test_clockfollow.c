@@ -17,7 +17,7 @@ static void ck(const char *name, int cond) {
     if (!cond) fails++;
 }
 
-#define FS 96000.0f
+#define FS CF_TRUE_FS_HZ   /* the TRUE rate, not SAMPLE_RATE_HZ */
 
 int main(void)
 {
@@ -69,6 +69,20 @@ int main(void)
             held = r;
         }
         ck("knob on a zone boundary does not chatter", !chattered);
+    }
+
+    /* ---------- the rate guard ---------- */
+    {
+        clockfollow_t a, b;
+        cf_init(&a, CF_TRUE_FS_HZ);
+        cf_init(&b, 96000.0f);          /* the mistake this guard exists for */
+        ck("being handed SAMPLE_RATE_HZ does not double the windows",
+           a.min_period == b.min_period && a.max_period == b.max_period
+           && a.timeout == b.timeout);
+        ck("qualification window is 20 ms at the true rate",
+           a.min_period == (uint32_t)(0.020f * CF_TRUE_FS_HZ));
+        ck("dropout is 2 s at the true rate",
+           a.timeout == (uint32_t)(2.0f * CF_TRUE_FS_HZ));
     }
 
     /* ---------- period tracking ---------- */

@@ -86,7 +86,11 @@ uint32_t cf_update_period(uint32_t period, uint32_t delta)
 
 void cf_init(clockfollow_t *cf, float fs)
 {
-    if (fs < 1000.0f) fs = 96000.0f;
+    /* Guard against being handed SAMPLE_RATE_HZ (96000) by mistake: the module
+     * actually runs at ~47,984 Hz, and taking the nominal value would double
+     * every window in here. Anything implausibly far above the real rate is
+     * treated as that mistake. */
+    if (fs < 1000.0f || fs > CF_TRUE_FS_HZ * 1.5f) fs = CF_TRUE_FS_HZ;
     cf->period     = 0u;
     cf->since      = 0u;
     cf->locked     = 0u;
