@@ -287,6 +287,7 @@ static volatile uint8_t pc_cycle_now = 1;   /* cycle pos for pitch span   */
  * so 0.005 is ~5 Hz. Triangle rather than sine: constant slew rate, so the load
  * it produces is the same on every frame of the cycle instead of peaking at the
  * zero crossing. */
+volatile uint8_t g_dbg_force_trig  __attribute__((used)) = 0u;  /* 1=write 2=recirc */
 volatile float g_dbg_time_lfo      __attribute__((used)) = 0.0f;
 volatile float g_dbg_time_lfo_rate __attribute__((used)) = 0.005f;
 static   float g_dbg_lfo_ph = 0.0f;
@@ -1298,6 +1299,19 @@ int main(void)
                 }
             }
 
+            /* Bench-only: synthesise a transport press over SWD (1 = write,
+             * 2 = recirc). Drives the REAL looper state machine through the
+             * same edge inputs a panel press produces, rather than poking
+             * xport/window internals — so the window geometry, the seam splice
+             * and the declick are all set up exactly as they are in play. That
+             * is what makes a load measurement taken this way trustworthy: the
+             * expensive state (a loop playing under modulation) is the one this
+             * branch has never actually been measured in. */
+            if (g_dbg_force_trig) {
+                if (g_dbg_force_trig == 1u) { wr_edge = 1; wr_act = 1; }
+                else                        { rc_edge = 1; rc_act = 1; }
+                g_dbg_force_trig = 0u;
+            }
             looper_tick(&g_lp, &g_engine, pc.automode, pc.store_end_mode,
                         wr_edge, rc_edge, (int)rc_act, (int)arm_in, lp_sens);
             /* A transport transition just armed a declick (and possibly a
