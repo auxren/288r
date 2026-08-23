@@ -531,6 +531,25 @@ better engine; add new features/controls/modulation only *after* the clone is na
   combined — i.e. the cost is the core per-sample path, not a feature. Optimisation work is
   on branch `isr-budget` (PR #34, rc — NOT verified on hardware; its own `make wcet` reports
   a 165% worst-case projection against a 90% target). Clock-sync work is on `clock-sync`.
+- **RC BRANCH `rc` / PR #35 (2026-08-23) — flashed and hardware-verified, awaiting the ear test.**
+  Combines the ISR-budget work with CLOCKED MODE. Measured on the unit with the debugger
+  hands-off: peak **111% -> 74%** (TIME/recirc), **91%** worst case in pitch at forced ratio
+  3.99, no deadline misses at any AA band edge (1.40/2.00/2.83 swept via `g_dbg_ratio_force`),
+  governor at level 0 (full quality), `tick_gap` 1754 -> 13. Clocked mode locks a 10 Hz clock
+  at 4800 samples +/-0.1%.
+  **MEASUREMENT TRAP (cost hours):** `isr_pk` read a false 99% because the DEBUGGER'S OWN SWD
+  access inflates the block it lands in. Read the peak only after a QUIET window with no SWD
+  traffic. Both `isr_pk` and the governor peak are never-reset latches — reset before trusting.
+  **STRUCT OFFSET TRAP:** offsets must come from the TARGET compiler; a host-built `offsetof`
+  is wrong wherever a pointer is involved (8 vs 4 bytes). Cost three wrong conclusions.
+  Clocked-mode faults found by patching a REAL clock, both fixed: the entry gesture let the
+  first pulses through as transport and CAPTURED A LOOP (module played a silent window — dry
+  only, every mode; jacks are now withheld from the FIRST coincident pair), and it ran in
+  pitch/string mode where the multiplier is depth/damping (now TIME-gated).
+  **STILL OPEN:** 26 pitch-mode overruns seen in normal use that a forced-ratio sweep could
+  NOT reproduce (a transition, likely the mode switch — `gov.over` at g_gov+0x38 is the
+  instrument); the adversarial review's critical governor finding (preset save -> panic) is
+  un-retested; `make wcet` projects 165% vs the measured 74/91% and the two need reconciling.
 - **Three pulse input jacks (reference):** PG10/11/12 = write / recirc / arm. Each duplicates a
   panel action, edge-latched at block rate; arm fires a loop capture regardless of arm state.
   No clock function today — that is what clocked mode adds.
