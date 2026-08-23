@@ -586,6 +586,16 @@ features enter via gestures, rear DIPs, presets, and context-unused controls (th
 string-mode pattern). Clone-first semantics stay intact: every no-new-UI home below
 leaves the panel legend true.
 
+### Ready to build now
+
+**Clocked mode (external clock sync)** — full spec at the end of this file
+("Clocked mode — external clock sync"). Entry is a patch gesture borrowed from
+the MARF (clock into BOTH write and recirc pulse jacks); the multiplier becomes
+an integer /8..x8 ratio anchored to the printed legend; CYCLE and octave stay
+multiplicative as they already are; tap phases become grid subdivisions. Reuses
+the MARF's host-tested `clockfollow.c`. Decided and sequenced — this is the one
+to pick up first.
+
 ### Next-cycle trio (fits current budget, no panel changes)
 
 | Feature | Eventide lineage | UI home | Notes |
@@ -740,3 +750,106 @@ multi-master + codec-share soak needs the wire.
 - [ ] Codec-share soak: boot torture + preset storms while audio runs.
 - [ ] 206e (the LEM preset manager) quirks — 2WIRELESS has special startup handling
   ("free 206e when starting up"); read that path before testing against a 206e.
+
+## Clocked mode — external clock sync (specced 2026-08-22, ready to build)
+
+**Status: designed, not implemented.** Everything below is decided; the next
+firmware session can build it. Host-testable end to end except the jack wiring.
+
+### Entry: bridge the clock into BOTH transport pulse jacks
+
+No menu, no DIP, no gesture to memorise: **patch the clock into the write AND
+recirc pulse jacks at once**. The MARF uses exactly this idiom (a clock into
+both Start and Stop = a stream of advance pulses) and it works for the same
+reason here — write and recirc are *contradictory* transport commands, so a
+pulse arriving on both within the same tick is meaningless as transport and
+cannot be anyone's intent except this. The patch declares the mode.
+
+Detection (panel tick, `main.c`): both pulse-latch bits 0 and 1 set on the same
+tick, N times running (N=3) -> enter clocked mode. Fall out on the clock-follow
+timeout (below), never on a single missed pulse.
+
+Leaves the **arm** jack (bit 2) free, so loop capture still has its trigger.
+
+### The clock law: reuse the MARF's `clockfollow.c`
+
+It is pure (its only include is its own header), host-tested, and already
+carries the details that are easy to get wrong:
+
+- `CF_MIN_PERIOD` / `CF_MAX_PERIOD` qualification — a stray pulse cannot lock it
+- `CF_TIMEOUT_MS` (2 s) with no pulse -> free-run, knob resumes control
+- `cf_update_period()` — the smoothing that stops interval jitter zippering
+- `cf_ratio_from_knob()` — zone selection **with hysteresis**, so a knob resting
+  on a boundary does not flicker between ratios
+
+Port note: its constants are in the MARF's 32 kHz AFG ticks; re-express in
+samples at `SAMPLE_RATE_HZ`. Vendor a copy rather than reaching across repos.
+
+### Controls: everything is already multiplicative
+
+The base-delay chain today is
+`base = base_boot x extend x octave x cycle`, then `delay_i = base x mult x phase_i`.
+Clocked mode changes exactly ONE term: `base_boot` becomes the measured clock
+period. Nothing else in the engine changes.
+
+| Control | Free-run | Clocked |
+|---|---|---|
+| multiplier knob | continuous 0.4x..1.6x | **integer ratio /8 .. x8**, x1 at the printed "1" |
+| CYCLE 3-way | x1 / x0.5 / x0.25 | unchanged — window spans 1, 1/2 or 1/4 of the ratio'd clock |
+| octave switch | x1 / x2 | unchanged |
+| rear DIP1 extend | x4 | unchanged |
+| tap phases (presets) | fractions of the cycle | **grid subdivisions** — this is the payoff |
+
+**Ratio zones belong in PANEL-LEGEND space, not raw counts.** The MARF anchors
+zones to measured raw ADC values per board revision because it has no
+calibration curve. We do: `cal_knob_panel_mult(raw)` already maps the knob onto
+the printed 0.4..1.6 legend (7-point owner-measured). Define the zones on that
+output and they are hardware-independent and inherit the existing calibration:
+
+    legend 0.4 .............. 1.0 .............. 1.6
+           /8   /7 ... /2   [ x1 ]   x2 ... x7   x8
+
+i.e. `[0.4, 1.0)` split into 7 bands for /8../2, a band centred exactly on the
+printed 1.0 for x1, `(1.0, 1.6]` split into 7 for x2..x8. Hysteresis ~0.015
+legend units (mirrors `CF_HYST`).
+
+### Clamping, and refusing to lie
+
+`taps_set_base_delay()` already rescales live at fixed rate with no glitch —
+the CYCLE/octave switches do it today, so the mechanism is proven. The product
+still has to fit `DELAY_LEN` (1,835,008 samples, ~19.1 s), and
+`engine_clamp_base()` is already in that call path.
+
+But clamping silently is wrong here: a 2 s clock at x8 x octave x extend asks
+for ~128 s and would just quietly stop getting longer. **If the requested
+window exceeds the buffer, do not lock** — hold the previous ratio and signal
+it (a READY-lamp blink pattern is the obvious channel). Better to say "no" than
+to be a third of the tempo the player expects.
+
+### Interactions that must be honoured
+
+- **Varispeed owns the multiplier on a playing loop** (tape-motor, #9). Clocked
+  mode applies in WRITE; during loop playback the multiplier stays motor-only
+  and the clock does not fight it.
+- **Pitch and string modes** already repurpose the multiplier knob; clocked mode
+  is TIME-mode only.
+- Entry/exit both change the base delay -> both go through the transport
+  declick path, or they will click (see #27-#31).
+
+### Build order (all host-testable)
+
+1. Vendor `clockfollow.{c,h}`, re-express ticks as samples, port its suite.
+2. `cf_ratio_from_knob()` zones re-anchored to `cal_knob_panel_mult()` output +
+   a test pinning the legend marks (x1 must sit ON the printed 1).
+3. Pulse-pair detection + mode state machine, driven from the existing
+   block-rate pulse latch (bits 0/1). Pure function, table-tested.
+4. Wire `base_boot` <- clock period; verify no glitch on lock/unlock, and that
+   over-range requests refuse rather than clamp.
+5. Bench: real clock in, confirm lock, ratio stepping, dropout to free-run.
+
+### Later: the same law from the preset bus
+
+A 225e broadcasts **MIDI clock** (0xF8/0xFA/0xFC) on the 200e bus. Once that
+attachment lands (see "200e preset-bus attachment"), it can feed the identical
+`clockfollow` law with no jack sacrificed — the module simply knows the tempo
+of the case it is in. Two inlets, one clock law.

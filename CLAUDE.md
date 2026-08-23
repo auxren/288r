@@ -493,6 +493,22 @@ better engine; add new features/controls/modulation only *after* the clone is na
   with bus addresses; 200e side is ~5 V — do NOT wire copper-to-copper). Full spec + wire-up
   checklist + firmware plan (`bus200e.c`, ENGC slave RX, ARLO-retry on codec ops,
   BUS200E_ENABLE gate) in DESIGN.md "200e preset-bus attachment". Not yet wired/implemented.
+- **CLOCKED MODE SPECCED + ROADMAPPED (2026-08-22) — build this next.** External clock
+  sync, fully designed in DESIGN.md "Clocked mode — external clock sync": entry = patch the
+  clock into BOTH write and recirc pulse jacks (the MARF idiom — the pair is contradictory as
+  transport, so it can't be anyone's intent except this; leaves the arm jack free). Reuses the
+  MARF's pure, host-tested `clockfollow.c` (qualification bounds, 2 s dropout, interval
+  smoothing, ratio hysteresis) — vendor it and re-express its 32 kHz ticks as samples. The
+  multiplier becomes an integer /8..x8 ratio with x1 ON the printed "1", and the zones are
+  anchored in PANEL-LEGEND space via the existing `cal_knob_panel_mult()` (hardware-independent
+  — better than the MARF's per-rev raw anchors). Nothing else in the engine changes: only
+  `base_boot` becomes the clock period, since octave/cycle/extend/mult are already multiplicative.
+  Over-range requests must REFUSE to lock rather than clamp silently. TIME mode only (varispeed
+  owns the multiplier on a playing loop); entry/exit must go through the transport declick.
+  Build order + test plan in the spec. Later the same law can take MIDI clock off the 200e bus.
+- **Three pulse input jacks (reference):** PG10/11/12 = write / recirc / arm. Each duplicates a
+  panel action, edge-latched at block rate; arm fires a loop capture regardless of arm state.
+  No clock function today — that is what clocked mode adds.
 - The interpolation PATCH (`re/patches/`) remains the drop-in fix for the *stock* firmware.
 
 ## Key technical facts
