@@ -316,6 +316,21 @@ float engine_process(engine_t *e, float input, float time_raw01)
     return engine_process_multi(e, input, time_raw01, chan);
 }
 
+/* Weak default for the governor accessor (see engine.h): full quality. When
+ * workstream B's governor.c lands it provides the strong definition and this
+ * one drops out at link time — the engine never has to know whether the
+ * governor exists. */
+__attribute__((weak)) unsigned gov_level(void) { return GOV_LEVEL_FULL; }
+
+void engine_process_block(engine_t *e, const float *in, float time_raw01,
+                          const float *fm, float (*chan_out)[NUM_TAPS], unsigned n)
+{
+    for (unsigned k = 0; k < n; k++) {
+        if (fm) e->time_fm = fm[k];
+        (void)engine_process_multi(e, in[k], time_raw01, chan_out[k]);
+    }
+}
+
 /* Arm the output crossfade. declick_hold[] already carries the previous
  * sample's tap values (tracked every sample the fade is idle), so the outgoing
  * side starts exactly where the audio was - no step at the start of the fade
