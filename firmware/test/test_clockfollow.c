@@ -145,6 +145,41 @@ int main(void)
         on = cm_update(&cm, 1, 1, 0);
         ck("a lone transport press breaks the run", !on);
 
+        /* ---- UNPLUGGING ONE JACK ---- the case the first design got wrong.
+         * The clock keeps running into the surviving jack, so no pairs arrive.
+         * Without unpaired-run detection the module sits engaged for the whole
+         * dropout timeout swallowing that jack, then drops out and lets the
+         * pulse train retrigger the transport several times a second. */
+        cm_init(&cm);
+        for (unsigned i = 0; i < CM_ENTER_PAIRS; i++) cm_update(&cm, 1, 1, 0);
+        ck("engaged with both cables in", cm_swallows_pulse_jacks(&cm));
+        {
+            int still = 1;
+            for (unsigned i = 0; i < CM_EXIT_SINGLES; i++)
+                still = cm_update(&cm, 0, 1, 0);   /* write unplugged, recirc clocks on */
+            ck("unplugging ONE jack exits within a few clocks", !still);
+            ck("surviving jack is handed back to transport", !cm_swallows_pulse_jacks(&cm));
+        }
+
+        /* a single split pair (edges either side of a tick boundary) is jitter,
+         * not an unplug, and must NOT drop the mode */
+        cm_init(&cm);
+        for (unsigned i = 0; i < CM_ENTER_PAIRS; i++) cm_update(&cm, 1, 1, 0);
+        cm_update(&cm, 1, 0, 0);              /* pair split across the boundary */
+        cm_update(&cm, 0, 1, 0);
+        int held_on = cm_update(&cm, 1, 1, 0);
+        ck("a split pair does not drop the mode", held_on);
+
+        /* and the run must RESET on a good pair, so intermittent splits over a
+         * long session never accumulate into a spurious exit */
+        cm_init(&cm);
+        for (unsigned i = 0; i < CM_ENTER_PAIRS; i++) cm_update(&cm, 1, 1, 0);
+        for (int i = 0; i < 30; i++) {
+            cm_update(&cm, 1, 0, 0);          /* one split ... */
+            cm_update(&cm, 1, 1, 0);          /* ... then a good pair */
+        }
+        ck("occasional splits never accumulate into an exit", cm_swallows_pulse_jacks(&cm));
+
         /* exit is immediate when the clock stops */
         cm_init(&cm);
         for (unsigned i = 0; i < CM_ENTER_PAIRS; i++) cm_update(&cm, 1, 1, 0);

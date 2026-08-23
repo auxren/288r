@@ -4,6 +4,7 @@
 void cm_init(clockmode_t *cm)
 {
     cm->pairs = 0u;
+    cm->singles = 0u;
     cm->engaged = 0u;
     cm->was_paired = 0u;
 }
@@ -13,9 +14,22 @@ int cm_update(clockmode_t *cm, int wr_edge, int rc_edge, int clock_lost)
     const int paired = (wr_edge && rc_edge);
 
     if (cm->engaged) {
-        /* Leave the moment the clock goes away. A module stuck in clocked mode
-         * with no clock has a dead delay control, which reads as a fault. */
-        if (clock_lost) { cm->engaged = 0u; cm->pairs = 0u; }
+        /* Leave the moment the clock goes away entirely. A module stuck in
+         * clocked mode with no clock has a dead delay control. */
+        if (clock_lost) { cm->engaged = 0u; cm->pairs = 0u; cm->singles = 0u; }
+        else if (paired) {
+            cm->singles = 0u;              /* still both cables: stay engaged  */
+        } else if (wr_edge || rc_edge) {
+            /* An edge on ONE jack only. One of these is jitter; a run of them
+             * means a cable came out, and the surviving jack must go back to
+             * being a transport input promptly -- otherwise it spends the whole
+             * dropout timeout swallowed and then starts retriggering the
+             * transport on every clock. */
+            if (cm->singles < 0xFFu) cm->singles++;
+            if (cm->singles >= CM_EXIT_SINGLES) {
+                cm->engaged = 0u; cm->pairs = 0u; cm->singles = 0u;
+            }
+        }
         cm->was_paired = (uint8_t)paired;
         return cm->engaged ? 1 : 0;
     }

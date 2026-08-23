@@ -21,6 +21,12 @@
  * clock produces them forever. */
 #define CM_ENTER_PAIRS   3u
 
+/* Unpaired pulses tolerated before handing the jacks back. Mirrors the entry
+ * run for the same reason: two cables fed from one clock can have their edges
+ * land either side of a panel-tick boundary, so a single unpaired tick is
+ * jitter, not intent. A RUN of them means a cable came out. */
+#define CM_EXIT_SINGLES  3u
+
 /* Coincident-edge tolerance is implicit: both edges must be latched by the same
  * tick. At the panel tick rate (~5 ms) that is far wider than any skew between
  * two jacks fed from one clock, and far narrower than a human pressing two
@@ -28,6 +34,7 @@
 
 typedef struct {
     uint8_t pairs;      /* consecutive coincident write+recirc edges          */
+    uint8_t singles;    /* consecutive UNPAIRED edges while engaged           */
     uint8_t engaged;    /* clocked mode active                                */
     uint8_t was_paired; /* last tick was a pair (for run detection)           */
 } clockmode_t;
@@ -39,10 +46,21 @@ void cm_init(clockmode_t *cm);
  *   clock_lost       : the clock-follow dropout fired (see cf_tick)
  * Returns 1 while clocked mode is engaged.
  *
- * NOTE the asymmetry: entry needs a RUN of coincidences, exit happens the
- * moment the clock stops. Getting in should be deliberate; getting out must be
- * immediate, because a module stuck in clocked mode with no clock is a module
- * whose delay knob does nothing. */
+ * THREE ways out, and the middle one is the important one:
+ *   1. the clock stops entirely      -> `clock_lost` (the 2 s dropout)
+ *   2. ONE JACK IS UNPLUGGED         -> a run of unpaired edges
+ *   3. (never) some timeout while still paired -- a valid clock keeps it.
+ *
+ * Case 2 exists because the obvious design gets it wrong. If the only exit is
+ * the dropout timeout, pulling one cable leaves the OTHER jack still clocking:
+ * no more pairs arrive, so the module sits engaged for the full timeout with
+ * that jack's pulses swallowed and doing nothing, and then drops out and lets
+ * the same pulse train hammer the transport several times a second. Watching
+ * for unpaired edges ends it within a few clocks instead, so the jacks go back
+ * to being transport inputs while the player still has their hand on the cable.
+ *
+ * Entry needs a RUN of coincidences (deliberate); exit needs a RUN of
+ * non-coincidences (robust to a pair being split across a tick boundary). */
 int  cm_update(clockmode_t *cm, int wr_edge, int rc_edge, int clock_lost);
 
 /* True when the PULSE JACKS should be withheld from the looper, because their
