@@ -506,6 +506,31 @@ better engine; add new features/controls/modulation only *after* the clone is na
   Over-range requests must REFUSE to lock rather than clamp silently. TIME mode only (varispeed
   owns the multiplier on a playing loop); entry/exit must go through the transport declick.
   Build order + test plan in the spec. Later the same law can take MIDI clock off the 200e bus.
+- **THE MODULE RUNS AT 48 kHz, NOT 96 kHz (measured 2026-08-23, owner decision: LEAVE IT).**
+  `SAMPLE_RATE_HZ 96000` in board.h is wrong and has always been wrong. Confirmed three
+  independent ways on the unit over SWD: (a) SAI1 Block A in MASTER mode, `MCKDIV=1`,
+  `NODIV=0` -> MCLK = SAI_CK/(MCKDIV*2) = 12.286 MHz, and MCLK = 256*Fs -> **47,990 Hz**;
+  (b) `g_blocks` counted against wall-clock = **2999 blocks/s**; (c) the ratio of `dl.wpos`
+  (advances once per SAMPLE) to `g_blocks` = **exactly 16.00 samples/block**, which assumes
+  no register semantics at all. 2999 x 16 = **47,984 Hz**. This is bench-session-8's
+  unresolved "head advance vs block clock disagree by 2x" mystery, finally explained — the
+  project guessed the error went the other way ("196KHz may not be a typo").
+  **DECISION (owner): do NOT correct it.** Every ear-calibrated value — the 7-point
+  multiplier taper, sens thresholds, FM knee, declick/splice/glide times — was tuned against
+  current behaviour, and the module sounds right. Correcting the constant would move all of
+  them at once. Consequences to KNOW rather than fix: every ms/Hz-denominated constant is 2x
+  out (delays twice their label, `BANDWIDTH_LIMIT_HZ 11025` is really ~5.5 kHz, KS an octave
+  low, the buffer is ~38 s not 19.1 s). **Anything NEW that converts seconds to samples must
+  use the true rate** — `clockfollow.h` defines `CF_TRUE_FS_HZ 47984.0f` and guards against
+  being handed 96000. Also note: correcting it would NOT help the ISR budget (measured: halving
+  the delay span changed load by -0.1%), and running at a genuine 96 kHz would DOUBLE the load.
+- **ISR BUDGET IS EXCEEDED (measured 2026-08-23): ~110-117% in TIME/recirc with a loop.**
+  Budget = 3501 isr_pk units (56,016 cycles/block, measured from the 2999 blocks/s). This is
+  the "fizzy static in the repeats". Attribution measured live: Hermite on the 8 tap reads
+  = **10.4%** (forcing linear took 110% -> exactly 100%); varispeed 0.1%; LED+EOC+FM 0.6%
+  combined — i.e. the cost is the core per-sample path, not a feature. Optimisation work is
+  on branch `isr-budget` (PR #34, rc — NOT verified on hardware; its own `make wcet` reports
+  a 165% worst-case projection against a 90% target). Clock-sync work is on `clock-sync`.
 - **Three pulse input jacks (reference):** PG10/11/12 = write / recirc / arm. Each duplicates a
   panel action, edge-latched at block rate; arm fires a loop capture regardless of arm state.
   No clock function today — that is what clocked mode adds.
