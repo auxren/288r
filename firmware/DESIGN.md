@@ -826,6 +826,49 @@ window exceeds the buffer, do not lock** — hold the previous ratio and signal
 it (a READY-lamp blink pattern is the obvious channel). Better to say "no" than
 to be a third of the tempo the player expects.
 
+### Leaving clocked mode
+
+Three exits, and the middle one is the one that is easy to get wrong:
+
+1. **The clock stops entirely** — the 2 s dropout. The window holds its last
+   clock-derived length until then, so a momentarily interrupted clock does not
+   make the delay jump.
+2. **One jack is unplugged** — detected as a RUN of unpaired edges, not by the
+   dropout. This case matters: the clock keeps running into the surviving jack,
+   so no pairs arrive. If the only exit were the timeout, the module would sit
+   engaged for a full two seconds swallowing that jack (its pulses doing
+   nothing), then drop out and let the same pulse train retrigger the transport
+   several times a second. Watching for unpaired edges ends it within a few
+   clocks, so the jack returns to being a transport input while the player still
+   has their hand on the cable.
+3. Never on a timeout while pairs are still arriving — a valid clock keeps it.
+
+Entry needs a run of coincidences (deliberate); exit needs a run of
+non-coincidences (robust to a pair being split across a tick boundary, which
+happens when two cables from one clock land either side of a panel tick). The
+exit run resets on every good pair, so occasional splits over a long session
+never accumulate into a spurious drop-out.
+
+On exit the window returns to the knob-derived length. That is a base-delay
+change like any other and goes through `taps_set_base_delay()` and the transport
+declick; it must not be a bare assignment.
+
+### What clocked mode does NOT take over
+
+It sets the delay's **window length**. It does not touch the transport.
+
+- **The red write/recirc momentaries keep working**, unchanged, including
+  hold-to-overdub and hold-write-to-save. `main.c` builds each transport action
+  as `pc.write_trig | bsp_pulse_in(n) | latched_edge`; clocked mode masks only
+  the JACK terms and passes the panel term straight through. Masking the whole
+  expression would kill the red switches whenever a clock is patched — the kind
+  of surprise that reads as a dead module. `cm_swallows_pulse_jacks()` is named
+  to make that unambiguous at the call site.
+- **The arm jack is untouched**, so pulse-driven capture still works.
+- **Sens auto-capture is untouched.**
+- Loops therefore behave exactly as they do now; they are simply sized to the
+  clock grid, and the preset tap phases become grid subdivisions.
+
 ### Interactions that must be honoured
 
 - **Varispeed owns the multiplier on a playing loop** (tape-motor, #9). Clocked
