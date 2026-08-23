@@ -272,6 +272,25 @@ static volatile uint8_t g_pitch_mode = 0;   /* tick-written, ISR-read */
 static volatile uint8_t pc_cycle_now = 1;   /* cycle pos for pitch span   */
 #endif
 
+/* Bench-only: an internal LFO on the delay-time control, so the cost of
+ * MODULATION can be measured with no hand on a knob and no CV patched.
+ *
+ * This exists because every load figure taken on this branch so far was taken
+ * with the multiplier STANDING STILL, and a still multiplier is the one case
+ * the tap-read window cache is built for: positions that walk forward a sample
+ * a frame. Modulation is what this engine is FOR, and it is also the condition
+ * that drags the read positions around fastest, so it has to be measured on
+ * purpose rather than assumed to be covered.
+ *
+ * g_dbg_time_lfo is depth in units of the 0..1 control range (0 = off);
+ * g_dbg_time_lfo_rate is phase per fast tick, and the fast tick runs at ~1 kHz,
+ * so 0.005 is ~5 Hz. Triangle rather than sine: constant slew rate, so the load
+ * it produces is the same on every frame of the cycle instead of peaking at the
+ * zero crossing. */
+volatile float g_dbg_time_lfo      __attribute__((used)) = 0.0f;
+volatile float g_dbg_time_lfo_rate __attribute__((used)) = 0.005f;
+static   float g_dbg_lfo_ph = 0.0f;
+
 /* preset-saved feedback: until this block count, the scan tick sparkles the
  * indicator LEDs pseudo-randomly and the ISR holds off its PA0/PA11 writes. */
 static volatile uint32_t g_twinkle_until = 0;
@@ -1082,6 +1101,14 @@ int main(void)
             if (raw < 0) raw = 0; else if (raw > 4095) raw = 4095;
             mult_filt += ((float)raw * (1.0f / 4095.0f) - mult_filt) * 0.04f;
             float t01 = pin_update(&g_mult_pin, mult_filt);
+            if (g_dbg_time_lfo > 0.0f) {          /* bench modulation load test */
+                float ph = g_dbg_lfo_ph + g_dbg_time_lfo_rate;
+                if (ph >= 1.0f) ph -= 1.0f;
+                g_dbg_lfo_ph = ph;
+                float tri = (ph < 0.5f) ? (ph * 4.0f - 1.0f) : (3.0f - ph * 4.0f);
+                t01 += g_dbg_time_lfo * tri;
+                if (t01 < 0.0f) t01 = 0.0f; else if (t01 > 1.0f) t01 = 1.0f;
+            }
             /* (The env->time self-modulation that once lived here was REMOVED
              * by owner decision, 2026-07-25 — see #15: violent at extremes,
              * blinded by output bleed on the sens pickup, and the field voted
