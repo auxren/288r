@@ -129,7 +129,20 @@ int main(void)
      * to the old behaviour, not refill DC_W words every frame. The bound is per
      * FRAME and must hold whatever the caller's batch size is, because the
      * block size is still an open question (contract blocker #0) — so drive it
-     * both ways. Direct costs 4 SDRAM words per frame; refills must cost less. */
+     * both ways. Direct costs 4 SDRAM words per frame; refills must cost less.
+     *
+     * QA 2026-08-23 — THE ACCOUNTING WAS HALF THE STORY. Fill traffic alone was
+     * compared against 4 words/frame, and the rate limiter does bound that at
+     * DC_W/DC_MIN_SPAN = 3. But a lane that is refused a refill does not stop
+     * reading: it falls through to the DIRECT 4-word stencil, and the two costs
+     * ADD. The honest figure is
+     *
+     *      total = fills * DC_W + 4 * (misses not served)
+     *
+     * and at a drift the line cannot outrun it exceeds 4.00 — i.e. the header's
+     * "cannot be worse than no cache, ... varispeed at the 4.0 rail" is false at
+     * exactly the rail it names. Both figures are printed below; the engine-level
+     * measurement and the enforcement live in test_isr_budget.c. */
     {
         int ok = 1;
         const unsigned batches[2] = { 1u, 32u };
@@ -141,13 +154,43 @@ int main(void)
                 for (unsigned k = 0; k < batches[b]; k++, frames++)
                     (void)probe(1000u + (frames % 8u) * 200u, DEEP, &ok);
             }
-            printf("      thrash (batch %2u): %u fills in %u frames"
-                   " = %.2f SDRAM words/frame\n", batches[b], c.fill, frames,
-                   (double)c.fill * DC_W / frames);
-            ck("runaway drift stays under the direct path's 4 words/frame",
-               (double)c.fill * DC_W / frames < 4.0);
+            double fillw = (double)c.fill * DC_W / frames;
+            double total = ((double)c.fill * DC_W
+                            + 4.0 * (double)(c.miss - c.fill)) / frames;
+            printf("      thrash (batch %2u): %u fills, %u misses in %u frames"
+                   " = %.2f fill + %.2f direct = %.2f SDRAM words/frame"
+                   " (direct path: 4.00)\n",
+                   batches[b], c.fill, c.miss, frames, fillw, total - fillw,
+                   total);
+            ck("refill traffic alone stays under 4 words/frame", fillw < 4.0);
         }
         ck("runaway drift: words still correct", ok);
+
+        /* The worst drift a shipped feature can produce: varispeed at the 4.0
+         * rail moves a tap's read position 4 samples per frame, which walks off
+         * a DC_W line in (DC_W-4)/4 = 23 frames while the rate limiter holds the
+         * refill for DC_MIN_SPAN = 32. The 9 frames in between are direct reads
+         * ON TOP of the fill. This is a measurement, not a threshold: it prints
+         * the number the design claim has to beat. */
+        {
+            unsigned frames = 0;
+            int ok2 = 1;
+            dc_init(&c);
+            /* a0 must stay inside the buffer (rule 5 declines at the ends
+             * without counting a miss, which would flatter the figure) and
+             * d_int must clear both halves of rule 1 for LEN 4096. */
+            while (frames < 3200u) {
+                dc_block_begin(&c, 1, 1u);
+                (void)probe(100u + (frames * 4u) % 3700u, 2000u, &ok2);
+                frames++;
+            }
+            double total = ((double)c.fill * DC_W
+                            + 4.0 * (double)(c.miss - c.fill)) / frames;
+            printf("      SUSTAINED drift 4/frame (varispeed rail):"
+                   " %.3f SDRAM words/frame vs 4.000 direct  %s\n",
+                   total, total >= 4.0 ? "<-- NO BETTER THAN NO CACHE" : "");
+            ck("drift-4 words are still correct", ok2);
+        }
     }
 
     /* ---- 6. lifetime expiry (rule 2) ---- */

@@ -107,14 +107,25 @@ int main(void)
     ck("a deferral never blocks a DROP (safety is not deferrable)",
        gov_step(&g, BUDGET) == 2u);
 
-    /* ---- 9. no flutter: a periodic mid-load must not toggle quality ----- */
+    /* ---- 9. no flutter: a periodic mid-load must not toggle quality -----
+     * QA 2026-08-23: this case used to run from level 0, where `level--` is
+     * unreachable and `level++` needs a load it never sees — so it asserted
+     * transitions == 0 about a governor that had no transition available to
+     * make. It could not fail, and a genuine flutter bug would have walked
+     * straight past it. Start from a DROPPED level, where recovery is live and
+     * the loop-rate spike lands in the dead band that is supposed to veto it. */
     gov_reset(&g, &c);
+    (void)gov_step(&g, 50000u);                 /* -> level 1: change possible */
+    ck("precondition: the governor is at a level it could climb out of",
+       g.level == 1u);
     unsigned changes_before = g.transitions;
     for (int i = 0; i < 30000; i++) gov_step(&g, (i % 100) ? 30000u : 40000u);
     printf("    transitions across 30000 blocks of periodic load: %u\n",
            g.transitions - changes_before);
     ck("a periodic load (loop-rate spikes) does not oscillate the level",
        g.transitions - changes_before == 0u);
+    ck("...and it is still parked one level down, not recovered by accident",
+       g.level == 1u);
 
     printf(fails ? "\nFAILED (%d)\n" : "\nALL PASS\n", fails);
     return fails ? 1 : 0;

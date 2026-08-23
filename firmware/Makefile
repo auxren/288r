@@ -28,7 +28,7 @@ ALL_SRC    := $(wildcard src/*.c)
 ENGINE_OBJ := $(patsubst src/%.c,build/%.o,$(ALL_SRC))
 TESTS      := $(wildcard test/test_*.c)
 
-.PHONY: test engine firmware clean
+.PHONY: test engine firmware clean cachecheck budget-strict
 .DEFAULT_GOAL := test
 
 ## ---- host unit tests -----------------------------------------------------
@@ -41,6 +41,43 @@ test:
 	  echo "== $$t =="; ./$$out || fail=1; \
 	done; \
 	exit $$fail
+
+## ---- dl_cache equivalence gate (QA, budget contract clause C-1) ----------
+# The CCM window cache is only allowed to change WHERE the delay-line words
+# came from, never WHICH words they are. test_dl_cache proves that per stencil;
+# this proves it for the whole instrument, by running the 200k-frame golden
+# scenario (both loop-window orientations, varispeed 0.25..4.0, seam-adjacent
+# reads, sub-block tap delays, overdub, FM, crush) with the cache compiled IN
+# and compiled OUT and requiring the output and the recorded buffer to hash
+# identically. Runs in CI: it is the only check that can catch a coherence rule
+# being weakened, because a stale word changes the audio and nothing else.
+cachecheck:
+	@mkdir -p build
+	@$(CC_HOST) -std=c11 -Wall $(INC) test/test_golden.c $(LIB_SRC) -lm \
+	    -o build/golden_cache_on
+	@$(CC_HOST) -std=c11 -Wall $(INC) -DDL_CACHE_ENABLE=0 test/test_golden.c \
+	    $(LIB_SRC) -lm -o build/golden_cache_off
+	@$(CC_HOST) -std=c11 -Wall $(INC) test/test_isr_budget.c $(LIB_SRC) -lm \
+	    -o build/wc_cache_on
+	@$(CC_HOST) -std=c11 -Wall $(INC) -DDL_CACHE_ENABLE=0 test/test_isr_budget.c \
+	    $(LIB_SRC) -lm -o build/wc_cache_off
+	@./build/golden_cache_on  | grep 'out hash' >  build/hash_on.txt
+	@./build/wc_cache_on      | grep 'wc hash'  >> build/hash_on.txt
+	@./build/golden_cache_off | grep 'out hash' >  build/hash_off.txt
+	@./build/wc_cache_off     | grep 'wc hash'  >> build/hash_off.txt
+	@diff -u build/hash_off.txt build/hash_on.txt \
+	  && echo "dl_cache: audio bit-identical with the cache compiled in and out" \
+	  || (echo "dl_cache CHANGES THE AUDIO — a coherence rule is broken"; exit 1)
+
+## ---- the budget contract as a hard gate (QA) -----------------------------
+# test_isr_budget reports the unmet contract items as GAPs so the normal gate
+# stays usable; this target makes them failures. Flip CI over to it once the
+# governor has a real floor level and dl_cache's rail behaviour is fixed.
+budget-strict:
+	@mkdir -p build
+	$(CC_HOST) -std=c11 -Wall -Wextra $(INC) -DISR_BUDGET_STRICT \
+	    test/test_isr_budget.c $(LIB_SRC) -lm -o build/test_isr_budget_strict
+	./build/test_isr_budget_strict
 
 ## ---- cross-compile engine for the target (compile-only proof) ------------
 engine: $(ENGINE_OBJ)
