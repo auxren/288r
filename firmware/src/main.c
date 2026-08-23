@@ -28,6 +28,8 @@ void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n);
 #include "pitch_taps.h"
 #include "ks.h"
 #include "looper.h"
+#include "clockfollow.h"
+#include "clock_mode.h"
 #include "fast_math.h"
 #include "calibration.h"
 #include "storage.h"
@@ -101,6 +103,18 @@ static unsigned    g_led_step;
 
 #if PANEL_SCAN_ENABLE && PANEL_TRANSPORT_ENABLE
 static xport_trig_t g_xtrig;
+
+/* CLOCKED MODE (DESIGN.md "Clocked mode — external clock sync").
+ * A clock patched into BOTH pulse jacks declares the mode: that pair is
+ * contradictory as transport, so coincident edges cannot be anything else.
+ * Everything here runs at panel-tick rate, so clocked mode costs the audio
+ * ISR nothing -- which matters given how little budget headroom there is. */
+static clockfollow_t g_cf;
+static clockmode_t   g_cm;
+static uint32_t      g_cf_last_blocks;
+static float         g_cf_base_free;      /* knob-derived base, restored on exit */
+static volatile uint16_t g_cf_knob_raw;   /* published by the fast tick, read by
+                                             the panel tick for the ratio zones */
 #endif
 
 #if PANEL_SCAN_ENABLE && PRESET_ENABLE
@@ -899,6 +913,8 @@ int main(void)
             .onset_ratio   = LP_ONSET_RATIO,
         };
         looper_init(&g_lp, &lcfg);
+        cf_init(&g_cf, CF_TRUE_FS_HZ);   /* the TRUE rate, not SAMPLE_RATE_HZ */
+        cm_init(&g_cm);
         g_engine.od_decay = OD_DECAY;
     }
 #endif
@@ -974,6 +990,7 @@ int main(void)
              * printed 0.4/0.6/0.8/1.0/1.2/1.4/1.6 marks read exactly true.
              * (Replaces the KNOB_ADC_LO/HI span stretch — the old 620 floor no
              * longer matches the hardware and ate the bottom fifth of travel.) */
+            g_cf_knob_raw = (uint16_t)knob_raw;   /* for clocked-mode ratio zones */
             uint32_t knob = (uint32_t)(cal_knob01((uint16_t)knob_raw) * 4095.0f);
             int32_t  raw;
             /* attenuverter filter runs in BOTH modes (adversarial-verify find:
@@ -1169,6 +1186,56 @@ int main(void)
 #else
             float lp_sens = g_env;
 #endif
+            /* ---- CLOCKED MODE ------------------------------------------
+             * The JACK contribution only: pc.write_trig / pc.recirc_trig are
+             * the red momentaries and must keep working while clocked, or
+             * patching a clock would kill the panel switches. */
+            {
+                const int jack_w = (int)((unsigned)bsp_pulse_in(0) | ((pl >> 0) & 1u));
+                const int jack_r = (int)((unsigned)bsp_pulse_in(1) | ((pl >> 1) & 1u));
+                const uint32_t now = g_blocks;
+                const uint32_t elapsed = (now - g_cf_last_blocks) * BLOCK_FRAMES;
+
+                /* A coincident pair is a clock tick; feed the period tracker. */
+                if (jack_w && jack_r) {
+                    if (g_cf_last_blocks != 0u) (void)cf_pulse(&g_cf, elapsed);
+                    g_cf_last_blocks = now;
+                }
+                /* One panel tick is 15 blocks (see the slow-tick gate above),
+                 * so that many frames have elapsed since the last call. */
+                const int lost = !cf_tick(&g_cf, (uint32_t)(BLOCK_FRAMES * 15u));
+                const int engaged = cm_update(&g_cm, jack_w, jack_r, lost);
+
+                if (engaged && g_cf.period) {
+                    /* The multiplier becomes an INTEGER ratio, anchored to the
+                     * printed legend (x1 sits on the printed "1"). */
+                    g_cf.ratio = cf_ratio_from_legend(cal_knob_panel_mult(g_cf_knob_raw), g_cf.ratio);
+                    uint32_t want = cf_cycle_samples(g_cf.period, g_cf.ratio);
+                    float capped = engine_clamp_base((float)want, DELAY_LEN, 1.6f);
+                    /* REFUSE rather than clamp: silently playing a third of the
+                     * asked-for tempo is worse than not locking at all. */
+                    if (want && (float)want <= capped + 0.5f) {
+                        if (g_cf_base_free <= 0.0f) g_cf_base_free = g_engine.taps.base_delay;
+                        taps_set_base_delay(&g_engine.taps, (float)want);
+                    }
+                } else if (g_cf_base_free > 0.0f) {
+                    /* Back to knob control. This is a base-delay change like any
+                     * other, so it goes through taps_set_base_delay and the
+                     * transport declick rather than a bare assignment. */
+                    taps_set_base_delay(&g_engine.taps, g_cf_base_free);
+                    g_cf_base_free = 0.0f;
+                }
+
+                /* Once engaged the jacks are clock ticks, not transport. Swallow
+                 * ONLY the jack terms; the momentaries pass through untouched. */
+                if (cm_swallows_pulse_jacks(&g_cm)) {
+                    wr_edge = (pc.write_trig  && !g_xtrig.prev_w);
+                    rc_edge = (pc.recirc_trig && !g_xtrig.prev_r);
+                    rc_act  = pc.recirc_trig;
+                    arm_in  = (unsigned)bsp_pulse_in(2) | ((pl >> 2) & 1u);
+                }
+            }
+
             looper_tick(&g_lp, &g_engine, pc.automode, pc.store_end_mode,
                         wr_edge, rc_edge, (int)rc_act, (int)arm_in, lp_sens);
             /* A transport transition just armed a declick (and possibly a
