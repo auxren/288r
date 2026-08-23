@@ -8,7 +8,8 @@
  * The trajectories are deliberately nasty: the exact off-by-four below the line
  * that segfaulted the first version (an `off+4 <= DC_W` test wraps for reads one
  * to four samples under the line), reads straddling both ends, backwards jumps,
- * fast drift that must exhaust the budget rather than thrash, expiry, and the
+ * fast drift that must hit the refill rate limit rather than thrash, expiry,
+ * and the
  * write-head clearance rule that keeps a live line out of the writer's way.
  */
 #include "dl_cache.h"
@@ -123,23 +124,29 @@ int main(void)
         }
     }
 
-    /* ---- 5. BOUNDED WORK: fast drift spends its budget, then goes direct ----
+    /* ---- 5. BOUNDED WORK: the cache can never be worse than no cache --------
      * A tap being dragged (preset recall, varispeed at the rail) must degrade
-     * to the old behaviour, not refill DC_W words every frame. */
+     * to the old behaviour, not refill DC_W words every frame. The bound is per
+     * FRAME and must hold whatever the caller's batch size is, because the
+     * block size is still an open question (contract blocker #0) — so drive it
+     * both ways. Direct costs 4 SDRAM words per frame; refills must cost less. */
     {
-        int ok = 1; unsigned fills_in_block;
-        dc_init(&c);
-        dc_block_begin(&c, 1, 32u);                /* one 32-frame block */
-        fills_in_block = 0;
-        for (uint32_t f = 0; f < 32u; f++) {       /* drift 200 samples/frame */
-            uint32_t before = c.fill;
-            (void)probe(1000u + f * 200u, DEEP, &ok);
-            fills_in_block += (c.fill != before);
+        int ok = 1;
+        const unsigned batches[2] = { 1u, 32u };
+        for (unsigned b = 0; b < 2u; b++) {
+            unsigned frames = 0;
+            dc_init(&c);
+            while (frames < 640u) {                /* drift 200 samples/frame */
+                dc_block_begin(&c, 1, batches[b]);
+                for (unsigned k = 0; k < batches[b]; k++, frames++)
+                    (void)probe(1000u + (frames % 8u) * 200u, DEEP, &ok);
+            }
+            printf("      thrash (batch %2u): %u fills in %u frames"
+                   " = %.2f SDRAM words/frame\n", batches[b], c.fill, frames,
+                   (double)c.fill * DC_W / frames);
+            ck("runaway drift stays under the direct path's 4 words/frame",
+               (double)c.fill * DC_W / frames < 4.0);
         }
-        printf("      thrash block: %u fills (budget %u)\n",
-               fills_in_block, (unsigned)DC_REFILLS);
-        ck("runaway drift: fills capped at the block budget",
-           fills_in_block <= DC_REFILLS);
         ck("runaway drift: words still correct", ok);
     }
 

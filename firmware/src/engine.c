@@ -216,7 +216,7 @@ static void eng_blk_begin(engine_t *e, eng_blk_t *bk, unsigned frames)
     bk->interp = e->interp;
     if (gov_level() >= GOV_LEVEL_LINEAR) bk->interp = DL_INTERP_LINEAR;
 #if DL_CACHE_ENABLE
-    /* Window cache: age the lines and refresh the refill budget. The
+    /* Window cache: age the lines (lifetime + refill rate limit). The
      * foreign-writer verdict (rule 3) is re-evaluated per FRAME below, because
      * both the overdub ramp and the splice job can change state inside a
      * block; this is only the per-block bookkeeping. */

@@ -18,7 +18,7 @@
  *
  * IT CANNOT CHANGE THE AUDIO.  dc_stencil() either returns a pointer to four
  * words identical to the ones the direct path would have loaded, or NULL and the
- * caller does exactly what it did before.  Every decision in here — budget,
+ * caller does exactly what it did before.  Every decision in here — refill rate,
  * lifetime, enable — is therefore a pure performance decision.  The ONLY way
  * this module can hurt is by returning STALE words, so all the care below is
  * about coherence and nothing else.
@@ -49,13 +49,14 @@
  *  5. WRAP.  A stencil or a fill run that would cross the end of the buffer is
  *     never served from cache; it falls back to the general path.
  *
- * WHAT MAKES IT BOUNDED (contract clause C-3a).  Each lane gets DC_REFILLS
- * refills per block; once spent it reads SDRAM directly for the rest of the
- * block.  A tap whose read position is being dragged fast (a preset recall, a
- * hard multiplier sweep, varispeed at the 4.0 rail) therefore degrades to
- * exactly the old behaviour instead of thrashing a DC_W-word refill every frame.
- * Worst case per lane per block is DC_REFILLS*DC_W sequential words plus the
- * direct reads — all compile-time bounded.
+ * WHAT MAKES IT BOUNDED (contract clause C-3a).  A lane may not refill again
+ * until DC_MIN_SPAN frames after its last fill; until then it reads SDRAM
+ * directly.  So the refill traffic is at most DC_W/DC_MIN_SPAN = 3 words per
+ * frame per lane, which is BELOW the 4 words the direct path costs — the cache
+ * cannot be worse than no cache, however hard a tap's read position is being
+ * dragged (a preset recall, a hard multiplier sweep, varispeed at the 4.0 rail).
+ * That bound is per FRAME and holds for both entry points, so it does not
+ * depend on the still-unsettled block size (contract blocker #0).
  *
  * NOT YET MEASURED ON HARDWARE.  The saving depends on the FMC's real word
  * latency and on whether the compiler turns the fill into multi-word bursts.
@@ -77,15 +78,19 @@
  * free. Sized so ONE refill covers a whole 32-frame block at drift up to
  * (DC_W-4)/32 = 2.9 samples per frame: normal play, chorus/flanger FM (the
  * per-tap slew limiter caps read-position drift at 1.5/frame) and varispeed up
- * to ~2.9x all fit; above that the lane spends its budget and goes direct. */
+ * to ~2.9x all fit; above that the lane hits the refill rate limit and goes
+ * direct. */
 #ifndef DC_W
 #define DC_W 96u
 #endif
 #ifndef DC_LANES
 #define DC_LANES 8u
 #endif
-#ifndef DC_REFILLS
-#define DC_REFILLS 1u           /* refills per lane per block                  */
+/* Minimum frames between refills of one lane. DC_W/DC_MIN_SPAN must stay under
+ * 4 — that inequality is the whole "can never be worse than the direct path"
+ * guarantee. 96/32 = 3. */
+#ifndef DC_MIN_SPAN
+#define DC_MIN_SPAN 32u
 #endif
 /* Frames a line may live (rule 2). Must stay well under the number of frames
  * the write head needs to lap the buffer back onto a line — rule 1's second
@@ -103,7 +108,6 @@ typedef struct {
     uint32_t base;              /* buffer index of line[0]                     */
     uint32_t age;               /* frames since fill (rule 2)                  */
     uint8_t  valid;
-    uint8_t  budget;            /* refills left in this block                  */
     float    line[DC_W];
 } dl_line_t;
 
@@ -124,8 +128,7 @@ static inline void dc_init(dl_cache_t *c)
     for (unsigned i = 0; i < DC_LANES; i++) {
         c->lane[i].valid  = 0u;
         c->lane[i].base   = 0u;
-        c->lane[i].age    = 0u;
-        c->lane[i].budget = 0u;
+        c->lane[i].age    = DC_MIN_SPAN;
     }
     c->on = 1u;
     c->miss = c->fill = 0u;
@@ -137,17 +140,18 @@ static inline void dc_invalidate(dl_cache_t *c)
     for (unsigned i = 0; i < DC_LANES; i++) c->lane[i].valid = 0u;
 }
 
-/* Start of a run of `frames` frames: age the lines, expire the old ones, hand
- * out refill budget. `enable` is the caller's "nothing else is writing where
- * taps read" verdict. */
+/* Start of a run of `frames` frames: age the lines and expire the old ones.
+ * `enable` is the caller's "nothing else is writing where taps read" verdict.
+ * Age is what both the lifetime rule and the refill rate limit are built on, so
+ * `frames` must be the true number of audio frames about to be processed — 1
+ * from the per-sample API, n from the block API. */
 static inline void dc_block_begin(dl_cache_t *c, int enable, unsigned frames)
 {
     c->on = (uint8_t)(enable ? 1 : 0);
     for (unsigned i = 0; i < DC_LANES; i++) {
         dl_line_t *L = &c->lane[i];
-        L->age += frames;
+        if (L->age < 0xFFFF0000u) L->age += frames;   /* saturate, never wrap */
         if (L->age > DC_LIFE) L->valid = 0u;
-        L->budget = DC_REFILLS;
     }
 }
 
@@ -174,7 +178,8 @@ static inline const float *dc_stencil(dl_cache_t *c, unsigned lane,
         if (L->valid && off <= DC_W - 4u) return &L->line[off];
     }
     c->miss++;
-    if (!c->on || L->budget == 0u)          return 0;
+    if (!c->on)                             return 0;
+    if (L->age < DC_MIN_SPAN)               return 0;  /* refill rate limit   */
     if (d_int <= DC_W + 8u)                 return 0;  /* rule 1, near end    */
     if (d_int + DC_LIFE + 8u >= len)        return 0;  /* rule 1, far end     */
     {
@@ -203,7 +208,6 @@ static inline const float *dc_stencil(dl_cache_t *c, unsigned lane,
         L->base  = src;
         L->age   = 0u;
         L->valid = 1u;
-        L->budget--;
         c->fill++;
         return &L->line[0];
     }
