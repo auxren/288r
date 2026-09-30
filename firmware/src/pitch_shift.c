@@ -173,6 +173,9 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->srch_eb = 0.0f; p->srch_best = 0.0f; p->srch_ratio = 1.0f;
     p->scan_active = 0; p->scan_lag = 0; p->scan_bestlag = 0;
     p->scan_e0 = 0.0f; p->scan_best = 0.0f;
+    p->srch_box = 1;
+    p->srch_phase = 0; p->srch_fill = 0; p->srch_nA = 0; p->srch_nB = 0; p->srch_m = 1;
+    p->min_dist = 1.0e9f;
     p->fm_in = 0.0f; p->fm_off = 0.0f;
     p->period = 0.0f;
     p->per_conf = 0.0f;
@@ -315,6 +318,43 @@ static void ps_period_scan(pitchshift_t *p, const delay_line_t *d)
                                   went stale -> phase-random splices (purity
                                   collapse 1.0 -> 0.0). */
 
+/* SRAM-RESIDENT COARSE SEARCH (2026-09, DAFx-07 NFC-TSM learning).
+ * The coarse pass used to read both correlation operands from SDRAM at a
+ * plain stride (kstep): decimation WITHOUT a low-pass. A bright partial above
+ * fs/(2*kstep) aliases in the LAG domain into a slow cosine of the same size
+ * as the fundamental's correlation peak, and the search locks a whole period
+ * off (test_splice_lp: 35 Hz + 6 kHz partial, purity 1.0 -> 0.17). Now the
+ * search region is read ONCE, box-averaged over each run of kstep samples
+ * (first null at fs/kstep, ~-46 dB on that partial) into two SRAM copies, and
+ * every lag is scored from SRAM. Same score, same fine pass; the SDRAM
+ * traffic during scoring — which contended with the ISR — is gone, and the
+ * whole coarse pass costs ~1 ms of SRAM MACs instead of ~40 SDRAM chunks.
+ * Worst case: A = ceil(ML/kstep) + ceil(N/kstep) = 900 + 600 (kstep 4 band). */
+#define PS_SRCH_NA_MAX  1536
+#define PS_SRCH_NB_MAX  640
+#define PS_SRCH_FILL_CHUNK  2000   /* SDRAM grid points per service call    */
+#define PS_SRCH_MAC_CHUNK   60000  /* SRAM MACs per service call (~0.4 ms)  */
+#if defined(__arm__)
+#define PS_SCRATCH_ATTR __attribute__((section(".ccmram")))
+#else
+#define PS_SCRATCH_ATTR
+#endif
+static float ps_srchA[PS_SRCH_NA_MAX] PS_SCRATCH_ATTR;
+static float ps_srchB[PS_SRCH_NB_MAX] PS_SCRATCH_ATTR;
+
+/* one decimated grid point: box mean of kstep consecutive samples starting
+ * at `dist`, or the single sample at `dist` in raw-stride mode */
+static inline float ps_grid_point(const pitchshift_t *p, const delay_line_t *d,
+                                  float dist, int kstep)
+{
+    if (!p->srch_box || kstep <= 1)
+        return ps_read(p, d, dist, DL_INTERP_LINEAR);
+    float s = 0.0f;
+    for (int j = 0; j < kstep; j++)
+        s += ps_read(p, d, dist + (float)j, DL_INTERP_LINEAR);
+    return s * (1.0f / (float)kstep);
+}
+
 void ps_service(pitchshift_t *p, const delay_line_t *d)
 {
     if (p->pend_tap >= 0) return;                 /* already prepared        */
@@ -350,22 +390,48 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
              * abort. */
             p->srch_active = 0; return;
         }
-        int iters = 0;
-        while (p->srch_lag < p->srch_ML && iters < PS_SRCH_CHUNK) {
-            float acc = 0.0f, ein = 0.0f;
-            for (int k = 0; k < p->srch_N; k += p->srch_kstep) {
-                float a = ps_read(p, d, p->srch_dIn + (float)(p->srch_lag + k),
-                                  DL_INTERP_LINEAR);
-                float b = ps_read(p, d, p->srch_dOut + (float)k, DL_INTERP_LINEAR);
-                acc += a * b; ein += a * a; iters++;
+        if (p->srch_phase == 0) {
+            /* FILL: A over [dIn, dIn + ML + N), then B over [dOut, dOut + N) */
+            const int nA = p->srch_nA, nB = p->srch_nB, ks = p->srch_kstep;
+            int done = 0;
+            while (p->srch_fill < nA + nB && done < PS_SRCH_FILL_CHUNK) {
+                int i = p->srch_fill;
+                if (i < nA)
+                    ps_srchA[i] = ps_grid_point(p, d,
+                        p->srch_dIn + (float)(i * ks), ks);
+                else
+                    ps_srchB[i - nA] = ps_grid_point(p, d,
+                        p->srch_dOut + (float)((i - nA) * ks), ks);
+                p->srch_fill++; done++;
             }
-            if (ein >= 0.01f * p->srch_eb) {
-                float score = acc * fabsf(acc) / (ein + 1.0e-9f);
-                if (score > p->srch_best) {
-                    p->srch_best = score; p->srch_bestlag = p->srch_lag;
+            if (p->srch_fill < nA + nB) return;    /* more fill to come      */
+            float eb = 0.0f;
+            for (int k = 0; k < nB; k++) eb += ps_srchB[k] * ps_srchB[k];
+            p->srch_eb = eb;
+            if (eb < 1.0e-7f) { p->srch_active = 0; return; } /* silence */
+            p->srch_phase = 1;
+            return;
+        }
+        /* SCORE: SRAM only. lag index li -> lag = li*lstep, A offset li*m */
+        {
+            long macs = 0;
+            const int nB = p->srch_nB, m = p->srch_m;
+            while (p->srch_lag < p->srch_ML && macs < PS_SRCH_MAC_CHUNK) {
+                const int li = p->srch_lag / p->srch_lstep;
+                const float *a = &ps_srchA[li * m];
+                float acc = 0.0f, ein = 0.0f;
+                for (int k = 0; k < nB; k++) {
+                    acc += a[k] * ps_srchB[k]; ein += a[k] * a[k];
                 }
+                macs += nB;
+                if (ein >= 0.01f * p->srch_eb) {
+                    float score = acc * fabsf(acc) / (ein + 1.0e-9f);
+                    if (score > p->srch_best) {
+                        p->srch_best = score; p->srch_bestlag = p->srch_lag;
+                    }
+                }
+                p->srch_lag += p->srch_lstep;
             }
-            p->srch_lag += p->srch_lstep;
         }
         if (p->srch_lag < p->srch_ML) return;      /* more chunks to come    */
         p->srch_active = 0;
@@ -442,18 +508,21 @@ void ps_service(pitchshift_t *p, const delay_line_t *d)
     const float dIn  = (step > 0.0f) ? p->base : p->base + p->window;
     const float dOut = p->base + 0.5f * p->window + p->off[tap ^ 1];
 
-    float eb = 0.0f;
-    for (int k = 0; k < srchN; k += kstep) {
-        float b = ps_read(p, d, dOut + (float)k, DL_INTERP_LINEAR);
-        eb += b * b;
-    }
-    if (eb < 1.0e-7f) return;                      /* silence: keep offset 0 */
+    /* grid geometry: lstep must be a multiple of kstep so a lag step is a
+     * whole shift of the decimated A sequence (sizes above guarantee it:
+     * kstep 2/lstep 4, 4/8, 8/8). */
+    int m  = lstep / kstep;
+    int nB = (srchN + kstep - 1) / kstep;
+    int nA = (srchML / lstep) * m + nB + m;
+    if (nB > PS_SRCH_NB_MAX || nA > PS_SRCH_NA_MAX) return; /* cannot happen */
 
     p->srch_active = 1; p->srch_tap = tap; p->srch_lag = 0;
     p->srch_N = srchN; p->srch_ML = srchML;
-    p->srch_kstep = kstep; p->srch_lstep = lstep;
+    p->srch_kstep = kstep; p->srch_lstep = lstep; p->srch_m = m;
+    p->srch_nA = nA; p->srch_nB = nB;
+    p->srch_phase = 0; p->srch_fill = 0;
     p->srch_dIn = dIn; p->srch_dOut = dOut;
-    p->srch_eb = eb; p->srch_best = 0.0f; p->srch_bestlag = 0;
+    p->srch_eb = 0.0f; p->srch_best = 0.0f; p->srch_bestlag = 0;
     p->srch_ratio = p->ratio;
 }
 
@@ -529,6 +598,10 @@ float ps_process(pitchshift_t *p, const delay_line_t *d, dl_interp_t interp)
     }
     const float dA = p->base + fracA * W + p->off[0] + vfm;
     const float dB = p->base + fracB * W + p->off[1] + vfm;
+    {   /* dmin telemetry (one compare/sample; SWD-readable) */
+        float dm = (dA < dB) ? dA : dB;
+        if (dm < p->min_dist) p->min_dist = dm;
+    }
     float out;
     /* AA<->Hermite CROSSFADE (#24 part 2): the engage was a hard kernel swap
      * — different top-octave shaping = a click per boundary crossing, which

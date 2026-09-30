@@ -62,6 +62,14 @@ typedef struct {
     float srch_ratio;      /* context stamp: abort resume if ratio moved */
     int   scan_active, scan_lag, scan_bestlag;
     float scan_e0, scan_best;
+    int   srch_phase;      /* 0 = FILL (SDRAM -> SRAM decimated copies),
+                              1 = SCORE (SRAM only)                        */
+    int   srch_fill, srch_nA, srch_nB, srch_m;
+    int   srch_box;        /* 1 = box-average the decimated correlation grid
+                              (anti-aliased, DAFx-07 NFC-TSM); 0 = plain
+                              stride (pre-2026-09 behaviour, bench A/B)     */
+    float min_dist;        /* telemetry: smallest grain read distance seen
+                              (dmin floor check; reset by ps_init)          */
     /* --- signal-in FM (pitch-mode domain: "signal-in modulates whatever the
      * multiplier's domain is", owner design 2026-07-25) -------------------
      * fm_in: per-sample target offset in SAMPLES (ISR-written = slot-2 audio
