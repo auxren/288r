@@ -37,12 +37,15 @@ int main(void)
     ck("idle overdub: content untouched",
        fabsf(buf[(ls + 4000u) % LEN] - 0.25f) < 1e-6f);
 
-    /* ---- exact accumulation, measured MID-HOLD with the ramp pre-settled -- */
+    /* ---- exact accumulation, measured MID-HOLD with the ramp pre-settled --
+     * (the head sits at ls+4000 when od engages; the layered input reaches
+     * the buffer OD_LOOKAHEAD samples later, so measure a cell the head
+     * reaches after the lookahead ring has filled) */
     e.od_gain = 1.0f;          /* skip the engage ramp for deterministic math */
     e.od_lp1 = e.od_lp2 = 0.10f;  /* pre-charge the squeal-guard LP (DC-unity) */
     e.od_active = 1;
     for (int i = 0; i < 8000; i++) engine_process_multi(&e, 0.10f, 0.5f, chan);
-    float v1p = buf[(ls + 4000u) % LEN];
+    float v1p = buf[(ls + 4000u + OD_LOOKAHEAD + 500u) % LEN];
     ck("one pass mid-hold: old*decay + input",
        fabsf(v1p - (0.25f * 0.95f + 0.10f)) < 1e-3f);
     e.od_active = 0;
@@ -68,6 +71,63 @@ int main(void)
         if (v == held) gaps++;
     }
     ck("varispeed overdub: no unwritten gaps", gaps == 0);
+
+    /* ---- LOOKAHEAD write limiter (DAFx-02 Hämäläinen): a burst onset must
+     * be written at the knee, never over it, and the hard clamp must never
+     * engage. The old reactive limiter (peak-hold env + 5 ms gain slew) let
+     * the first ms of every transient through over the knee and the clamp
+     * flat-topped it INTO the loop (field content peak 1.092 after an od
+     * session). The layered input is delayed OD_LOOKAHEAD samples so the
+     * gain has already moved when the peak lands. */
+    for (int rate4 = 0; rate4 < 2; rate4++) {
+        engine_t e3; static float b3[LEN];
+        engine_init(&e3, b3, LEN, 2000.0f, 0.4f, 1.6f, 0.02f);
+        float c3[NUM_TAPS];
+        for (int i = 0; i < 20000; i++)
+            engine_process_multi(&e3, 0.5f*(float)sin(2.0*M_PI*i/480.0), 0.5f, c3);
+        engine_recirc_window(&e3, 8000u);
+        uint32_t ls3 = e3.xport.loop_start;
+        for (int i = 0; i < 2000; i++) engine_process_multi(&e3, 0.0f, 0.5f, c3);
+        if (rate4) { e3.varispeed = 1; e3.lp_mult_ref = 4.0f * e3.time.mult; }
+        e3.od_active = 1; e3.od_gain = 1.0f; e3.od_clamp_hits = 0u;
+        for (int i = 0; i < 2000; i++) engine_process_multi(&e3, 0.0f, 0.5f, c3);
+        for (int i = 0; i < 8000; i++)
+            engine_process_multi(&e3, 0.9f*(float)sin(2.0*M_PI*i/173.0), 0.5f, c3);
+        e3.od_active = 0; e3.varispeed = 0;
+        float mx3 = 0.0f;
+        for (uint32_t k = 0; k < 8000u; k++) {
+            float a = fabsf(b3[(ls3 + k) % LEN]); if (a > mx3) mx3 = a;
+        }
+        printf("      burst onset at rate %d: written peak %.3f, clamp hits %u\n",
+               rate4 ? 4 : 1, mx3, (unsigned)e3.od_clamp_hits);
+        ck(rate4 ? "rate 4 burst: written peak within 0.80"
+                 : "rate 1 burst: written peak within knee*1.01 (0.7575)",
+           mx3 <= (rate4 ? 0.80f : 0.7575f));
+        ck(rate4 ? "rate 4 burst: hard clamp never engages"
+                 : "rate 1 burst: hard clamp never engages", e3.od_clamp_hits == 0u);
+    }
+
+    /* ---- the lookahead is a pure delay of exactly OD_LOOKAHEAD samples ---- */
+    {
+        engine_t e4; static float b4[LEN];
+        engine_init(&e4, b4, LEN, 2000.0f, 0.4f, 1.6f, 0.02f);
+        float c4[NUM_TAPS];
+        for (int i = 0; i < 20000; i++) engine_process_multi(&e4, 0.0f, 0.5f, c4);
+        engine_recirc_window(&e4, 8000u);
+        for (int i = 0; i < 2000; i++) engine_process_multi(&e4, 0.0f, 0.5f, c4);
+        e4.od_active = 1; e4.od_gain = 1.0f;
+        for (int i = 0; i < 2000; i++) engine_process_multi(&e4, 0.0f, 0.5f, c4);
+        uint32_t p0 = e4.dl.wpos;                 /* head when the step arrives */
+        for (int i = 0; i < 1500; i++) engine_process_multi(&e4, 0.2f, 0.5f, c4);
+        e4.od_active = 0;
+        int first = -1;
+        for (int k = 0; k < 1500; k++)
+            if (fabsf(b4[(p0 + (uint32_t)k) % LEN]) > 0.1f) { first = k; break; }
+        printf("      input step landed %d cells after the head (lookahead %d)\n",
+               first, (int)OD_LOOKAHEAD);
+        ck("layered input is delayed by OD_LOOKAHEAD (+LP settle)",
+           first >= (int)OD_LOOKAHEAD && first <= (int)OD_LOOKAHEAD + 8);
+    }
 
     /* ---- sustained hot layering: bounded AND shape-preserving ------------- */
     e.od_active = 1;

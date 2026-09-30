@@ -11,6 +11,9 @@
  * lives in external SDRAM and engine_process() runs from the SAI/DMA block loop.
  */
 #ifndef ENGINE_H
+/* overdub write limiter lookahead, samples (~5 ms @96k): the layered input is
+ * delayed this much so the write gain can settle BEFORE a peak is written */
+#define OD_LOOKAHEAD 480u
 #define ENGINE_H
 
 #include "delay_line.h"
@@ -188,6 +191,21 @@ typedef struct {
     uint8_t      hr_last;          /* 1 = the frame just processed was HELD    */
     uint32_t     hr_mask;          /* block API: bit k = frame k was held, so
                                       the ISR's output stage can hold too     */
+    uint32_t     od_clamp_hits;    /* telemetry: hard-clamp engagements in the
+                                      overdub write (bench gate: must stay 0) */
+    /* LOOKAHEAD write limiter (DAFx-02 Hämäläinen, 2026-09): the layered
+     * input is delayed OD_LOOKAHEAD samples through od_ring while the limiter
+     * control looks at |old*decay + input_now| at the cell that input will be
+     * written to, through an exact running max (8 sub-blocks) into the
+     * peak-hold envelope. The gain therefore settles BEFORE the peak is
+     * written and the hard clamp never engages (it stays as a backstop). */
+    float        od_ring[OD_LOOKAHEAD];
+    uint32_t     od_ri;            /* ring index                              */
+    float        od_bmax[8];       /* sub-block maxima of the control signal  */
+    float        od_pmax;          /* partial (current sub-block) max         */
+    uint32_t     od_bi, od_bc;     /* sub-block index / count within block    */
+    uint32_t     od_drain;         /* output samples left to flush the ring
+                                      after the release ramp reached zero     */
     float        od_lp1, od_lp2;   /* 2-pole ~10 kHz lowpass on the LAYERED
                                       INPUT only: breaks ultrasonic feedback
                                       modes through the sound-on-sound loop

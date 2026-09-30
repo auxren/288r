@@ -322,9 +322,10 @@ int main(void)
         wrapped_cases += st.wrapped_window;
         int herm = (st.herm_frames * 2u > st.frames);
         /* splice RMW = 1 SDRAM read + 1 SDRAM write per quota unit; overdub
-         * costs a read-modify-write per head advance, up to the rate clamp. */
+         * costs a read-modify-write per head advance, up to the rate clamp,
+         * plus ONE lookahead read per frame (the write limiter's control). */
         double extra = 2.0 * (double)e.spl_quota * (st.splice_frames / st.frames)
-                     + 8.0 * (st.od_frames / st.frames);
+                     + 9.0 * (st.od_frames / st.frames);
         double cyc = project(st.words_per_read, herm, extra);
         double wblk = worst_window(g_wpf, st.frames, BLOCK_FRAMES, herm, extra);
         st.worst_block = wblk;

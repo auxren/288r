@@ -37,6 +37,11 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->od_xprev = 0.0f;
     e->od_xsum = 0.0f;
     e->od_xn = 0u;
+    e->od_clamp_hits = 0u;
+    for (uint32_t i = 0; i < OD_LOOKAHEAD; i++) e->od_ring[i] = 0.0f;
+    e->od_ri = 0u;
+    for (int i = 0; i < 8; i++) e->od_bmax[i] = 0.0f;
+    e->od_pmax = 0.0f; e->od_bi = 0u; e->od_bc = 0u; e->od_drain = 0u;
     e->od_lp1 = 0.0f;
     e->od_lp2 = 0.0f;
     e->spl_active = 0;
@@ -56,6 +61,18 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
 void engine_set_bandwidth(engine_t *e, float fs, float cutoff_hz)
 {
     bw_init(&e->bw, fs, cutoff_hz);
+}
+
+/* the buffer index the recirc head reaches k advances from `wpos` inside the
+ * window [ls, le) (dl_advance_loop semantics; span 0 = whole buffer) */
+static inline uint32_t od_cell_ahead(uint32_t wpos, uint32_t len, uint32_t ls,
+                                     uint32_t span, uint32_t k)
+{
+    if (span == 0u) { uint32_t a = wpos + k; return (a >= len) ? a - len : a; }
+    uint32_t pos = dl_map_head(wpos, len, ls, span) + k;
+    if (pos >= span) pos %= span;
+    uint32_t a = ls + pos;
+    return (a >= len) ? a - len : a;
 }
 
 float engine_clamp_base(float base, uint32_t len, float time_hi)
@@ -334,15 +351,62 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
          * clippy"; the old 2.0 ceiling overshot DAC-linear range). */
         if (e->od_active)      { e->od_gain += (1.0f - e->od_gain) * 0.001f; }
         else if (e->od_gain > 0.0f) { e->od_gain -= e->od_gain * 0.001f;
-                                      if (e->od_gain < 1e-4f) e->od_gain = 0.0f; }
-        if (e->od_gain > 0.0f) {
-            float xo = mixer_input(input, e->in_gain);
-            xo = bw_process(&e->bw, xo) * e->od_gain;
-            /* squeal guard: 2x one-pole at ~10 kHz (see od_lp1 in engine.h) */
-            #define OD_LP_A 0.480f
-            e->od_lp1 += (xo - e->od_lp1) * OD_LP_A;
-            e->od_lp2 += (e->od_lp1 - e->od_lp2) * OD_LP_A;
-            xo = e->od_lp2;
+                                      if (e->od_gain < 1e-4f) {
+                                          e->od_gain = 0.0f;
+                                          e->od_drain = OD_LOOKAHEAD; /* flush */
+                                      } }
+        if (e->od_gain > 0.0f || e->od_drain > 0u) {
+            float xo = 0.0f;
+            if (e->od_gain > 0.0f) {
+                xo = mixer_input(input, e->in_gain);
+                xo = bw_process(&e->bw, xo) * e->od_gain;
+                /* squeal guard: 2x one-pole at ~10 kHz (see od_lp1 in engine.h) */
+                #define OD_LP_A 0.480f
+                e->od_lp1 += (xo - e->od_lp1) * OD_LP_A;
+                e->od_lp2 += (e->od_lp1 - e->od_lp2) * OD_LP_A;
+                xo = e->od_lp2;
+            } else {
+                e->od_drain--;
+            }
+            /* LOOKAHEAD CONTROL: `xo` lands OD_LOOKAHEAD output samples from
+             * now, at the cell the head reaches after ~OD_LOOKAHEAD*rate
+             * advances. Look at that cell now (one SDRAM load), so the
+             * limiter sees the peak it will write 5 ms before writing it.
+             * Windows shorter than 2*OD_LOOKAHEAD shorten the look. */
+            {
+                uint32_t span = bk->span ? bk->span : e->dl.len;
+                uint32_t k = (uint32_t)((float)OD_LOOKAHEAD * r + 0.5f * r);
+                if (k > span / 2u) k = span / 2u;
+                uint32_t ca = od_cell_ahead(e->dl.wpos, e->dl.len, ls, span, k);
+                float cv = e->dl.buf[ca] * e->od_decay + xo;
+                if (cv < 0.0f) cv = -cv;
+                /* exact running max over >= OD_LOOKAHEAD samples: 8 sub-blocks
+                 * of OD_LOOKAHEAD/8 plus the partial one */
+                if (cv > e->od_pmax) e->od_pmax = cv;
+                if (++e->od_bc >= OD_LOOKAHEAD / 8u) {
+                    e->od_bmax[e->od_bi] = e->od_pmax;
+                    e->od_bi = (e->od_bi + 1u) & 7u;
+                    e->od_pmax = 0.0f; e->od_bc = 0u;
+                }
+                float wmax = e->od_pmax;
+                for (int i = 0; i < 8; i++)
+                    if (e->od_bmax[i] > wmax) wmax = e->od_bmax[i];
+                /* peak-hold envelope (instant attack, slow release), fed by the
+                 * lookahead max instead of the value being written */
+                float env = e->od_env - e->od_env * 0.0002f;
+                e->od_env = (wmax > env) ? wmax : env;
+                float tgt = (e->od_env > 0.75f) ? 0.75f / e->od_env : 1.0f;
+                /* gain slew: closes 99% within OD_LOOKAHEAD samples
+                 * ((1-a)^481 ~ 0.01), the paper's alpha_max = 1.01 bound */
+                e->od_lim += (tgt - e->od_lim) * 0.0095f;
+            }
+            /* the ring delays the layered input by exactly OD_LOOKAHEAD */
+            {
+                float xin = e->od_ring[e->od_ri];
+                e->od_ring[e->od_ri] = xo;
+                if (++e->od_ri >= OD_LOOKAHEAD) e->od_ri = 0u;
+                xo = xin;
+            }
             /* The layered input is RESAMPLED onto the loop's varispeed clock:
              * rate < 1 box-averages the samples between writes (ZOH dropped
              * them — zipper when the multiplier moved mid-overdub); rate > 1
@@ -369,25 +433,18 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
                     val = e->od_xprev + (xo - e->od_xprev) * ((float)j * inv_nw);
                 }
                 float v = e->dl.buf[e->dl.wpos] * e->od_decay + val;
-                /* WRITE LIMITER: peak-hold envelope + a ~5 ms slewed GAIN.
-                 * The gain must move far below audio rate — a fast-attack
-                 * follower modulated the gain at 2x the signal frequency,
-                 * i.e. harmonic distortion written INTO the loop (field:
-                 * 'second overdub = distortion and grit'). Brief overs while
-                 * the gain settles ride the float headroom + output knee. */
-                float av = (v < 0.0f) ? -v : v;
-                if (av > e->od_env) e->od_env = av;
-                else                e->od_env += (0.0f - e->od_env) * 0.0002f
-                                              + av * 0.0002f;
-                float tgt = (e->od_env > 0.75f) ? 0.75f / e->od_env : 1.0f;
-                e->od_lim += (tgt - e->od_lim) * 0.002f;
+                /* WRITE LIMITER gain (lookahead law above): still far below
+                 * audio rate — a fast-attack follower modulated the gain at
+                 * 2x the signal frequency, i.e. harmonic distortion written
+                 * INTO the loop (field: 'second overdub = distortion and
+                 * grit') — but now settled BEFORE the peak arrives. */
                 v *= e->od_lim;
-                /* hard FS clamp: the gain slew lags transients, and anything
+                /* hard FS clamp: a BACKSTOP only. With the lookahead it never
+                 * engages (test_overdub asserts od_clamp_hits == 0); anything
                  * written >1.0 is BAKED into the loop forever (field forensics:
-                 * content peak 1.092 after an od session). The clamp only
-                 * touches the brief settling overs the slew already misses. */
-                if (v >  1.0f) v =  1.0f;
-                if (v < -1.0f) v = -1.0f;
+                 * content peak 1.092 after an od session, pre-lookahead). */
+                if (v >  1.0f) { v =  1.0f; e->od_clamp_hits++; }
+                if (v < -1.0f) { v = -1.0f; e->od_clamp_hits++; }
                 e->dl.buf[e->dl.wpos] = v;
                 dl_advance_loop(&e->dl, ls, le);
                 e->lp_phase -= 1.0f;

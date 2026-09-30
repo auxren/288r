@@ -79,16 +79,22 @@ static void drv_block(engine_t *e, const float *in, float t, const float *fm,
  * Regenerate ONLY when a change is meant to alter the audio, and say why in the
  * commit message. Order: energy, absum, moment, peak.
  *
- * CHANGELOG (empty so far: every optimisation in the 2026-08 ISR-budget work
- * has come out bit-exact, which is the bar it was held to). */
+ * CHANGELOG
+ *  2026-09-29  phases 3/4 + total: LOOKAHEAD overdub write limiter (DAFx-02
+ *              Hämäläinen). The layered input is delayed OD_LOOKAHEAD samples
+ *              and the write gain settles before the peak lands, so the
+ *              overdub phase's written peak drops (0.936 -> 0.826) and the
+ *              re-splice phase that plays it back moves with it. Phases 0-2
+ *              stayed bit-exact (the SRAM box splice search of the same day
+ *              does not alter this scenario's audio). */
 typedef struct { double energy, absum, moment, peak; } fp_t;
 static const fp_t REF[GS_PHASES + 1] = {
     /* phase 0  WRITE, taps sweeping                */ { 4.076158e+04, 9.289537e+04, 1.070551e+05, 9.464567e-01 },
     /* phase 1  RECIRC + varispeed                  */ { 4.219866e+04, 9.651235e+04, 8.733943e+03, 9.248127e-01 },
     /* phase 2  WRITE + FM + 12-bit crush           */ { 3.562626e+04, 9.080051e+04,-1.733997e+05, 8.854008e-01 },
-    /* phase 3  RECIRC + overdub + varispeed        */ { 2.987272e+04, 7.953895e+04, 5.491765e+05, 9.362196e-01 },
-    /* phase 4  RECIRC re-splice -> WRITE           */ { 3.302951e+04, 8.706226e+04,-1.856166e+05, 9.421390e-01 },
-    /* total                                        */ { 1.814887e+05, 4.468094e+05, 3.614641e+05, 9.464567e-01 },
+    /* phase 3  RECIRC + overdub + varispeed        */ { 2.910042e+04, 7.926580e+04, 5.850729e+05, 8.259071e-01 },
+    /* phase 4  RECIRC re-splice -> WRITE           */ { 3.299180e+04, 8.701536e+04,-2.346940e+04, 8.037356e-01 },
+    /* total                                        */ { 1.806787e+05, 4.464894e+05, 4.770932e+05, 9.464567e-01 },
 };
 
 static int close_rel(double a, double b, double tol)

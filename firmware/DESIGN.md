@@ -614,6 +614,38 @@ existing FM path) folded into the rear-DIP vintage voice (DIP 3, or DIP 2 gains 
    cheap diffusion; structurally half-built by the multitap.
 3. **Shimmer** — pitch voice inside that feedback path. Falls out of 1+2.
 
+### DAFx literature pass (2026-09-29) — what the papers add to the slate above
+Read against the dsp_fx catalog (github.com/auxren/dsp_fx, note
+`knowledge/notes/288r-time-domain-processor.md` has ids + numbers). Shipped the same
+day: the LOOKAHEAD overdub write limiter (Hämäläinen, DAFx 2002) and the box-low-passed,
+SRAM-resident splice search (Haghparast/Penttinen/Välimäki, DAFx 2007). Still to build:
+
+- **Wow/flutter + micropitch spread (#23):** per-tap *random* raised-cosine modulation law
+  (Fernández-Cid 1998: draw ~10/s, raised-cosine interpolate, modulate only the wet path),
+  independent rate per tap (Norilo 2014: shared LFO = mechanical in-phase sweep). Calibrate
+  against Martens/Marui 2006: useful band = peak pitch deviation 2π·depth·rate between ~0.5%
+  and ~2% (≈ ±35 cents cap), tolerated depth grows linearly with the LFO period.
+- **Reverse loop:** negative head rate on the recirc loop; live reverse echo = two backward
+  taps with 50% overlap-add, any window with w(t)+w(L/2+t)=1 (Kim/Smith 2014). The seam
+  splice and the 4 guard samples must be MIRRORED for a reversed window or the wrap click
+  returns. Perceptual bands: <1 ms metallic, 1–30 ms detune, 30–100 ms flutter, >100 ms reverse echo.
+- **Tape-equation TIME mode (clone fidelity):** the stock PLL retune is *speed-type* (a
+  feedback echo is repitched ONCE, delay ramps over one delay-time); our moved-read-pointer
+  TIME mode is *length-type* (every lap repitches). Zavalishin/Parker 2018: store tape
+  position V at control rate (~76 KB SDRAM for 19 s), forward-only incremental inversion,
+  O(1) in speed, 1–2 probes per tap per control tick. Also: the correct AA stretch for a
+  varispeed read is read-speed / recorded-speed (a per-block recorded-rate byte), not ratio-to-1.
+- **Regen → FDN wash → shimmer:** Dal Santo et al. 2026 blueprint — orthogonal (Hadamard, 24
+  adds) mix of the 8 existing taps, per-line loss < 1, DC blocker (R=0.995), in-loop
+  saturator; the pitched line breaks energy preservation so cap it ~0.7–0.8; only octave
+  ratios were musical; the real cost is 8 SDRAM WRITES per sample — measure `isr_pk` with the
+  write side alone first. Werner/McClellan 2022: a one-pole with c∈(0,1) is stable under any
+  per-sample coefficient schedule, so a knob-steered feedback gain needs no freezing.
+- Reference only: saturation.c is Enderby/Baracskai 2012's "reciprocal" curve (highest THD,
+  least stable at low level — swap to two-stage-quadratic if quiet-material grit is reported);
+  linear-interp overdub writes at rate>1 reject images by only ~38 dB @10 kHz (Holters/Parker
+  2018; a 5-pole reconstructor only if content dumps show folded energy).
+
 ### Parked ideas
 Band delays (per-tap filters — budget check first; cheap version = fixed tone tilt
 across taps), diatonic CV quantize (trivial math, UI home unclear).

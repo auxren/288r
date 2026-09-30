@@ -506,6 +506,23 @@ better engine; add new features/controls/modulation only *after* the clone is na
   Over-range requests must REFUSE to lock rather than clamp silently. TIME mode only (varispeed
   owns the multiplier on a playing loop); entry/exit must go through the transport declick.
   Build order + test plan in the spec. Later the same law can take MIDI clock off the 200e bus.
+- **DAFx LITERATURE PASS + two shipped fixes (2026-09-29, on `rc`, uncommitted at the time
+  of writing):** 17 catalog papers (github.com/auxren/dsp_fx) read against the open items;
+  six actionable, recorded in DESIGN.md "DAFx literature pass" + the dsp_fx note. Shipped:
+  (1) **LOOKAHEAD overdub write limiter** (Hämäläinen DAFx-02) — the layered input is delayed
+  `OD_LOOKAHEAD` (480 = 5 ms) through an SRAM ring, the control reads the loop cell that input
+  will land in (one extra SDRAM load/frame), exact running max → peak-hold env, gain slew 0.0095
+  (99% closed within the lookahead); burst onset now writes 0.750 peak with ZERO clamp hits (was
+  1.000 / 75 hits — the field's baked flat-tops), THD unchanged; `od_clamp_hits` = bench gate
+  (must stay 0), ring drains 5 ms after release. (2) **Box-low-passed SRAM splice search**
+  (Haghparast/Välimäki DAFx-07) — the coarse search's plain stride was decimation without a
+  low-pass: a 6 kHz partial over 35 Hz aliased in the LAG domain and the search locked a period
+  off (purity 1.00 → 0.17); now each kstep run is box-averaged into two CCM copies read once and
+  every lag scores from SRAM (fine pass unchanged; `srch_box=0` = old stride for bench A/B;
+  `min_dist` telemetry proves the dmin floor 152, measured 160). Golden phases 3/4 re-baselined
+  (changelog in test_golden.c); phases 0–2 bit-exact; cachecheck bit-identical; CCM 20.8 KB.
+  `make test` = **43 suites**. BENCH GATE before release: `isr_pk` with overdub held at rate 4
+  + `od_clamp_hits` == 0 on a hot session.
 - **Three pulse input jacks (reference):** PG10/11/12 = write / recirc / arm. Each duplicates a
   panel action, edge-latched at block rate; arm fires a loop capture regardless of arm state.
   No clock function today — that is what clocked mode adds.
