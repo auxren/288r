@@ -27,10 +27,10 @@
     "swept cases and exactly 4.00 (= the direct path) at the sustained varispeed",
     "rail, against 4.00 direct. The pre-fix version measured 4.18 at the rail, i.e.",
     "a net LOSS, and its fill compiled to a BYTE loop in one of the two inlined",
-    "copies of the tap loop (384 single-byte FMC reads per fill) \u2014 see dl_cache.h."
+    "copies of the tap loop (384 single-byte FMC reads per fill) — see dl_cache.h."
   ],
   "_readme": [
-    "Manifest for tools/wcet.py \u2014 the machine-checkable half of budget",
+    "Manifest for tools/wcet.py — the machine-checkable half of budget",
     "contract clause C-3. Every entry here is a CLAIM about the code that CI",
     "re-checks on every build. `loops` is the number of cycles (strongly",
     "connected components, reducible or not) the compiler emitted for that",
@@ -44,7 +44,7 @@
     "These are the out-of-line readers of the external delay buffer; their",
     "loads are priced at SDRAM_LOAD rather than SRAM. SDRAM traffic that the",
     "compiler INLINED into bsp_audio_isr (dl_write, pt_read/pt_write, the",
-    "overdub read-modify-write) is still priced as SRAM \u2014 the model cannot",
+    "overdub read-modify-write) is still priced as SRAM — the model cannot",
     "tell which pointer an inlined load followed. That underestimate is one of",
     "the things the calibration ratio K absorbs; it is also why the ratio",
     "between builds, not the absolute ceiling, is the regression signal."
@@ -87,10 +87,11 @@
       "than only from the host tests), and the target image moved from -O3 to -O2",
       "(see the Makefile: instruction fetch off 5-wait-state flash is a first-order",
       "cost in a 14 KB ISR, and -O2 halves it). -O2 unrolls far less, so many of the",
-      "8-iteration tap loops that -O3 had flattened are real loops again \u2014 which is",
+      "8-iteration tap loops that -O3 had flattened are real loops again — which is",
       "why the counts went UP while the code got smaller. Do not renumber by eye.",
       "Nearly every bound here is 8 = NUM_TAPS = DC_LANES = KS_STRINGS; the ones",
-      "that are not are the ones worth reading."
+      "that are not are the ones worth reading.",
+      "RE-ESTABLISHED 2026-09-30 for v1.3.1-rc1 (eng_frame 13 -> 14): the lookahead write limiter added its 8-entry running-max loop (new index 1); every other eng_frame loop kept its bound and only renumbered. Mapping re-done with FW_OPT='-O2 -g' (hex byte-identical) + addr2line -i on each header."
     ],
     "bsp_audio_isr": {
       "default_bound": 8,
@@ -98,7 +99,7 @@
       "overrides": {
         "0": {
           "bound": 8,
-          "why": "ks.c:28, the Karplus-Strong string bank: KS_STRINGS = 8 rings per frame. Mutually exclusive with the pitch voice and with the tap reads (skip_tap_reads), but a longest-PATH model prices them all together \u2014 which is most of why the raw ceiling is ~4x budget."
+          "why": "ks.c:28, the Karplus-Strong string bank: KS_STRINGS = 8 rings per frame. Mutually exclusive with the pitch voice and with the tap reads (skip_tap_reads), but a longest-PATH model prices them all together — which is most of why the raw ceiling is ~4x budget."
         },
         "1": {
           "bound": 8,
@@ -106,11 +107,11 @@
         },
         "10": {
           "bound": 16,
-          "why": "main.c PASS 2's per-frame branch \u2014 the pitch-voice and string-mode path, which keeps the old per-frame ordering because the voice reads the same SDRAM buffer between the engine's frames (issue #19). Same BLOCK_FRAMES bound; largest body in the image, which is the quickest way to re-identify it."
+          "why": "main.c PASS 2's per-frame branch — the pitch-voice and string-mode path, which keeps the old per-frame ordering because the voice reads the same SDRAM buffer between the engine's frames (issue #19). Same BLOCK_FRAMES bound; largest body in the image, which is the quickest way to re-identify it."
         },
         "2": {
           "bound": 16,
-          "why": "main.c:168, env_block_a()'s (1-a)^n power \u2014 computed once and cached, n = the runtime `frames` argument, clamped to BLOCK_FRAMES = 16 in the ISR prologue. This is the loop that makes the envelope pole track the block size the DMA actually hands over instead of the constant it was hard-coded for."
+          "why": "main.c:168, env_block_a()'s (1-a)^n power — computed once and cached, n = the runtime `frames` argument, clamped to BLOCK_FRAMES = 16 in the ISR prologue. This is the loop that makes the envelope pole track the block size the DMA actually hands over instead of the constant it was hard-coded for."
         },
         "3": {
           "bound": 5,
@@ -130,7 +131,7 @@
         },
         "7": {
           "bound": 16,
-          "why": "engine_process_block's frame loop (engine.c:644), reached through the ISR's TIME-mode fast path \u2014 splice_service is inlined at its head. Same BLOCK_FRAMES bound. THIS LOOP IS THE POINT OF THE BRANCH: before the three-pass restructure the block API had no caller outside the host tests, so every per-block hoisting optimisation delivered exactly nothing on the unit."
+          "why": "engine_process_block's frame loop (engine.c:644), reached through the ISR's TIME-mode fast path — splice_service is inlined at its head. Same BLOCK_FRAMES bound. THIS LOOP IS THE POINT OF THE BRANCH: before the three-pass restructure the block API had no caller outside the host tests, so every per-block hoisting optimisation delivered exactly nothing on the unit."
         },
         "8": {
           "bound": 8,
@@ -168,59 +169,63 @@
     },
     "eng_frame": {
       "default_bound": 8,
-      "loops": 13,
+      "loops": 14,
       "overrides": {
         "0": {
           "bound": 8,
-          "why": "taps.c:77, taps_retarget's 8-lane Q32.32 target rebuild \u2014 runs whenever the control value moved, i.e. every sample while a knob or a CV is moving. NUM_TAPS."
+          "why": "taps.c:77, taps_retarget's 8-lane Q32.32 target rebuild — runs whenever the control value moved, i.e. every sample while a knob or a CV is moving. NUM_TAPS."
         },
         "1": {
-          "bound": 5,
-          "why": "engine.c:400, the plain varispeed head advance `while (lp_phase >= 1) { advance; lp_phase -= 1; }`. lp_phase gains lp_rate per output sample and lp_rate is clamped to 4.0 in this same function: 4 whole samples plus a remainder = 5, by construction. If that clamp ever moves, this must move with it."
-        },
-        "10": {
           "bound": 8,
-          "why": "taps.c:87, taps_update's 8-lane one-pole slew in Q32.32."
-        },
-        "11": {
-          "bound": 5,
-          "why": "engine.c:366, the OVERDUB write burst \u2014 the same varispeed while loop with the layered-input resample, the slew-gain write limiter and the FS clamp inside. Same 4.0 rate clamp, same bound of 5."
-        },
-        "12": {
-          "bound": 8,
-          "why": "engine.c:518, THE 8-TAP READ LOOP: position, FM fold, window map, cache probe, interpolation. NUM_TAPS = 8. The governor's FLOOR level skips it entirely on alternate frames, which the ceiling does not model \u2014 this is the level-0 cost."
+          "why": "engine.c:418, the overdub write limiter's LOOKAHEAD running max: the window max is max(partial, od_bmax[0..7]) — 8 sub-block maxima of OD_LOOKAHEAD/8 = 60 samples each, so every control value stays in the max for >= OD_LOOKAHEAD samples (v1.3.1-rc1, DAFx-02 Hämäläinen lookahead). Fixed 8, no data dependence. The matching 8-entry sub-block CLEAR at session end lives in od_session_end() and is unrolled by gcc at -O2; the 480-float ring is NOT cleared by a loop at all — a fill counter (od_ring_fill) makes it read as zero until refilled, precisely so that no 480-store burst exists on the ISR path (C-3a)."
         },
         "2": {
-          "bound": 8,
-          "why": "dl_cache.h:215, the per-FRAME dc_invalidate when the overdub loop or the splice job is writing where taps read (rule 3). DC_LANES."
+          "bound": 5,
+          "why": "engine.c:486, the plain varispeed head advance `while (lp_phase >= 1) { advance; lp_phase -= 1; }`. lp_phase gains lp_rate per output sample and lp_rate is clamped to 4.0 in this same function: 4 whole samples plus a remainder = 5, by construction. If that clamp ever moves, this must move with it."
         },
         "3": {
           "bound": 8,
-          "why": "engine.c:598, `declick_last[i] = taps[i]` \u2014 where the next transport fade starts from. NUM_TAPS."
+          "why": "dl_cache.h:215, the per-FRAME dc_invalidate when the overdub loop or the splice job is writing where taps read (rule 3). DC_LANES."
         },
         "4": {
           "bound": 8,
-          "why": "mixer.c:25 via engine.c:608, mixer_channels() on the HELD-frame path of the governor's floor level. NUM_TAPS."
+          "why": "engine.c:684, `declick_last[i] = taps[i]` — where the next transport fade starts from. NUM_TAPS."
         },
         "5": {
           "bound": 8,
-          "why": "engine.c:418, the chan[] zero-fill on the skip_tap_reads path (pitch and string modes own the outputs). NUM_TAPS."
+          "why": "mixer.c:25 via engine.c:599, mixer_channels() on the normal path."
         },
         "6": {
           "bound": 8,
-          "why": "engine.c:510, the floor level's hold: taps[i] = declick_last[i] instead of eight SDRAM reads. NUM_TAPS."
+          "why": "engine.c:504, the chan[] zero-fill on the skip_tap_reads path (pitch and string modes own the outputs). NUM_TAPS."
         },
         "7": {
           "bound": 8,
-          "why": "mixer.c:25 via engine.c:513, mixer_channels() on the normal path."
+          "why": "engine.c:596, the floor level's hold: taps[i] = declick_last[i] instead of eight SDRAM reads. NUM_TAPS."
         },
         "8": {
           "bound": 8,
-          "why": "engine.c:594, the transport declick crossfade over the 8 taps."
+          "why": "mixer.c:25 via engine.c:694, mixer_channels() on the HELD-frame path of the governor's floor level. NUM_TAPS."
         },
         "9": {
+          "bound": 8,
+          "why": "engine.c:680, the transport declick crossfade over the 8 taps."
+        },
+        "10": {
           "bound": 24,
-          "why": "dl_cache.h:307, dc_stencil's line fill: `for (k = 0; k < DC_W; k += 4)`, DC_W = 96 floats four at a time = 24 iterations, and its loads are the most expensive in the image. MUST BE DECLARED: the exit test compares against a register, so infer_bound() returns None and it would fall back to default_bound = 8 \u2014 a 3x undercount of the largest FMC burst in the ISR. At -O2 gcc emits it as two LDRD + STRD/STR per iteration, i.e. genuine sequential word traffic (it emitted a BYTE loop here at -O3 before the may_alias rewrite \u2014 see dl_cache.h)."
+          "why": "dl_cache.h:307, dc_stencil's line fill: `for (k = 0; k < DC_W; k += 4)`, DC_W = 96 floats four at a time = 24 iterations, and its loads are the most expensive in the image. MUST BE DECLARED: the exit test compares against a register, so infer_bound() returns None and it would fall back to default_bound = 8 — a 3x undercount of the largest FMC burst in the ISR. At -O2 gcc emits it as two LDRD + STRD/STR per iteration, i.e. genuine sequential word traffic (it emitted a BYTE loop here at -O3 before the may_alias rewrite — see dl_cache.h)."
+        },
+        "11": {
+          "bound": 8,
+          "why": "taps.c:87, taps_update's 8-lane one-pole slew in Q32.32."
+        },
+        "12": {
+          "bound": 5,
+          "why": "engine.c:456, the OVERDUB write burst — the same varispeed while loop with the layered-input resample, the slew-gain write limiter and the FS clamp inside. Same 4.0 rate clamp, same bound of 5."
+        },
+        "13": {
+          "bound": 8,
+          "why": "engine.c:604, THE 8-TAP READ LOOP: position, FM fold, window map, cache probe, interpolation. NUM_TAPS = 8. The governor's FLOOR level skips it entirely on alternate frames, which the ceiling does not model — this is the level-0 cost."
         }
       }
     },
@@ -234,7 +239,7 @@
         },
         "1": {
           "bound": 32,
-          "why": "pitch_shift.c:68, the grain's 32-sample streaming cache refill \u2014 the redesign that replaced 32 uncached SDRAM loads per sample after the AA verify panel caught the naive version at ~2x the ISR idle budget. Fixed length, no data dependence."
+          "why": "pitch_shift.c:68, the grain's 32-sample streaming cache refill — the redesign that replaced 32 uncached SDRAM loads per sample after the AA verify panel caught the naive version at ~2x the ISR idle budget. Fixed length, no data dependence."
         }
       }
     },
@@ -244,7 +249,7 @@
       "overrides": {
         "0": {
           "bound": 8,
-          "why": "engine.c:168, the seam-splice crossfade RMW loop. n = spl_quota * frames and both call sites pass frames = 1, with spl_quota capped at SPLICE_CHUNK = 8 in splice_arm (budget contract C-4). Stated explicitly rather than defaulted so that raising SPLICE_CHUNK is visible here. NOTE the derivation in splice_arm yields exactly 8 for every window the shipped constants allow \u2014 see engine.h."
+          "why": "engine.c:168, the seam-splice crossfade RMW loop. n = spl_quota * frames and both call sites pass frames = 1, with spl_quota capped at SPLICE_CHUNK = 8 in splice_arm (budget contract C-4). Stated explicitly rather than defaulted so that raising SPLICE_CHUNK is visible here. NOTE the derivation in splice_arm yields exactly 8 for every window the shipped constants allow — see engine.h."
         }
       }
     }

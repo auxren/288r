@@ -102,7 +102,9 @@ rail agrees (written peak 0.64, no clamp). The ring drains for 5 ms after releas
 last few milliseconds of a layer still land.
 
 *Cost.* ~1.9 KB SRAM, one SDRAM load and ~20 ALU cycles per output sample while
-overdubbing. Measured on the unit: overdub at rate 1 = 82–84%, identical to the loop
+overdubbing. The ring is never cleared by a loop: a fill counter makes it read as zero
+until it has refilled after a session, so no 480-store burst exists on the interrupt path
+(the WCET contract in `tools/wcet.py` rejects undeclared loops there, and did, in CI). Measured on the unit: overdub at rate 1 = 82–84%, identical to the loop
 playing without overdub; ×4 rail = 88%. The host ISR model had predicted 111% for that
 case; it is pessimistic about this path.
 
@@ -186,7 +188,8 @@ re-raise the envelope (hardware read 0.705 instead of 0 the first time).
 
 ### Verification
 
-Host: 43 suites green (`make test`), `make cachecheck` bit-identical, golden fingerprint
+Host: 43 suites green (`make test`), `make cachecheck` bit-identical, `make wcet` (every
+ISR loop bounded; static ceiling 2.9% under the recorded baseline), golden fingerprint
 re-baselined only in the two overdub phases with phases 0–2 bit-exact. Bench (reference
 unit, 2026-09-30, owner live): a 0.5 s SWD poll of transport, overdub, limiter, clamp
 counter, ISR peak (latch reset per sample), control-tick gap, pitch ratio, period estimate,

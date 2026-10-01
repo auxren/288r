@@ -201,6 +201,10 @@ typedef struct {
      * written and the hard clamp never engages (it stays as a backstop). */
     float        od_ring[OD_LOOKAHEAD];
     uint32_t     od_ri;            /* ring index                              */
+    uint32_t     od_ring_fill;     /* valid entries (< OD_LOOKAHEAD = reads as
+                                      zero): a session end "clears" the ring
+                                      by resetting this, not by a 480-store
+                                      burst in the ISR (WCET contract C-3a)  */
     float        od_bmax[8];       /* sub-block maxima of the control signal  */
     float        od_pmax;          /* partial (current sub-block) max         */
     uint32_t     od_bi, od_bc;     /* sub-block index / count within block    */

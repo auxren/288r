@@ -38,8 +38,7 @@ void engine_init(engine_t *e, float *buf, uint32_t len,
     e->od_xsum = 0.0f;
     e->od_xn = 0u;
     e->od_clamp_hits = 0u;
-    for (uint32_t i = 0; i < OD_LOOKAHEAD; i++) e->od_ring[i] = 0.0f;
-    e->od_ri = 0u;
+    e->od_ri = 0u; e->od_ring_fill = 0u;        /* ring reads as zero until filled */
     for (int i = 0; i < 8; i++) e->od_bmax[i] = 0.0f;
     e->od_pmax = 0.0f; e->od_bi = 0u; e->od_bc = 0u; e->od_drain = 0u;
     e->od_lp1 = 0.0f;
@@ -82,8 +81,7 @@ static void od_session_end(engine_t *e)
 {
     e->od_drain = 0u;
     e->od_env = 0.0f; e->od_lim = 1.0f;
-    for (uint32_t i = 0; i < OD_LOOKAHEAD; i++) e->od_ring[i] = 0.0f;
-    e->od_ri = 0u;
+    e->od_ri = 0u; e->od_ring_fill = 0u;        /* lazy clear: no ISR burst  */
     for (int i = 0; i < 8; i++) e->od_bmax[i] = 0.0f;
     e->od_pmax = 0.0f; e->od_bi = 0u; e->od_bc = 0u;
     e->od_lp1 = 0.0f; e->od_lp2 = 0.0f;
@@ -429,9 +427,10 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
             }
             /* the ring delays the layered input by exactly OD_LOOKAHEAD */
             {
-                float xin = e->od_ring[e->od_ri];
+                float xin = (e->od_ring_fill >= OD_LOOKAHEAD) ? e->od_ring[e->od_ri] : 0.0f;
                 e->od_ring[e->od_ri] = xo;
                 if (++e->od_ri >= OD_LOOKAHEAD) e->od_ri = 0u;
+                if (e->od_ring_fill < OD_LOOKAHEAD) e->od_ring_fill++;
                 xo = xin;
             }
             /* The layered input is RESAMPLED onto the loop's varispeed clock:

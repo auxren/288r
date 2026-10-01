@@ -112,7 +112,8 @@ int main(void)
         for (int i = 0; i < 12000; i++) engine_process_multi(&e3, 0.0f, 0.5f, c3);
         ck(rate4 ? "rate 4: limiter state reset after session end"
                  : "rate 1: limiter state reset after session end",
-           e3.od_env == 0.0f && e3.od_lim == 1.0f && e3.od_drain == 0u);
+           e3.od_env == 0.0f && e3.od_lim == 1.0f && e3.od_drain == 0u &&
+           e3.od_ring_fill == 0u);
     }
 
     /* ---- the lookahead is a pure delay of exactly OD_LOOKAHEAD samples ---- */
