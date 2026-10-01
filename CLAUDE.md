@@ -521,8 +521,26 @@ better engine; add new features/controls/modulation only *after* the clone is na
   every lag scores from SRAM (fine pass unchanged; `srch_box=0` = old stride for bench A/B;
   `min_dist` telemetry proves the dmin floor 152, measured 160). Golden phases 3/4 re-baselined
   (changelog in test_golden.c); phases 0–2 bit-exact; cachecheck bit-identical; CCM 20.8 KB.
-  `make test` = **43 suites**. BENCH GATE before release: `isr_pk` with overdub held at rate 4
-  + `od_clamp_hits` == 0 on a hot session.
+  `make test` = **43 suites**. **BENCH SESSION 9 (2026-09-30, owner live): BOTH GATES PASSED
+  + two more fixes landed the same evening.** Overdub on a hot source: `od_clamp_hits` 0 through
+  every session incl. 3.5 s parked at the x4 varispeed rail (ISR 88% at the rail, 82-84% at
+  rate 1 = same as the loop playing without overdub; the host model had said 111%). Pitch:
+  ISR 75-77% through sweeps, `min_dist` never below base (256). FOUND + FIXED on the bench:
+  (3) **period scan -> SRAM** — the scan scored 40 lags/call straight from SDRAM (1024
+  window-mapped reads per lag, two divisions each in RECIRC) and with the ISR owning 77% of
+  the CPU that was a 115-150 ms control-tick stall, continuously, in pitch mode (A/B over SWD:
+  bypass 8 blocks, box or stride search identical 340-460 -> the SEARCH was innocent; the
+  July chunking fix never touched the scan). Now box-8 into a CCM copy, scored from SRAM:
+  tick gap 340-460 -> 50-100 blocks (mean 92), scans complete every ~0.5 s, and the same
+  box kills the scan's lag-domain alias (1492 -> 1368 for a 1371 period). (4) **od release
+  ramp ran only in the recirc branch** — the #10 auto re-arm drops into WRITE at let-go, so
+  od_gain froze at 1.0 (SWD: 4 s) and every tap sat on linear interp (Hermite gated on it);
+  now the ramp runs in both branches + a session-end reset of the limiter/ring state (ordered
+  AFTER the last drain sample's control update). Remaining pitch-mode gaps (17-33 ms) = the
+  search's one-shot fill + fine pass; chunking those finer risks the documented stale-geometry
+  hazard at high ratios — left alone. Monitor recipe: /tmp/odmon.sh-style 0.5 s SWD poll of
+  od_*/isr_pk(reset each sample)/tick_gap(reset)/ps.period/conf/min_dist; re-nm after EVERY
+  build (g_engine moved 0x100039e8 -> 0x100044b0 between builds).
 - **Three pulse input jacks (reference):** PG10/11/12 = write / recirc / arm. Each duplicates a
   panel action, edge-latched at block rate; arm fires a loop capture regardless of arm state.
   No clock function today — that is what clocked mode adds.

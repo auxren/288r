@@ -75,6 +75,21 @@ static inline uint32_t od_cell_ahead(uint32_t wpos, uint32_t len, uint32_t ls,
     return (a >= len) ? a - len : a;
 }
 
+/* end of an overdub session: forget the limiter state and the lookahead ring
+ * so the NEXT session starts at unity gain with an empty ring (a stale
+ * envelope from a hot session would start the next one ~6 dB down) */
+static void od_session_end(engine_t *e)
+{
+    e->od_drain = 0u;
+    e->od_env = 0.0f; e->od_lim = 1.0f;
+    for (uint32_t i = 0; i < OD_LOOKAHEAD; i++) e->od_ring[i] = 0.0f;
+    e->od_ri = 0u;
+    for (int i = 0; i < 8; i++) e->od_bmax[i] = 0.0f;
+    e->od_pmax = 0.0f; e->od_bi = 0u; e->od_bc = 0u;
+    e->od_lp1 = 0.0f; e->od_lp2 = 0.0f;
+    e->od_xsum = 0.0f; e->od_xn = 0u; e->od_xprev = 0.0f;
+}
+
 float engine_clamp_base(float base, uint32_t len, float time_hi)
 {
     /* deepest tap = base * (PHASE_FULLSCALE/PHASE_FULLSCALE) * time_hi = base*time_hi.
@@ -304,6 +319,23 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
 
     const uint32_t ls = bk->ls, le = bk->le;
 
+    /* OVERDUB engage/release ramp: runs EVERY sample, in both transport
+     * branches (bench 2026-09-30: it lived in the recirc branch, and the #10
+     * auto re-arm drops the transport into WRITE the instant the momentary is
+     * released — od_gain froze at 1.0 for the whole WRITE period, which also
+     * held every tap on linear interpolation since Hermite is gated on it). */
+    if (e->od_active && recirc) { e->od_gain += (1.0f - e->od_gain) * 0.001f; }
+    else if (e->od_gain > 0.0f) { e->od_gain -= e->od_gain * 0.001f;
+                                  if (e->od_gain < 1e-4f) {
+                                      e->od_gain = 0.0f;
+                                      /* flush the lookahead ring into the loop
+                                       * (recirc) — in WRITE there is nothing to
+                                       * flush into, so end the session now */
+                                      if (recirc) e->od_drain = OD_LOOKAHEAD;
+                                      else        od_session_end(e);
+                                  } }
+    else if (!recirc && e->od_drain > 0u) od_session_end(e);
+
     /* 2. record or recirculate */
     if (!recirc) {
         float x = mixer_input(input, e->in_gain);
@@ -342,19 +374,14 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
         }
         e->lp_rate = r;
         e->lp_phase += r;
-        /* OVERDUB: ramp the layered input in/out over ~10 ms at the hold
-         * edges (a step at engage/release wrote a click front every tap
-         * crossed each pass — field: "staticy"), and knee the WRITTEN value
-         * at 0.75 with asymptote 1.0 — the same regime the output stage is
-         * linear in, so stacked layers compress gracefully instead of
-         * parking the whole loop in the output limiter (field: "digitally
-         * clippy"; the old 2.0 ceiling overshot DAC-linear range). */
-        if (e->od_active)      { e->od_gain += (1.0f - e->od_gain) * 0.001f; }
-        else if (e->od_gain > 0.0f) { e->od_gain -= e->od_gain * 0.001f;
-                                      if (e->od_gain < 1e-4f) {
-                                          e->od_gain = 0.0f;
-                                          e->od_drain = OD_LOOKAHEAD; /* flush */
-                                      } }
+        /* OVERDUB: the layered input ramps in/out over ~10 ms at the hold
+         * edges (ramp above; a step at engage/release wrote a click front
+         * every tap crossed each pass — field: "staticy"), and the WRITTEN
+         * value is held at the 0.75 knee by the lookahead limiter — the same
+         * regime the output stage is linear in, so stacked layers compress
+         * gracefully instead of parking the whole loop in the output limiter
+         * (field: "digitally clippy"; the old 2.0 ceiling overshot DAC-linear
+         * range). */
         if (e->od_gain > 0.0f || e->od_drain > 0u) {
             float xo = 0.0f;
             if (e->od_gain > 0.0f) {
@@ -366,7 +393,7 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
                 e->od_lp2 += (e->od_lp1 - e->od_lp2) * OD_LP_A;
                 xo = e->od_lp2;
             } else {
-                e->od_drain--;
+                e->od_drain--;        /* session ends at the bottom of the branch */
             }
             /* LOOKAHEAD CONTROL: `xo` lands OD_LOOKAHEAD output samples from
              * now, at the cell the head reaches after ~OD_LOOKAHEAD*rate
@@ -451,6 +478,9 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
             }
             if (nw > 0) { e->od_xsum = 0.0f; e->od_xn = 0u; }
             e->od_xprev = xo;
+            /* ring drained: forget the session (AFTER this sample's control
+             * update, or the loop's own content re-raises the envelope) */
+            if (e->od_gain <= 0.0f && e->od_drain == 0u) od_session_end(e);
         } else {
             while (e->lp_phase >= 1.0f) {
                 dl_advance_loop(&e->dl, ls, le);

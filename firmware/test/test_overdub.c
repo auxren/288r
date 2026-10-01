@@ -105,6 +105,14 @@ int main(void)
            mx3 <= (rate4 ? 0.80f : 0.7575f));
         ck(rate4 ? "rate 4 burst: hard clamp never engages"
                  : "rate 1 burst: hard clamp never engages", e3.od_clamp_hits == 0u);
+        /* session end while the loop keeps playing: after the release ramp
+         * and the 5 ms ring drain, the limiter state is fully reset (bench
+         * 2026-09-30: env read 0.705 — the loop's own content — because the
+         * reset ran before the final drain sample's control update) */
+        for (int i = 0; i < 12000; i++) engine_process_multi(&e3, 0.0f, 0.5f, c3);
+        ck(rate4 ? "rate 4: limiter state reset after session end"
+                 : "rate 1: limiter state reset after session end",
+           e3.od_env == 0.0f && e3.od_lim == 1.0f && e3.od_drain == 0u);
     }
 
     /* ---- the lookahead is a pure delay of exactly OD_LOOKAHEAD samples ---- */
@@ -127,6 +135,30 @@ int main(void)
                first, (int)OD_LOOKAHEAD);
         ck("layered input is delayed by OD_LOOKAHEAD (+LP settle)",
            first >= (int)OD_LOOKAHEAD && first <= (int)OD_LOOKAHEAD + 8);
+    }
+
+    /* ---- release ramp must run in WRITE too (bench 2026-09-30): the auto
+     * re-arm (#10) drops the transport into WRITE the instant the momentary is
+     * released, and the ramp lived in the recirc branch — od_gain froze at 1.0
+     * for the whole WRITE period (SWD: g=1.00 for 4 s), which also held the
+     * taps on linear interpolation (Hermite is gated on od_gain == 0). */
+    {
+        engine_t e6; static float b6[LEN];
+        engine_init(&e6, b6, LEN, 2000.0f, 0.4f, 1.6f, 0.02f);
+        float c6[NUM_TAPS];
+        for (int i = 0; i < 20000; i++) engine_process_multi(&e6, 0.3f, 0.5f, c6);
+        engine_recirc_window(&e6, 8000u);
+        e6.od_active = 1;
+        for (int i = 0; i < 6000; i++) engine_process_multi(&e6, 0.3f, 0.5f, c6);
+        ck("od engaged: gain ramped up", e6.od_gain > 0.99f);
+        e6.od_active = 0;
+        engine_write(&e6);                 /* re-arm straight into WRITE */
+        /* exponential ramp, 0.001/sample: 1e-4 is reached after ~9200 */
+        for (int i = 0; i < 12000; i++) engine_process_multi(&e6, 0.3f, 0.5f, c6);
+        printf("      od_gain 12000 samples after release into WRITE = %.4f\n",
+               (double)e6.od_gain);
+        ck("od release ramp completes while transport is in WRITE",
+           e6.od_gain == 0.0f);
     }
 
     /* ---- sustained hot layering: bounded AND shape-preserving ------------- */
