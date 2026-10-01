@@ -66,3 +66,29 @@ int cm_swallows_pulse_jacks(const clockmode_t *cm)
      * delay window starts following the clock. */
     return (cm->engaged || cm->pairs > 0u) ? 1 : 0;
 }
+
+/* ---- edge pairing (see clock_mode.h) ---------------------------------------- */
+void cm_pair_init(cm_pair_t *p)
+{
+    p->t[0] = 0u; p->t[1] = 0u; p->pend = 0u;
+}
+
+unsigned cm_pair_block(cm_pair_t *p, unsigned rise, uint32_t block, uint32_t *stamp)
+{
+    unsigned ev = 0u;
+    /* Written out per jack rather than as a loop: this runs inside the audio
+     * ISR and the WCET contract (tools/wcet.py) prices every loop there. */
+    /* 1. expire pending edges whose partner is now out of the window */
+    if ((p->pend & 1u) && (block - p->t[0]) > CM_PAIR_WINDOW_BLOCKS) { p->pend &= (uint8_t)~1u; ev |= CM_EV_SINGLE_W; }
+    if ((p->pend & 2u) && (block - p->t[1]) > CM_PAIR_WINDOW_BLOCKS) { p->pend &= (uint8_t)~2u; ev |= CM_EV_SINGLE_R; }
+    /* 2. register this block's rises */
+    if (rise & 1u) { p->t[0] = block; p->pend |= 1u; }
+    if (rise & 2u) { p->t[1] = block; p->pend |= 2u; }
+    /* 3. both pending (and, by step 1, within the window of each other) = pair */
+    if ((p->pend & 0x3u) == 0x3u) {
+        *stamp = (p->t[0] < p->t[1]) ? p->t[0] : p->t[1];
+        p->pend = 0u;
+        ev |= CM_EV_PAIR;
+    }
+    return ev;
+}

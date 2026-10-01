@@ -33,6 +33,8 @@ unsigned bsp_resolution_bits(void); /* 12/16/20 from the 2-bit selector */
 int  bsp_sw_delay_extend(void);     /* config DIP sw1: x10 delay/looper ([BENCH] pin) */
 int  bsp_sw_bandwidth_limit(void);  /* config DIP sw2: 11025 Hz limit ([BENCH] pin)   */
 int  bsp_pulse_in(unsigned which);  /* pulse jacks: 0=write(PG10) 1=recirc(PG11) 2=arm(PG12), active-high */
+void     bsp_pulse_exti_init(void);    /* hardware rising-edge capture on the three jacks (EXTI 10..12) */
+unsigned bsp_pulse_take_rises(void);   /* read-and-clear: bit0 write, bit1 recirc, bit2 arm rose since last call */
 
 /* Control-surface ADC over SPI2 (sliders/pots). */
 void     bsp_spi2_adc_init(void);

@@ -215,6 +215,59 @@ int main(void)
         ck("jacks are handed back to transport", !cm_swallows_pulse_jacks(&cm));
     }
 
+    /* ---------- edge PAIRING with skew (bench 2026-09-30) ----------
+     * One clock split to two jacks arrives on two comparators: the rises land
+     * in different 0.33 ms blocks. The ISR used to require both in the SAME
+     * block, so most pulses were dropped; the follower saw 2x/4x intervals and
+     * accepted them, and the lock dropped out to the 2 s timeout every ~3 s
+     * (SWD trace: base 24000 <-> 41440 flipping). A pair is now "the other
+     * jack rose within CM_PAIR_WINDOW_BLOCKS", stamped at the EARLIER edge. */
+    {
+        cm_pair_t pr; cm_pair_init(&pr);
+        uint32_t st = 0; unsigned ev;
+        ev = cm_pair_block(&pr, 0x3u, 100u, &st);
+        ck("same-block rise on both jacks is a pair",       (ev & CM_EV_PAIR) && st == 100u);
+        ev = cm_pair_block(&pr, 0x0u, 101u, &st);
+        ck("...and is counted exactly once",                 ev == 0u);
+
+        cm_pair_init(&pr);
+        ev  = cm_pair_block(&pr, 0x1u, 200u, &st);          /* write first */
+        ck("a lone first edge is not yet anything",         ev == 0u);
+        ev  = cm_pair_block(&pr, 0x2u, 203u, &st);          /* recirc 1 ms later */
+        ck("skewed rise within the window pairs",           (ev & CM_EV_PAIR) != 0u);
+        ck("the pair is stamped at the EARLIER edge",       st == 200u);
+
+        cm_pair_init(&pr);
+        ev  = cm_pair_block(&pr, 0x2u, 300u, &st);          /* recirc first */
+        ev |= cm_pair_block(&pr, 0x1u, 300u + CM_PAIR_WINDOW_BLOCKS, &st);
+        ck("skew up to the full window still pairs",        (ev & CM_EV_PAIR) && st == 300u);
+
+        cm_pair_init(&pr);
+        ev = cm_pair_block(&pr, 0x1u, 400u, &st);
+        for (uint32_t b = 401u; b <= 400u + CM_PAIR_WINDOW_BLOCKS; b++) ev |= cm_pair_block(&pr, 0u, b, &st);
+        ck("inside the window a lone edge is still pending", ev == 0u);
+        ev = cm_pair_block(&pr, 0u, 401u + CM_PAIR_WINDOW_BLOCKS, &st);
+        ck("an edge whose partner never comes is a SINGLE",  (ev & CM_EV_SINGLE_W) != 0u);
+        ev = cm_pair_block(&pr, 0x2u, 600u, &st);
+        ev |= cm_pair_block(&pr, 0u, 601u + CM_PAIR_WINDOW_BLOCKS, &st);
+        ck("a late partner is a new single, not a pair",     (ev & CM_EV_SINGLE_R) && !(ev & CM_EV_PAIR));
+
+        /* a steady skewed clock: exactly one pair per period, stamps on the grid */
+        cm_pair_init(&pr);
+        unsigned pairs = 0, singles = 0; int grid_ok = 1;
+        for (uint32_t b = 1000u; b < 1000u + 40u * 60u; b++) {
+            unsigned r = 0;
+            if ((b - 1000u) % 60u == 0u) r |= 0x1u;            /* write on the grid   */
+            if ((b - 1000u) % 60u == 4u) r |= 0x2u;            /* recirc 4 blocks late */
+            ev = cm_pair_block(&pr, r, b, &st);
+            if (ev & CM_EV_PAIR) { pairs++; if ((st - 1000u) % 60u != 0u) grid_ok = 0; }
+            if (ev & (CM_EV_SINGLE_W | CM_EV_SINGLE_R)) singles++;
+        }
+        ck("steady skewed clock: one pair per period",       pairs == 40u);
+        ck("steady skewed clock: no singles",                singles == 0u);
+        ck("steady skewed clock: stamps sit on the clock grid", grid_ok);
+    }
+
     printf(fails ? "\n%d FAILURES\n" : "\nall clock-follow checks passed\n", fails);
     return fails ? 1 : 0;
 }

@@ -148,6 +148,9 @@ static uint8_t g_pulse_prev = 0;
 /* coincident write+recirc rising edge, stamped in the ISR (see above) */
 static volatile uint32_t g_cf_edge_blk = 0;
 static volatile uint8_t  g_cf_edge_seq = 0;
+static volatile uint8_t  g_cf_single_w_seq = 0;   /* unpaired write-jack rises  */
+static volatile uint8_t  g_cf_single_r_seq = 0;   /* unpaired recirc-jack rises */
+static cm_pair_t         g_cf_pair;               /* ISR-only edge pairing      */
 
 /* signal-in FM presence envelope (ISR-only state) + the expander gain it
  * produces. The gain is recomputed once per BLOCK in the ISR epilogue and held
@@ -762,7 +765,10 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         uint8_t now = (uint8_t)((bsp_pulse_in(0) ? 1u : 0u)
                               | (bsp_pulse_in(1) ? 2u : 0u)
                               | (bsp_pulse_in(2) ? 4u : 0u));
-        const uint8_t rise = (uint8_t)(now & (uint8_t)~g_pulse_prev);
+        /* polled rises (gates, long pulses) OR'd with the hardware-captured
+         * ones (EXTI: ~30 us triggers the 3 kHz poll missed 95% of the time) */
+        const uint8_t rise = (uint8_t)((now & (uint8_t)~g_pulse_prev)
+                                       | (uint8_t)(bsp_pulse_take_rises() & 0x7u));
         g_pulse_latch |= rise;
         /* CLOCKED MODE needs the pulse TIME, not just that one happened. The
          * panel tick runs every 15 blocks, so timing clock edges there
@@ -770,9 +776,15 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
          * fresh pulse on every tick it stays high. Stamp the coincident RISING
          * edge here instead: block resolution (0.33 ms), and an edge is an edge
          * however long the gate is. */
-        if ((rise & 0x3u) == 0x3u) {          /* write AND recirc rose together */
-            g_cf_edge_blk = g_blocks;
-            g_cf_edge_seq++;
+        /* ...and PAIR them with a window (bench 2026-09-30): the two jacks are
+         * two comparators, so one clock's rise lands in different blocks on
+         * each. Same-block coincidence dropped most pulses (see clock_mode.h). */
+        {
+            uint32_t st;
+            unsigned ev = cm_pair_block(&g_cf_pair, rise & 0x3u, g_blocks, &st);
+            if (ev & CM_EV_PAIR)     { g_cf_edge_blk = st; g_cf_edge_seq++; }
+            if (ev & CM_EV_SINGLE_W) g_cf_single_w_seq++;
+            if (ev & CM_EV_SINGLE_R) g_cf_single_r_seq++;
         }
         g_pulse_prev = now;
     }
@@ -854,6 +866,7 @@ int main(void)
     bsp_clock_init();
     bsp_sdram_init();
     bsp_panel_gpio_init();
+    bsp_pulse_exti_init();   /* hardware edge capture on the pulse jacks */
 
     /* --- Boot-config straps: read ONCE here, deliberately NOT polled ----------
      * The back-panel config DIP (resolution, and later sw1 x10-extend / sw2
@@ -949,6 +962,7 @@ int main(void)
         looper_init(&g_lp, &lcfg);
         cf_init(&g_cf, CF_TRUE_FS_HZ);   /* the TRUE rate, not SAMPLE_RATE_HZ */
         cm_init(&g_cm);
+        cm_pair_init(&g_cf_pair);
         g_engine.od_decay = OD_DECAY;
     }
 #endif
@@ -1238,11 +1252,16 @@ int main(void)
                  * measured period jumped between 1920 and 7424 samples and the
                  * window chased it — audible as delay-time modulation rather
                  * than a lock. */
-                static uint8_t  cf_seq_prev = 0;
+                static uint8_t  cf_seq_prev = 0, cf_sw_prev = 0, cf_sr_prev = 0;
                 const uint8_t   seq = g_cf_edge_seq;
+                const uint8_t   sw  = g_cf_single_w_seq, sr = g_cf_single_r_seq;
                 const int       new_edge = (seq != cf_seq_prev);
                 const uint32_t  stamp = g_cf_edge_blk;
-                const int jack_w = new_edge, jack_r = new_edge;
+                /* a pair = both jacks; an expired single = that jack alone
+                 * (CM_EXIT_SINGLES of those = one cable came out) */
+                const int jack_w = new_edge || (sw != cf_sw_prev);
+                const int jack_r = new_edge || (sr != cf_sr_prev);
+                cf_sw_prev = sw; cf_sr_prev = sr;
                 if (new_edge) {
                     if (g_cf_last_blocks != 0u)
                         (void)cf_pulse(&g_cf, (stamp - g_cf_last_blocks) * BLOCK_FRAMES);

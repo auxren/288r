@@ -85,4 +85,27 @@ int  cm_update(clockmode_t *cm, int wr_edge, int rc_edge, int clock_lost);
  * engagement let the first pulses through as transport and captured a loop. */
 int  cm_swallows_pulse_jacks(const clockmode_t *cm);
 
+/* ---- EDGE PAIRING (bench 2026-09-30) ---------------------------------------
+ * One clock split to the two jacks lands on two comparators, so the two rising
+ * edges fall in different audio blocks; requiring them in the SAME block (the
+ * first build) dropped most pulses, the follower accepted 2x/4x intervals, and
+ * the lock fell to the 2 s timeout every ~3 s (SWD: base 24000 <-> 41440).
+ * A pair is now: the other jack rose within CM_PAIR_WINDOW_BLOCKS. The pair is
+ * stamped at the EARLIER edge so a constant skew does not jitter the period.
+ * An edge whose partner never arrives expires as a SINGLE (write or recirc),
+ * which is also what lets the "one cable unplugged" exit fire.
+ * Called from the audio ISR once per block (cheap: a few compares). */
+#define CM_PAIR_WINDOW_BLOCKS 15u     /* 5 ms at 16 frames/96 kHz = one panel tick */
+#define CM_EV_PAIR      1u
+#define CM_EV_SINGLE_W  2u
+#define CM_EV_SINGLE_R  4u
+typedef struct {
+    uint32_t t[2];        /* block of the pending rise per jack (0 = write)   */
+    uint8_t  pend;        /* bit0 / bit1 = a rise is waiting for its partner */
+} cm_pair_t;
+void     cm_pair_init(cm_pair_t *p);
+/* rise: bit0 = write rose this block, bit1 = recirc rose. Returns CM_EV_*
+ * flags; *stamp is the pair's block (earlier edge) when CM_EV_PAIR is set. */
+unsigned cm_pair_block(cm_pair_t *p, unsigned rise, uint32_t block, uint32_t *stamp);
+
 #endif /* CLOCK_MODE_H */

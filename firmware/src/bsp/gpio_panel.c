@@ -91,6 +91,50 @@ int bsp_pulse_in(unsigned which)   /* 0=write 1=recirc 2=arm */
     return (GPIOG->IDR >> pin[which]) & 1u;
 }
 
+/* HARDWARE EDGE CAPTURE on the three pulse jacks (bench session 9, clocked
+ * mode): the audio ISR polls the jacks once per 16-frame block (~3 kHz), which
+ * catches a 1 ms pulse every time but a ~30 us trigger — what the owner's
+ * clock module puts out — only when it happens to straddle a poll. Measured:
+ * 2 of ~46 pulses seen in 10 s. EXTI lines 10..12 latch every rising edge in
+ * hardware; the handler just accumulates the bits and the block ISR drains
+ * them with bsp_pulse_take_rises(). Priority sits BELOW the audio DMA IRQ so
+ * it never preempts the audio path (the stamp is block-granular anyway). */
+static volatile uint32_t g_pulse_exti_rise = 0u;   /* bit0 write bit1 recirc bit2 arm */
+
+void bsp_pulse_exti_init(void)
+{
+    RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
+    (void)RCC->APB2ENR;
+    /* EXTICR[2] holds lines 8..11 (4 bits each), EXTICR[3] lines 12..15; 0x6 = port G */
+    SYSCFG->EXTICR[2] = (SYSCFG->EXTICR[2] & ~((0xFu << 8) | (0xFu << 12)))
+                      | (0x6u << 8) | (0x6u << 12);           /* PG10, PG11 */
+    SYSCFG->EXTICR[3] = (SYSCFG->EXTICR[3] & ~0xFu) | 0x6u;   /* PG12       */
+    const uint32_t m = (1u << 10) | (1u << 11) | (1u << 12);
+    EXTI->RTSR |=  m;          /* rising edges only (jacks are active-high)  */
+    EXTI->FTSR &= ~m;
+    EXTI->PR    =  m;          /* clear anything pending from before         */
+    EXTI->IMR  |=  m;
+    NVIC_SetPriority(EXTI15_10_IRQn, 2);   /* audio DMA is 1: never preempt it */
+    NVIC_EnableIRQ(EXTI15_10_IRQn);
+}
+
+void EXTI15_10_IRQHandler(void)
+{
+    uint32_t pr = EXTI->PR & ((1u << 10) | (1u << 11) | (1u << 12));
+    EXTI->PR = pr;                           /* write-1-to-clear              */
+    g_pulse_exti_rise |= pr >> 10;
+}
+
+unsigned bsp_pulse_take_rises(void)
+{
+    /* read-and-clear; the EXTI handler cannot run between the two statements
+     * while we are inside the (higher-priority) audio ISR, and from the
+     * superloop a lost race only delays an edge by one block */
+    unsigned r = g_pulse_exti_rise;
+    g_pulse_exti_rise = 0u;
+    return r;
+}
+
 int bsp_sw_bandwidth_limit(void)
 {
 #if SW_BANDWIDTH_MAPPED
