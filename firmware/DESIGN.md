@@ -785,8 +785,8 @@ multi-master + codec-share soak needs the wire.
 
 ## Clocked mode — external clock sync (specced 2026-08-22, ready to build)
 
-**Status: designed, not implemented.** Everything below is decided; the next
-firmware session can build it. Host-testable end to end except the jack wiring.
+**Status: implemented on `rc` (2026-09, commits 73ecb54..4fbfcf2), shipped field-untested
+in v1.3.1-rc1.** Everything below is as built. Host-tested end to end except the jack wiring.
 
 ### Entry: bridge the clock into BOTH transport pulse jacks
 
