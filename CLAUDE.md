@@ -617,6 +617,9 @@ Python tooling: `re/.venv` (capstone). Keystone won't load on arm64 → assemble
 cd firmware && make test     # host unit tests (all pass)
 cd firmware && make engine   # cross-compile engine for STM32F429 (compile-only proof)
 cd firmware && make firmware # link flashable image -> build/fw/b288-community.hex
+cd firmware && make wcet     # ISR WCET contract (CI runs it on every tag; an undeclared
+                             # ISR loop = red CI = NO release. Run it BEFORE tagging.)
+cd firmware && make cachecheck  # dl_cache on/off bit-identical gate
 re/.venv/bin/python re/scripts/apply_patch1.py   # (re)generate + verify Patch 1 -> re/patches/patched.hex
 ```
 
