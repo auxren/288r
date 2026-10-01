@@ -209,6 +209,32 @@ static inline void dc_init(dl_cache_t *c)
  * refusing to cache until a line has proven itself would mean never caching
  * again. The burst bucket (rule B) is what keeps the eight of them from landing
  * on the same frame, so it is deliberately NOT refilled here. */
+/* Drop only the lanes whose line overlaps buffer indices [lo, lo+n) mod len —
+ * the seam-splice job writes `spl_quota` consecutive samples per frame, and
+ * dropping all eight lanes for that (the first design) switched the cache off
+ * for the whole splice window: 512 words/block of direct tap reads on top of
+ * the splice RMW = the one over-budget block at every loop capture (bench
+ * session 9). At most one or two lines can overlap n <= 8 samples. */
+static inline void dc_invalidate_range(dl_cache_t *c, uint32_t lo, uint32_t n,
+                                       uint32_t len)
+{
+    for (unsigned i = 0; i < DC_LANES; i++) {
+        dl_line_t *L = &c->lane[i];
+        if (!L->valid) continue;
+        /* distance from the line's base to the write start, modulo len: the
+         * write [lo, lo+n) touches the line iff that distance is < DC_W, or
+         * the write wraps back into the line from below (lo+n crosses base) */
+        uint32_t d = (lo >= L->base) ? lo - L->base : lo + len - L->base;
+        uint32_t e = (L->base >= lo) ? L->base - lo : L->base + len - lo;
+        /* life = 0, NOT DC_PAYBACK: a line the splice is writing through would
+         * refill every frame (the write walks 8 samples/frame along the seam,
+         * so the next frame hits the same line again: 96 words per frame per
+         * lane, measured 912 words/block). Park it direct; rule A re-probes
+         * after DC_REPROBE frames, by which time the write has moved on. */
+        if (d < DC_W || e < n) { L->valid = 0u; L->life = 0u; }
+    }
+}
+
 static inline void dc_invalidate(dl_cache_t *c)
 {
     for (unsigned i = 0; i < DC_LANES; i++) {

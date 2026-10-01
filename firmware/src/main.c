@@ -362,6 +362,18 @@ struct dbg_panel {
     uint16_t gov_over;
     float    mult;        /* smoothed multiplier [0,1]            */
     float    base;        /* current taps base_delay (samples)    */
+    /* OVERRUN SNAPSHOT (bench session 9): the engine state at the most recent
+     * block that missed its deadline, so a 0.25 s SWD poll can say WHICH
+     * transition it was instead of guessing from neighbours. */
+    uint16_t ovr_cyc;     /* that block's cycles >> 4                      */
+    uint8_t  ovr_xp;      /* transport mode at the block                   */
+    uint8_t  ovr_lp;      /* looper state                                   */
+    uint8_t  ovr_spl;     /* splice job active                              */
+    uint8_t  ovr_declick; /* declick fade running                           */
+    uint8_t  ovr_seam;    /* write-resume seam blend running                */
+    uint8_t  ovr_od;      /* overdub gain > 0                               */
+    uint16_t ovr_spl_idx; /* splice progress (samples of the fade done)     */
+    uint16_t ovr_misses;  /* dl_cache misses in that block                  */
 };
 volatile struct dbg_panel g_dbg_panel __attribute__((used));
 
@@ -800,7 +812,26 @@ void bsp_audio_isr(const int32_t *in, int32_t *out, unsigned frames)
         /* Budget contract C-3c: this block's cost decides the NEXT block's
          * quality level. Measure last, act first — the governor is the reason
          * a single expensive block cannot become a sustained overrun. */
-        gov_report(cycles);
+        {
+            static uint32_t ovr_prev = 0u;
+            static uint32_t miss_prev = 0u;
+            gov_report(cycles);
+            const uint32_t ov = gov_state()->over;
+            const uint32_t miss_now = g_engine.dc.miss;
+            if (ov != ovr_prev) {               /* this block missed its deadline */
+                g_dbg_panel.ovr_cyc     = (uint16_t)dt;
+                g_dbg_panel.ovr_xp      = (uint8_t)g_engine.xport.mode;
+                g_dbg_panel.ovr_lp      = g_dbg_panel.lp_state;
+                g_dbg_panel.ovr_spl     = g_engine.spl_active;
+                g_dbg_panel.ovr_declick = (uint8_t)(g_engine.declick_n ? 1u : 0u);
+                g_dbg_panel.ovr_seam    = (uint8_t)(g_engine.wr_seam_n ? 1u : 0u);
+                g_dbg_panel.ovr_od      = (uint8_t)(g_engine.od_gain > 0.0f ? 1u : 0u);
+                g_dbg_panel.ovr_spl_idx = (uint16_t)g_engine.spl_idx;
+                g_dbg_panel.ovr_misses  = (uint16_t)(miss_now - miss_prev);
+                ovr_prev = ov;
+            }
+            miss_prev = miss_now;
+        }
         (void)bc_tick(&g_blkclk, cyc1, frames);
     }
 #if LED_INPUT_CLIP_MODE

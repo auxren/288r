@@ -118,7 +118,8 @@ static void splice_arm(engine_t *e, uint32_t start, uint32_t end, uint32_t fade)
     e->spl_start = start; e->spl_end = end; e->spl_fade = fade;
     e->spl_idx = 0; e->spl_active = 1;
 #if DL_CACHE_ENABLE
-    dc_invalidate(&e->dc);        /* rule 4: guard samples just moved */
+    /* rule 4: the guard samples just moved — drop only the lines holding them */
+    dc_invalidate_range(&e->dc, end % e->dl.len, 4u, e->dl.len);
 #endif
     /* PER-FRAME QUOTA — and why the old flat 8 turns out to be load-bearing.
      *
@@ -194,12 +195,18 @@ static void splice_service(engine_t *e, unsigned frames)
     uint32_t i    = done;
     uint32_t tail = (e->spl_end   + len - fade + done) % len;
     uint32_t lead = (e->spl_start + len - fade + done) % len;
+    const uint32_t tail0 = tail;
     for (uint32_t k = 0; k < n; k++, i++) {
         float w = (float)(i + 1u) * inv;          /* ..end-1 reaches w=1       */
         buf[tail] = (1.0f - w) * buf[tail] + w * buf[lead];
         if (++tail >= len) tail = 0u;
         if (++lead >= len) lead = 0u;
     }
+#if DL_CACHE_ENABLE
+    /* the only cached lines this frame can have made stale are the ones that
+     * cover [tail0, tail0+n): drop those, keep the other seven serving */
+    dc_invalidate_range(&e->dc, tail0, n, len);
+#endif
     e->spl_idx = done + n;
     if (e->spl_idx >= fade) e->spl_active = 0;
 }
@@ -584,7 +591,11 @@ static inline float eng_frame(engine_t *e, float input, float time_raw01,
      * writing into the buffer, no line may be trusted OR kept. Dropping them
      * every frame (8 byte stores) rather than on the edge keeps the reasoning
      * to one line — and both states are rare and already expensive. */
-    const int dc_ok = !e->spl_active && (e->od_gain <= 0.0f);
+    /* The SPLICE job is no longer a bypass: it invalidates exactly the lanes
+     * its writes touch, inside splice_service (dc_invalidate_range), which
+     * runs before this frame's tap reads. Overdub still bypasses: it writes
+     * wherever the recirc head is, every frame. */
+    const int dc_ok = (e->od_gain <= 0.0f);
     if (!dc_ok) dc_invalidate(&e->dc);
 #endif
     float taps[NUM_TAPS];
@@ -757,11 +768,16 @@ static void declick_arm(engine_t *e)
     e->declick_len   = len;
     e->declick_n     = len;
     e->declick_since = 0u;
-#if DL_CACHE_ENABLE
-    /* Every transport entry passes through here, and every one of them moves
-     * the head and/or remaps the window (dl_cache.h rule 4). */
-    dc_invalidate(&e->dc);
-#endif
+    /* No cache flush here any more (bench session 9). Every transport entry
+     * moves the head and/or remaps the window, but that changes which buffer
+     * INDICES the taps read, not the buffer's contents, and the cache keys its
+     * lines by index: a line is as valid after the head teleports as before.
+     * The write-head clearance rule is checked at read time, so a tap landing
+     * near the new head is refused, not served stale. The flush here plus the
+     * one in splice_arm were the all-lanes refill tail that made every loop
+     * capture one over-budget block. `make cachecheck` (cache on/off
+     * bit-identical through the golden scenario's captures and releases) is
+     * the proof this holds. */
 }
 
 void engine_write(engine_t *e)

@@ -91,7 +91,8 @@
       "why the counts went UP while the code got smaller. Do not renumber by eye.",
       "Nearly every bound here is 8 = NUM_TAPS = DC_LANES = KS_STRINGS; the ones",
       "that are not are the ones worth reading.",
-      "RE-ESTABLISHED 2026-09-30 for v1.3.1-rc1 (eng_frame 13 -> 14): the lookahead write limiter added its 8-entry running-max loop (new index 1); every other eng_frame loop kept its bound and only renumbered. Mapping re-done with FW_OPT='-O2 -g' (hex byte-identical) + addr2line -i on each header."
+      "RE-ESTABLISHED 2026-09-30 for v1.3.1-rc1 (eng_frame 13 -> 14): the lookahead write limiter added its 8-entry running-max loop (new index 1); every other eng_frame loop kept its bound and only renumbered. Mapping re-done with FW_OPT='-O2 -g' (hex byte-identical) + addr2line -i on each header.",
+      "2026-09-30 (capture one-shot fix): splice_service 1 -> 2 loops (dc_invalidate_range, index 1 by header address). eng_frame unchanged in count; the splice bypass removal shortened the longest path (ceiling 218328 -> 183017)."
     ],
     "bsp_audio_isr": {
       "default_bound": 8,
@@ -245,11 +246,15 @@
     },
     "splice_service": {
       "default_bound": 8,
-      "loops": 1,
+      "loops": 2,
       "overrides": {
         "0": {
           "bound": 8,
           "why": "engine.c:168, the seam-splice crossfade RMW loop. n = spl_quota * frames and both call sites pass frames = 1, with spl_quota capped at SPLICE_CHUNK = 8 in splice_arm (budget contract C-4). Stated explicitly rather than defaulted so that raising SPLICE_CHUNK is visible here. NOTE the derivation in splice_arm yields exactly 8 for every window the shipped constants allow — see engine.h."
+        },
+        "1": {
+          "bound": 8,
+          "why": "dl_cache.h:223 via engine.c:208, dc_invalidate_range() after the splice RMW: 8 lanes, drop only the lines overlapping the samples just written (v1.3.1-rc2, bench session 9: the per-frame FULL invalidate while the splice ran = cache bypass for the whole splice window = 768 words/block = the one over-budget block at every loop capture). DC_LANES = 8, fixed, no data dependence."
         }
       }
     }
