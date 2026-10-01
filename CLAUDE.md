@@ -541,6 +541,20 @@ better engine; add new features/controls/modulation only *after* the clone is na
   hazard at high ratios — left alone. Monitor recipe: /tmp/odmon.sh-style 0.5 s SWD poll of
   od_*/isr_pk(reset each sample)/tick_gap(reset)/ps.period/conf/min_dist; re-nm after EVERY
   build (g_engine moved 0x100039e8 -> 0x100044b0 between builds).
+  LATE-SESSION LOAD MYSTERY (NOT a regression, A/B-proven): owner reported "noise, lots
+  layered" at ISR 96-104% sustained in TIME/WRITE with gov_over climbing. A/B under the
+  same patch: tonight's first image identical; **v1.3.0 WORSE (109-117% flat — no
+  governor)** -> pre-existing. Recipe was an EXTERNAL FEEDBACK LOOP (tap -> mixer) blooming
+  into the rail (clip storm ~130/s) + recirc holds + write flips. Single-variable
+  reproduction (red switch centre): quiet 73%, hot input 78-86%, saturating feedback alone
+  76-88% (the 8x-engaged knee = ~10 pts), each CAPTURE = one 103-104% block + gov_over++
+  (the known one-shot) then the governor parks at 50% for ~1 s. The SUSTAINED 97% state
+  did not come back and is unexplained; the monitor now logs od/spl/drain/vint/gov_over/
+  clip/env/ks/pitch so the next occurrence self-explains. Engineering follow-ups: (a) the
+  per-capture one-shot overrun is audible as a tick — chunk or declick whatever remains
+  inline in the capture path; (b) test_isr_budget has no "8 channels above the knee" case
+  (feedback patches live there) — add it. Lab lesson: a sustained-overload report needs
+  the PATCH captured first (the feedback loop was the missing fact for 40 minutes).
 - **Three pulse input jacks (reference):** PG10/11/12 = write / recirc / arm. Each duplicates a
   panel action, edge-latched at block rate; arm fires a loop capture regardless of arm state.
   No clock function today — that is what clocked mode adds.
