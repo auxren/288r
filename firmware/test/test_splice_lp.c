@@ -82,11 +82,18 @@ int main(void)
     /* (a) bass + bright inharmonic partial: box search aligns the bass */
     run(F0, F1, 1.2f, N, 0.794f, 1);
     double p_box = purity_lp(outb, A, N, fexp);
+    float per_box = g_p.period;
     printf("      period=%.0f conf=%.2f\n", (double)g_p.period, (double)g_p.per_conf);
     run(F0, F1, 1.2f, N, 0.794f, 0);
     double p_raw = purity_lp(outb, A, N, fexp);
     printf("      35 Hz + 6047 Hz purity: raw-stride=%.3f box=%.3f\n", p_raw, p_box);
     ck("box search: bass purity under a bright partial > 0.9", p_box > 0.90);
+    /* the period SCAN feeds the search size from the same stride-decimated
+     * reads, so the same partial aliases it too (it read 1492 for a 1371
+     * period). Box-4 it as well, from an SRAM copy (bench 2026-09-30: the
+     * scan's 40-lag SDRAM chunks stalled the control tick 115-150 ms). */
+    ck("period scan under a bright partial within 8 of truth (1371)",
+       fabsf(per_box - 1371.4f) <= 8.0f);
     ck("box search beats the raw stride search", p_box > p_raw + 0.10);
 
     /* (b) pure bass: box must not regress the plain case */

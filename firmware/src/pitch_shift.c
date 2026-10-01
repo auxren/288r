@@ -173,6 +173,7 @@ void ps_init(pitchshift_t *p, float window, float base)
     p->srch_eb = 0.0f; p->srch_best = 0.0f; p->srch_ratio = 1.0f;
     p->scan_active = 0; p->scan_lag = 0; p->scan_bestlag = 0;
     p->scan_e0 = 0.0f; p->scan_best = 0.0f;
+    p->scan_phase = 0; p->scan_fill = 0;
     p->srch_box = 1;
     p->srch_phase = 0; p->srch_fill = 0; p->srch_nA = 0; p->srch_nB = 0; p->srch_m = 1;
     p->min_dist = 1.0e9f;
@@ -240,84 +241,6 @@ void ps_reset(pitchshift_t *p)
 #define PS_EXT_N_CAP        3000
 #define PS_EXT_ML_CAP       3600
 
-/* normalized (sign-kept NCC^2) autocorrelation score at one lag */
-static float ps_lag_score(pitchshift_t *p, const delay_line_t *d,
-                          float dRef, float e0, int lag)
-{
-    (void)p;
-    float acc = 0.0f, e1 = 0.0f;
-    for (int k = 0; k < PS_PER_SPAN; k += 4) {
-        float a = ps_read(p, d, dRef + (float)k, DL_INTERP_LINEAR);
-        float b = ps_read(p, d, dRef + (float)(k + lag), DL_INTERP_LINEAR);
-        acc += a * b;
-        e1  += b * b;
-    }
-    if (e1 < 0.01f * e0) return 0.0f;
-    return acc * fabsf(acc) / (e0 * e1 + 1.0e-9f);
-}
-
-/* background source-period estimate via decimated NCC autocorrelation of the
- * outgoing-tap region. Runs ONLY on idle service calls (superloop), never in
- * the ISR. Coarse 8-sample lag grid — the fine splice search still refines
- * alignment; we only need the period to SIZE the search. */
-static void ps_period_scan(pitchshift_t *p, const delay_line_t *d)
-{
-    const float dRef = p->base + 0.5f * p->window;
-    if (!p->scan_active) {
-        if (++p->per_tick < PS_PER_SCAN_EVERY) return;
-        p->per_tick = 0;
-        float e0 = 0.0f;
-        for (int k = 0; k < PS_PER_SPAN; k += 4) {
-            float a = ps_read(p, d, dRef + (float)k, DL_INTERP_LINEAR);
-            e0 += a * a;
-        }
-        if (e0 < 1.0e-6f) { p->per_conf = 0.0f; return; }
-        p->scan_active = 1; p->scan_lag = PS_PER_MINLAG;
-        p->scan_e0 = e0; p->scan_best = 0.0f; p->scan_bestlag = 0;
-        return;                                    /* chunks on later calls */
-    }
-    /* one chunk: ~40 lags (~1.5 ms) per call */
-    int done = 0;
-    while (p->scan_lag < PS_PER_MAXLAG && done < 40) {
-        float sc = ps_lag_score(p, d, dRef, p->scan_e0, p->scan_lag);
-        if (sc > p->scan_best) { p->scan_best = sc; p->scan_bestlag = p->scan_lag; }
-        p->scan_lag += 8; done++;
-    }
-    if (p->scan_lag < PS_PER_MAXLAG) return;
-    p->scan_active = 0;
-    float best = p->scan_best; int bestlag = p->scan_bestlag;
-    float e0 = p->scan_e0;
-    if (bestlag == 0) { p->per_conf = 0.0f; return; }
-    /* subharmonic disambiguation (one-shot; ~9k reads): see comment below */
-    while (bestlag >= 2 * PS_PER_MINLAG) {
-        int moved = 0;
-        static const int divs[2] = { 2, 3 };
-        for (int di = 0; di < 2 && !moved; di++) {
-            int c0 = bestlag / divs[di];
-            if (c0 < PS_PER_MINLAG) continue;
-            float sb = 0.0f; int lb = c0;
-            for (int lag = c0 - 16; lag <= c0 + 16; lag += 4) {
-                if (lag < PS_PER_MINLAG) continue;
-                float sc = ps_lag_score(p, d, dRef, e0, lag);
-                if (sc > sb) { sb = sc; lb = lag; }
-            }
-            if (sb >= 0.85f * best) { bestlag = lb; best = sb > best ? sb : best; moved = 1; }
-        }
-        if (!moved) break;
-    }
-    p->per_conf  = (best > 0.0f) ? sqrtf(best > 1.0f ? 1.0f : best) : 0.0f;
-    p->period    = (float)bestlag;
-}
-
-#define PS_SRCH_CHUNK 4000     /* coarse iterations (2 SDRAM reads each) per
-                                  service call ~= 2 ms superloop stall — the
-                                  control tick stays live during searches.
-                                  DO NOT SHRINK without re-running test_aa:
-                                  1500 made searches span enough samples at
-                                  ratio ~4 that the frozen dOut/off geometry
-                                  went stale -> phase-random splices (purity
-                                  collapse 1.0 -> 0.0). */
-
 /* SRAM-RESIDENT COARSE SEARCH (2026-09, DAFx-07 NFC-TSM learning).
  * The coarse pass used to read both correlation operands from SDRAM at a
  * plain stride (kstep): decimation WITHOUT a low-pass. A bright partial above
@@ -354,6 +277,118 @@ static inline float ps_grid_point(const pitchshift_t *p, const delay_line_t *d,
         s += ps_read(p, d, dist + (float)j, DL_INTERP_LINEAR);
     return s * (1.0f / (float)kstep);
 }
+
+/* PERIOD SCAN FROM SRAM (bench 2026-09-30). The scan used to score 40 lags
+ * per service call straight from SDRAM: 1024 window-mapped reads per lag
+ * (two divisions each in RECIRC), with the ISR owning ~77% of the CPU —
+ * measured 115–150 ms control-tick stalls, continuously, in pitch mode (the
+ * same starvation class as the July "quantized knob"; that fix chunked the
+ * SEARCH but left this chunk size alone). And like the search it was a plain
+ * stride-4 decimation, so a bright partial aliased the period estimate too
+ * (1492 for a true 1371). Now the span is read ONCE, box-4 averaged, into a
+ * CCM copy (chunked fill), and all 395 lags + the subharmonic refine are
+ * scored from SRAM (~100k MACs total, <1 ms CPU). Lag resolution is 8
+ * samples (= the lag grid): the scan only SIZES the search; the search's
+ * fine pass aligns. */
+#define PS_SCAN_DEC     8     /* = the lag grid; box-8 null at fs/8 (-46 dB
+                                 on a 6 kHz partial @48k; box-4 only -3.7 dB) */
+#define PS_SCAN_NPTS    ((PS_PER_SPAN + PS_PER_MAXLAG) / PS_SCAN_DEC + 8)
+#define PS_SCAN_FILL_CHUNK  350     /* grid points per service call          */
+#define PS_SCAN_LAG_CHUNK   60      /* lags per service call (SRAM MACs)     */
+#if defined(__arm__)
+static float ps_scanBuf[PS_SCAN_NPTS] __attribute__((section(".ccmram")));
+#else
+static float ps_scanBuf[PS_SCAN_NPTS];
+#endif
+
+/* normalized (sign-kept NCC^2) autocorrelation score at one lag, from the
+ * decimated SRAM copy (lag rounded to the PS_SCAN_DEC grid) */
+static float ps_lag_score(const pitchshift_t *p, float e0, int lag)
+{
+    (void)p;
+    const int li = (lag + PS_SCAN_DEC / 2) / PS_SCAN_DEC;
+    const int n  = PS_PER_SPAN / PS_SCAN_DEC;
+    const float *a = ps_scanBuf, *b = ps_scanBuf + li;
+    float acc = 0.0f, e1 = 0.0f;
+    for (int k = 0; k < n; k++) { acc += a[k] * b[k]; e1 += b[k] * b[k]; }
+    if (e1 < 0.01f * e0) return 0.0f;
+    return acc * fabsf(acc) / (e0 * e1 + 1.0e-9f);
+}
+
+/* background source-period estimate via decimated NCC autocorrelation of the
+ * outgoing-tap region. Runs ONLY on idle service calls (superloop), never in
+ * the ISR. Coarse 8-sample lag grid — the fine splice search still refines
+ * alignment; we only need the period to SIZE the search. */
+static void ps_period_scan(pitchshift_t *p, const delay_line_t *d)
+{
+    const float dRef = p->base + 0.5f * p->window;
+    if (!p->scan_active) {
+        if (++p->per_tick < PS_PER_SCAN_EVERY) return;
+        p->per_tick = 0;
+        p->scan_active = 1; p->scan_phase = 0; p->scan_fill = 0;
+        return;                                    /* chunks on later calls */
+    }
+    if (p->scan_phase == 0) {
+        /* FILL: box-4 (srch_box) or stride-4 (bench A/B) grid points */
+        const int npts = (PS_PER_SPAN + PS_PER_MAXLAG) / PS_SCAN_DEC + 2;
+        int done = 0;
+        while (p->scan_fill < npts && done < PS_SCAN_FILL_CHUNK) {
+            float dist = dRef + (float)(p->scan_fill * PS_SCAN_DEC);
+            ps_scanBuf[p->scan_fill] = ps_grid_point(p, d, dist, PS_SCAN_DEC);
+            p->scan_fill++; done++;
+        }
+        if (p->scan_fill < npts) return;
+        float e0 = 0.0f;
+        for (int k = 0; k < PS_PER_SPAN / PS_SCAN_DEC; k++)
+            e0 += ps_scanBuf[k] * ps_scanBuf[k];
+        if (e0 < 1.0e-6f) { p->per_conf = 0.0f; p->scan_active = 0; return; }
+        p->scan_e0 = e0; p->scan_best = 0.0f; p->scan_bestlag = 0;
+        p->scan_lag = PS_PER_MINLAG; p->scan_phase = 1;
+        return;
+    }
+    /* SCORE: one chunk of lags per call, SRAM only */
+    int done = 0;
+    while (p->scan_lag < PS_PER_MAXLAG && done < PS_SCAN_LAG_CHUNK) {
+        float sc = ps_lag_score(p, p->scan_e0, p->scan_lag);
+        if (sc > p->scan_best) { p->scan_best = sc; p->scan_bestlag = p->scan_lag; }
+        p->scan_lag += 8; done++;
+    }
+    if (p->scan_lag < PS_PER_MAXLAG) return;
+    p->scan_active = 0;
+    float best = p->scan_best; int bestlag = p->scan_bestlag;
+    float e0 = p->scan_e0;
+    if (bestlag == 0) { p->per_conf = 0.0f; return; }
+    /* subharmonic disambiguation (SRAM; ~2k MACs): a strong 2nd/3rd harmonic
+     * can make 2T or 3T score as well as T — prefer the shortest candidate
+     * whose local best is within 15% of the global best */
+    while (bestlag >= 2 * PS_PER_MINLAG) {
+        int moved = 0;
+        static const int divs[2] = { 2, 3 };
+        for (int di = 0; di < 2 && !moved; di++) {
+            int c0 = bestlag / divs[di];
+            if (c0 < PS_PER_MINLAG) continue;
+            float sb = 0.0f; int lb = c0;
+            for (int lag = c0 - 16; lag <= c0 + 16; lag += PS_SCAN_DEC) {
+                if (lag < PS_PER_MINLAG) continue;
+                float sc = ps_lag_score(p, e0, lag);
+                if (sc > sb) { sb = sc; lb = lag; }
+            }
+            if (sb >= 0.85f * best) { bestlag = lb; best = sb > best ? sb : best; moved = 1; }
+        }
+        if (!moved) break;
+    }
+    p->per_conf  = (best > 0.0f) ? sqrtf(best > 1.0f ? 1.0f : best) : 0.0f;
+    p->period    = (float)bestlag;
+}
+
+#define PS_SRCH_CHUNK 4000     /* coarse iterations (2 SDRAM reads each) per
+                                  service call ~= 2 ms superloop stall — the
+                                  control tick stays live during searches.
+                                  DO NOT SHRINK without re-running test_aa:
+                                  1500 made searches span enough samples at
+                                  ratio ~4 that the frozen dOut/off geometry
+                                  went stale -> phase-random splices (purity
+                                  collapse 1.0 -> 0.0). */
 
 void ps_service(pitchshift_t *p, const delay_line_t *d)
 {

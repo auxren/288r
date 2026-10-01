@@ -62,6 +62,7 @@ typedef struct {
     float srch_ratio;      /* context stamp: abort resume if ratio moved */
     int   scan_active, scan_lag, scan_bestlag;
     float scan_e0, scan_best;
+    int   scan_phase, scan_fill;   /* 0 = FILL the SRAM copy, 1 = SCORE   */
     int   srch_phase;      /* 0 = FILL (SDRAM -> SRAM decimated copies),
                               1 = SCORE (SRAM only)                        */
     int   srch_fill, srch_nA, srch_nB, srch_m;
