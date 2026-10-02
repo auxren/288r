@@ -555,6 +555,21 @@ better engine; add new features/controls/modulation only *after* the clone is na
   inline in the capture path; (b) test_isr_budget has no "8 channels above the knee" case
   (feedback patches live there) — add it. Lab lesson: a sustained-overload report needs
   the PATCH captured first (the feedback loop was the missing fact for 40 minutes).
+  **LATER THE SAME NIGHT (v1.3.1-rc2):** (5) CLOCKED MODE FIRST REAL CLOCK: lock lost every
+  ~3 s, window flipping 24000<->41440. Root cause = the owner's ~30 us trigger vs the ISR's
+  0.33 ms block POLL (GPIO sampled at 1.5 kHz: 2 of ~46 pulses seen) + same-block coincidence
+  of the two jacks. Fix: EXTI rising-edge capture on PG10/11/12 (priority below audio DMA)
+  OR'd into the block latch + cm_pair_block() skew-tolerant pairing (5 ms, stamp at earlier
+  edge, singles expire -> the one-cable exit now real). 20 s trace: 73 pairs, 0 singles,
+  period 20770+/-3, no loss. (6) CAPTURE ONE-SHOT root-caused on the host (SDRAM words/block
+  probe): the splice-window cache BYPASS (768 words/block) + two full flushes at capture.
+  Fix: dc_invalidate_range (park the written lane, life=0 — re-arming it thrashed at 912),
+  splice_arm range-flushes the 4 guards, declick_arm flushes nothing (index-keyed lines stay
+  valid across a transport entry; cachecheck proves it). test_capture_budget = suite 44; WCET
+  ceiling -14% vs baseline. BENCH GATE OPEN: gov_over flat across captures — three monitors
+  (15 min) never coincided with a capture; g_dbg_panel.ovr_* snapshot (state at the last
+  overrun block) is there for the next session. Clock in BOTH jacks SWALLOWS the jacks, so
+  captures while clocked must come from the momentary.
 - **Three pulse input jacks (reference):** PG10/11/12 = write / recirc / arm. Each duplicates a
   panel action, edge-latched at block rate; arm fires a loop capture regardless of arm state.
   No clock function today — that is what clocked mode adds.
@@ -614,7 +629,7 @@ Python tooling: `re/.venv` (capstone). Keystone won't load on arm64 → assemble
 
 ## How to build / test / verify
 ```bash
-cd firmware && make test     # host unit tests (all pass)
+cd firmware && make test     # host unit tests (44 suites)
 cd firmware && make engine   # cross-compile engine for STM32F429 (compile-only proof)
 cd firmware && make firmware # link flashable image -> build/fw/b288-community.hex
 cd firmware && make wcet     # ISR WCET contract (CI runs it on every tag; an undeclared
